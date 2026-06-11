@@ -1,0 +1,15 @@
+name: MAIA Health Ping
+
+on:
+  schedule:
+    # Weekdays at 07:00 UTC
+    - cron: '0 7 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Health check
+        run: |
+          curl -f "${{ vars.MAIA_URL }}/api/health"

@@ -1,0 +1,52 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env — all .env* excluded; .env.example is explicitly tracked below
+.env*
+!.env.example
+
+# temporary processing files (regenerated as needed)
+.tmp/
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+
+# Google OAuth credentials
+credentials.json
+token.json
+
+# testing
+/coverage
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts

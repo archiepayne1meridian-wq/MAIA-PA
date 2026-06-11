@@ -45,12 +45,6 @@ interface SlackPayload {
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text()
-  const signature = request.headers.get('x-slack-signature') ?? ''
-  const timestamp = request.headers.get('x-slack-request-timestamp') ?? ''
-
-  if (!verifySlackSignature(rawBody, signature, timestamp)) {
-    return new Response('Unauthorized', { status: 401 })
-  }
 
   let payload: SlackPayload
   try {
@@ -59,9 +53,16 @@ export async function POST(request: NextRequest) {
     return new Response('Bad Request', { status: 400 })
   }
 
-  // Slack app setup: return challenge immediately
+  // Slack app setup: return challenge before HMAC check (URL not yet verified)
   if (payload.type === 'url_verification') {
     return Response.json({ challenge: payload.challenge })
+  }
+
+  const signature = request.headers.get('x-slack-signature') ?? ''
+  const timestamp = request.headers.get('x-slack-request-timestamp') ?? ''
+
+  if (!verifySlackSignature(rawBody, signature, timestamp)) {
+    return new Response('Unauthorized', { status: 401 })
   }
 
   // Acknowledge immediately — Slack requires < 3 s

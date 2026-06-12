@@ -16,4 +16,4 @@ jobs:
         run: |
           curl -f -X POST \
             -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
-            "${{ vars.MAIA_URL }}/api/demeter/brief"
+            "https://maia-pa-production.up.railway.app/api/demeter/brief"

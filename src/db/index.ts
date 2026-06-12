@@ -16,6 +16,6 @@ export function getDb(): DrizzleDB {
   sqlite.pragma('journal_mode = WAL')
   sqlite.pragma('foreign_keys = ON')
   _db = drizzle(sqlite, { schema })
-  migrate(_db, { migrationsFolder: path.join(process.cwd(), 'drizzle') })
+  migrate(_db, { migrationsFolder: path.join(process.cwd(), 'src/db/migrations') })
   return _db
 }

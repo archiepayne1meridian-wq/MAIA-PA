@@ -71,7 +71,8 @@ class YahooFinanceProvider {
     const results = await Promise.all(tickers.map(async (ticker): Promise<Quote | null> => {
       const symbol = providerSymbol(ticker)
       try {
-        const q = await yahooFinance.quote(symbol)
+        type YQ = { regularMarketPrice?: number; regularMarketPreviousClose?: number; currency?: string }
+        const q = (await yahooFinance.quote(symbol)) as YQ
         if (!q.regularMarketPrice) return null
 
         let price = q.regularMarketPrice
@@ -100,7 +101,8 @@ class YahooFinanceProvider {
     if (from.toUpperCase() === to.toUpperCase()) return 1
     const pair = `${from.toUpperCase()}${to.toUpperCase()}=X`
     try {
-      const q = await yahooFinance.quote(pair)
+      type YQ = { regularMarketPrice?: number }
+      const q = (await yahooFinance.quote(pair)) as YQ
       return q.regularMarketPrice ?? 1
     } catch {
       return 1

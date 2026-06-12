@@ -60,6 +60,68 @@ class StubProvider {
   }
 }
 
+// ─── Yahoo Finance provider ──────────────────────────────────────────────────
+// Free, no API key. Fetches via Yahoo Finance v8 chart API.
+// Yahoo returns "GBp" (pence) for some LSE tickers — normalised to GBP.
+
+interface YahooMeta {
+  regularMarketPrice?: number
+  chartPreviousClose?: number
+  previousClose?: number
+  currency?: string
+}
+interface YahooResponse {
+  chart?: { result?: { meta: YahooMeta }[] }
+}
+
+class YahooFinanceProvider {
+  private async fetchMeta(symbol: string): Promise<YahooMeta | null> {
+    try {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MAIA/1.0)' },
+        cache: 'no-store',
+      })
+      if (!res.ok) return null
+      const json = await res.json() as YahooResponse
+      return json.chart?.result?.[0]?.meta ?? null
+    } catch {
+      return null
+    }
+  }
+
+  async getQuotes(tickers: string[]): Promise<Quote[]> {
+    const results = await Promise.all(tickers.map(async (ticker): Promise<Quote | null> => {
+      const symbol = providerSymbol(ticker)
+      const meta = await this.fetchMeta(symbol)
+      if (!meta || !meta.regularMarketPrice) return null
+
+      let price = meta.regularMarketPrice
+      let prevClose = meta.chartPreviousClose ?? meta.previousClose ?? price
+      const rawCurrency = meta.currency ?? 'USD'
+      let currency = rawCurrency.toUpperCase()
+
+      // Yahoo uses "GBp" (pence) for many LSE securities
+      const isPence = rawCurrency === 'GBp' || currency === 'GBX'
+      if (isPence) {
+        price /= 100
+        prevClose /= 100
+        currency = 'GBP'
+      }
+
+      return { ticker, price, prevClose, currency }
+    }))
+    return results.filter((q): q is Quote => q !== null)
+  }
+
+  async getFxRate(from: string, to: string): Promise<number> {
+    if (from.toUpperCase() === to.toUpperCase()) return 1
+    const pair = `${from.toUpperCase()}${to.toUpperCase()}=X`
+    const meta = await this.fetchMeta(pair)
+    return meta?.regularMarketPrice ?? 1
+  }
+}
+
 // ─── OpenBB provider ─────────────────────────────────────────────────────────
 
 class OpenBBProvider {
@@ -125,11 +187,12 @@ function todayStr(): string {
 
 // ─── Active provider ─────────────────────────────────────────────────────────
 
-function getProvider(): StubProvider | OpenBBProvider {
+function getProvider(): StubProvider | YahooFinanceProvider | OpenBBProvider {
   const url = process.env.OPENBB_URL
   const token = process.env.OPENBB_TOKEN
   if (url && token) return new OpenBBProvider(url, token)
-  return new StubProvider()
+  if (process.env.USE_STUB_PRICES === 'true') return new StubProvider()
+  return new YahooFinanceProvider()
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

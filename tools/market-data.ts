@@ -1,48 +1,63 @@
 // Market data layer — fetches current prices and FX rates.
-// Stub provider is used by default when OPENBB_URL is not set (steps 1–4 of the build).
-// Swap to OpenBBProvider in Step 5 by setting OPENBB_URL and OPENBB_TOKEN in .env.
+// Provider priority: OpenBB (OPENBB_URL + OPENBB_TOKEN) → Yahoo Finance (no key, all tickers)
+// → StubProvider (USE_STUB_PRICES=true, with a warning).
 //
-// LSE note: VWRP and VDPG are London-listed and need the .L suffix for the live provider.
-// VDPG.L (GBP-hedged) may quote in pence (GBX) on some platforms — the OpenBBProvider
-// divides by 100 if the returned currency is GBX.
+// TwelveDataProvider is kept for reference (US-only free tier) but not in the active chain;
+// Yahoo Finance covers all 6 holdings including the LSE ETFs Twelve Data paywalls.
+//
+// Pence handling is per-symbol from the currency field returned by each provider.
+// Never hardcode which tickers are pence — read the response.
 
 import type { Holding, PricedHolding } from './portfolio'
 
 export interface Quote {
-  ticker: string        // canonical ticker (e.g. VWRP, not VWRP.L)
-  price: number         // current price in native currency
-  prevClose: number     // previous close in native currency
-  currency: string      // native currency (USD, GBP, GBX)
+  ticker: string    // canonical ticker (e.g. VWRP, not VWRP.L)
+  price: number     // current price, pence already normalised to GBP
+  prevClose: number
+  currency: string  // normalised: USD or GBP (never GBp/GBX after this point)
 }
 
-// Map canonical tickers → provider symbols (e.g. VWRP → VWRP.L)
+// Yahoo Finance .L suffix mapping for LSE-listed tickers
+const YF_SYMBOL: Record<string, string> = {
+  VWRP: 'VWRP.L',
+  VDPG: 'VDPG.L',
+}
+
+// OpenBB uses Yahoo-style .L suffixes — kept separate so both providers coexist.
 export const TICKER_TO_PROVIDER_SYMBOL: Record<string, string> = {
   VWRP: 'VWRP.L',
   VDPG: 'VDPG.L',
 }
 
-// LSE tickers that may quote in pence (GBX); divide by 100 to convert to GBP
-export const PENCE_TICKERS: Set<string> = new Set(['VDPG'])
-
 export function providerSymbol(ticker: string): string {
   return TICKER_TO_PROVIDER_SYMBOL[ticker] ?? ticker
 }
 
-// ─── Stub provider ────────────────────────────────────────────────────────────
-// Prices are approximate as of mid-2026; update or replace with a real provider.
-// FX: GBPUSD = 1.27 (stub)
-
-const STUB_FX: Record<string, number> = {
-  GBPUSD: 1.27,
+// Shared pence normalisation — called per symbol with the raw currency string
+// returned by the provider. Divides by 100 only when the field says GBp/GBX.
+function normalisePence(
+  price: number,
+  prevClose: number,
+  rawCurrency: string,
+): { price: number; prevClose: number; currency: string } {
+  if (rawCurrency === 'GBp' || rawCurrency.toUpperCase() === 'GBX') {
+    return { price: price / 100, prevClose: prevClose / 100, currency: 'GBP' }
+  }
+  return { price, prevClose, currency: rawCurrency.toUpperCase() }
 }
 
+// ─── Stub provider ────────────────────────────────────────────────────────────
+// Approximate mid-2026 prices. Activate with USE_STUB_PRICES=true.
+
+const STUB_FX: Record<string, number> = { GBPUSD: 1.34 }
+
 const STUB_QUOTES: Record<string, Quote> = {
-  MU:   { ticker: 'MU',   price: 121.5,  prevClose: 120.0,  currency: 'USD' },
-  VWRP: { ticker: 'VWRP', price: 132.0,  prevClose: 131.5,  currency: 'USD' },
-  VDPG: { ticker: 'VDPG', price: 29.5,   prevClose: 29.2,   currency: 'GBP' },
-  AMAT: { ticker: 'AMAT', price: 178.0,  prevClose: 176.5,  currency: 'USD' },
-  IONQ: { ticker: 'IONQ', price: 24.5,   prevClose: 23.8,   currency: 'USD' },
-  MSTR: { ticker: 'MSTR', price: 395.0,  prevClose: 390.0,  currency: 'USD' },
+  MU:   { ticker: 'MU',   price: 983.0,  prevClose: 995.87,  currency: 'USD' },
+  VWRP: { ticker: 'VWRP', price: 140.08, prevClose: 137.80,  currency: 'GBP' },
+  VDPG: { ticker: 'VDPG', price: 45.21,  prevClose: 43.40,   currency: 'GBP' },
+  AMAT: { ticker: 'AMAT', price: 566.0,  prevClose: 552.64,  currency: 'USD' },
+  IONQ: { ticker: 'IONQ', price: 57.92,  prevClose: 57.99,   currency: 'USD' },
+  MSTR: { ticker: 'MSTR', price: 124.26, prevClose: 120.15,  currency: 'USD' },
 }
 
 class StubProvider {
@@ -52,69 +67,167 @@ class StubProvider {
 
   async getFxRate(from: string, to: string): Promise<number> {
     const key = `${from.toUpperCase()}${to.toUpperCase()}`
-    const reverseKey = `${to.toUpperCase()}${from.toUpperCase()}`
+    const rev = `${to.toUpperCase()}${from.toUpperCase()}`
     if (STUB_FX[key]) return STUB_FX[key]
-    if (STUB_FX[reverseKey]) return 1 / STUB_FX[reverseKey]
-    if (from === to) return 1
-    return 1 // fallback
+    if (STUB_FX[rev]) return 1 / STUB_FX[rev]
+    return 1
   }
 }
 
-// ─── Yahoo Finance provider ──────────────────────────────────────────────────
-// Uses yahoo-finance2 which handles Yahoo's crumb/cookie auth automatically.
-// Yahoo returns "GBp" (pence) for LSE tickers — normalised to GBP.
+// ─── Yahoo Finance provider ───────────────────────────────────────────────────
+// No API key needed. Covers US equities and LSE ETFs (VWRP.L, VDPG.L).
+// Uses the public chart/v8 endpoint — returns regularMarketPrice + currency.
+// LSE ETF prices from Yahoo are in GBP (not pence); normalisePence handles GBp if ever returned.
 
-import yahooFinance from 'yahoo-finance2'
+interface YFMeta {
+  regularMarketPrice?: number
+  chartPreviousClose?: number
+  currency?: string
+}
 
 class YahooFinanceProvider {
-  async getQuotes(tickers: string[]): Promise<Quote[]> {
-    const results = await Promise.all(tickers.map(async (ticker): Promise<Quote | null> => {
-      const symbol = providerSymbol(ticker)
-      try {
-        type YQ = { regularMarketPrice?: number; regularMarketPreviousClose?: number; currency?: string }
-        const q = (await yahooFinance.quote(symbol)) as YQ
-        if (!q.regularMarketPrice) return null
-
-        let price = q.regularMarketPrice
-        let prevClose = q.regularMarketPreviousClose ?? price
-        const rawCurrency = q.currency ?? 'USD'
-        let currency = rawCurrency.toUpperCase()
-
-        // Yahoo uses "GBp" (pence) for many LSE securities
-        const isPence = rawCurrency === 'GBp' || currency === 'GBX'
-        if (isPence) {
-          price /= 100
-          prevClose /= 100
-          currency = 'GBP'
-        }
-
-        return { ticker, price, prevClose, currency }
-      } catch (err) {
-        console.warn(`[market-data] Yahoo Finance failed for ${ticker}:`, err)
-        return null
-      }
-    }))
-    return results.filter((q): q is Quote => q !== null)
+  private yfSymbol(ticker: string): string {
+    return YF_SYMBOL[ticker] ?? ticker
   }
 
+  async getQuotes(tickers: string[]): Promise<Quote[]> {
+    const settled = await Promise.allSettled(
+      tickers.map(ticker => this.fetchOne(ticker)),
+    )
+
+    const results: Quote[] = []
+    for (let i = 0; i < settled.length; i++) {
+      const r = settled[i]!
+      if (r.status === 'fulfilled') {
+        results.push(r.value)
+      } else {
+        const ticker = tickers[i]!
+        throw new Error(
+          `[market-data] ${ticker}: Yahoo Finance failed — ${(r.reason as Error)?.message ?? r.reason}`,
+        )
+      }
+    }
+    return results
+  }
+
+  private async fetchOne(ticker: string): Promise<Quote> {
+    const sym = this.yfSymbol(ticker)
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      cache: 'no-store',
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${sym}`)
+    const json = await res.json() as { chart?: { result?: { meta: YFMeta }[]; error?: unknown } }
+    const meta = json.chart?.result?.[0]?.meta
+    if (!meta?.regularMarketPrice) {
+      throw new Error(`no price in response for ${sym}: ${JSON.stringify(json.chart?.error ?? json)}`)
+    }
+    const price = meta.regularMarketPrice
+    const prevClose = meta.chartPreviousClose ?? price
+    const { price: p, prevClose: pc, currency } = normalisePence(price, prevClose, meta.currency ?? 'USD')
+    return { ticker, price: p, prevClose: pc, currency }
+  }
+
+  // getFxRate('GBP','USD') → ~1.34 (USD per GBP).
+  // Caller computes fxToBase = 1/rate so that price_USD × fxToBase = price_GBP.
   async getFxRate(from: string, to: string): Promise<number> {
     if (from.toUpperCase() === to.toUpperCase()) return 1
     const pair = `${from.toUpperCase()}${to.toUpperCase()}=X`
-    try {
-      type YQ = { regularMarketPrice?: number }
-      const q = (await yahooFinance.quote(pair)) as YQ
-      return q.regularMarketPrice ?? 1
-    } catch {
-      return 1
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(pair)}?interval=1d&range=1d`
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      cache: 'no-store',
+    })
+    if (!res.ok) throw new Error(`[market-data] Yahoo Finance FX HTTP ${res.status} for ${pair}`)
+    const json = await res.json() as { chart?: { result?: { meta: YFMeta }[] } }
+    const meta = json.chart?.result?.[0]?.meta
+    if (!meta?.regularMarketPrice) {
+      throw new Error(`[market-data] Yahoo Finance: no FX rate for ${pair}`)
     }
+    return meta.regularMarketPrice
+  }
+}
+
+// ─── Twelve Data provider ─────────────────────────────────────────────────────
+// TWELVE_DATA_API_KEY must be set. Free tier covers US equities; LSE ETFs require a paid plan.
+// Kept here for reference — not in the active provider chain (Yahoo Finance covers all tickers).
+// Use this if Yahoo Finance becomes unavailable on your deployment environment.
+
+interface TDRow {
+  close?: string      // current / last price (NOT "price" — that field doesn't exist)
+  previous_close?: string
+  currency?: string
+  status?: string
+  message?: string
+}
+
+class TwelveDataProvider {
+  private readonly apiKey: string
+  private readonly base = 'https://api.twelvedata.com'
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey
+  }
+
+  private async batchQuote(symbols: string[]): Promise<Record<string, TDRow>> {
+    const url = `${this.base}/quote?symbol=${encodeURIComponent(symbols.join(','))}&apikey=${this.apiKey}`
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) throw new Error(`[market-data] Twelve Data HTTP ${res.status}`)
+    const json = await res.json() as Record<string, TDRow> | TDRow
+    if (symbols.length === 1) return { [symbols[0]!]: json as TDRow }
+    return json as Record<string, TDRow>
+  }
+
+  private rowToQuote(ticker: string, row: TDRow): Quote | null {
+    if (row.status === 'error' || !row.close) return null
+    const price = parseFloat(row.close)
+    const prevClose = row.previous_close ? parseFloat(row.previous_close) : price
+    const { price: p, prevClose: pc, currency } = normalisePence(price, prevClose, row.currency ?? 'USD')
+    return { ticker, price: p, prevClose: pc, currency }
+  }
+
+  async getQuotes(tickers: string[]): Promise<Quote[]> {
+    const batch = await this.batchQuote(tickers)
+    const results: Quote[] = []
+
+    for (const ticker of tickers) {
+      const q = this.rowToQuote(ticker, batch[ticker] ?? {})
+      if (q) {
+        results.push(q)
+      } else {
+        const row = batch[ticker]
+        throw new Error(
+          `[market-data] ${ticker}: Twelve Data returned no price — ` +
+          `status=${row?.status ?? 'missing'}, message=${row?.message ?? 'none'}. ` +
+          `LSE ETFs (VWRP, VDPG) require a paid Twelve Data plan.`,
+        )
+      }
+    }
+    return results
+  }
+
+  // getFxRate('GBP','USD') → ~1.34 (USD per GBP).
+  async getFxRate(from: string, to: string): Promise<number> {
+    if (from.toUpperCase() === to.toUpperCase()) return 1
+    const symbol = `${from.toUpperCase()}/${to.toUpperCase()}`
+    const url = `${this.base}/price?symbol=${encodeURIComponent(symbol)}&apikey=${this.apiKey}`
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) throw new Error(`[market-data] Twelve Data FX HTTP ${res.status} for ${symbol}`)
+    const json = await res.json() as { price?: string; status?: string; message?: string }
+    if (json.status === 'error' || !json.price) {
+      throw new Error(`[market-data] Twelve Data FX unavailable for ${symbol}: ${json.message ?? 'no price'}`)
+    }
+    return parseFloat(json.price)
   }
 }
 
 // ─── OpenBB provider ─────────────────────────────────────────────────────────
+// Future: used by the Research Terminal once OpenBB Platform is deployed.
 
 class OpenBBProvider {
-  private baseUrl: string
-  private token: string
+  private readonly baseUrl: string
+  private readonly token: string
 
   constructor(baseUrl: string, token: string) {
     this.baseUrl = baseUrl.replace(/\/$/, '')
@@ -124,32 +237,21 @@ class OpenBBProvider {
   async getQuotes(tickers: string[]): Promise<Quote[]> {
     const symbols = tickers.map(t => providerSymbol(t)).join(',')
     const url = `${this.baseUrl}/api/v1/equity/price/quote?symbol=${encodeURIComponent(symbols)}`
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${this.token}` },
-    })
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` } })
     if (!res.ok) throw new Error(`OpenBB price fetch failed: ${res.status}`)
     const json = await res.json() as { results?: unknown[] }
 
-    const results = json.results ?? []
-    return (results as Record<string, unknown>[]).map(r => {
-      const provSym = String(r.symbol ?? '')
-      // Reverse-map provider symbol back to canonical ticker
+    return (json.results ?? []).map((r: unknown) => {
+      const row = r as Record<string, unknown>
+      const provSym = String(row.symbol ?? '')
       const ticker = Object.entries(TICKER_TO_PROVIDER_SYMBOL).find(
         ([, v]) => v === provSym,
       )?.[0] ?? provSym.replace(/\.L$/, '')
 
-      let price = Number(r.last_price ?? r.price ?? 0)
-      let prevClose = Number(r.prev_close ?? r.previous_close ?? price)
-      let currency = String(r.currency ?? 'USD').toUpperCase()
-
-      // Convert pence (GBX) to GBP
-      if (currency === 'GBX' || PENCE_TICKERS.has(ticker)) {
-        price = price / 100
-        prevClose = prevClose / 100
-        currency = 'GBP'
-      }
-
-      return { ticker, price, prevClose, currency }
+      const price = Number(row.last_price ?? row.price ?? 0)
+      const prevClose = Number(row.prev_close ?? row.previous_close ?? price)
+      const { price: p, prevClose: pc, currency } = normalisePence(price, prevClose, String(row.currency ?? 'USD'))
+      return { ticker, price: p, prevClose: pc, currency }
     })
   }
 
@@ -157,11 +259,9 @@ class OpenBBProvider {
     if (from.toUpperCase() === to.toUpperCase()) return 1
     const pair = `${from.toUpperCase()}${to.toUpperCase()}`
     const url = `${this.baseUrl}/api/v1/currency/price/historical?symbol=${pair}&interval=1d&start_date=${todayStr()}&end_date=${todayStr()}`
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${this.token}` },
-    })
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` } })
     if (!res.ok) {
-      console.warn(`[market-data] FX rate ${pair} unavailable (${res.status}), using 1.0`)
+      console.warn(`[market-data] OpenBB FX ${pair} unavailable (${res.status}), using 1.0`)
       return 1
     }
     const json = await res.json() as { results?: { close?: number }[] }
@@ -174,12 +274,19 @@ function todayStr(): string {
 }
 
 // ─── Active provider ─────────────────────────────────────────────────────────
+// Priority: OpenBB (if OPENBB_URL + OPENBB_TOKEN) → Yahoo Finance → Stub (USE_STUB_PRICES=true)
 
 function getProvider(): StubProvider | YahooFinanceProvider | OpenBBProvider {
-  const url = process.env.OPENBB_URL
-  const token = process.env.OPENBB_TOKEN
-  if (url && token) return new OpenBBProvider(url, token)
-  if (process.env.USE_STUB_PRICES === 'true') return new StubProvider()
+  const openbbUrl = process.env.OPENBB_URL
+  const openbbToken = process.env.OPENBB_TOKEN
+  if (openbbUrl && openbbToken) return new OpenBBProvider(openbbUrl, openbbToken)
+
+  if (process.env.USE_STUB_PRICES === 'true') {
+    console.warn('[market-data] USE_STUB_PRICES=true — using stub prices.')
+    return new StubProvider()
+  }
+
+  // Yahoo Finance: no API key needed, covers US equities and LSE ETFs
   return new YahooFinanceProvider()
 }
 
@@ -200,7 +307,6 @@ export async function getPricedHoldings(
   const tickers = holdings.map(h => h.ticker)
 
   let quotes: Quote[]
-  const unavailable: string[] = []
   try {
     quotes = await provider.getQuotes(tickers)
   } catch (err) {
@@ -210,7 +316,7 @@ export async function getPricedHoldings(
 
   const quoteMap = new Map(quotes.map(q => [q.ticker, q]))
 
-  // Collect unique foreign currencies that need FX conversion
+  // Collect unique foreign currencies needing FX conversion
   const foreignCurrencies = new Set<string>()
   for (const q of quotes) {
     if (q.currency.toUpperCase() !== baseCurrency.toUpperCase()) {
@@ -218,34 +324,29 @@ export async function getPricedHoldings(
     }
   }
 
-  // Fetch FX rates (baseCurrency per unit of foreign currency)
+  // getFxRate('GBP','USD') → ~1.34 (USD per GBP)
+  // fxToBase = 1/1.34 ≈ 0.746  →  price_USD × 0.746 = price_GBP  ✓
   const fxRates = new Map<string, number>([[baseCurrency.toUpperCase(), 1]])
   for (const foreign of foreignCurrencies) {
     try {
-      // e.g. GBPUSD = 1.27 → fxToBase for USD = 1/1.27 = 0.787...
-      const rate = await provider.getFxRate(baseCurrency, foreign) // base per 1 foreign
-      fxRates.set(foreign, 1 / rate) // fxToBase = how many base per 1 unit of foreign
+      const rate = await provider.getFxRate(baseCurrency, foreign)
+      fxRates.set(foreign, 1 / rate)
     } catch {
-      console.warn(`[market-data] FX rate ${baseCurrency}/${foreign} unavailable, using 1.0`)
+      console.warn(`[market-data] FX ${baseCurrency}/${foreign} unavailable, using 1.0`)
       fxRates.set(foreign, 1)
     }
   }
 
   const priced: PricedHolding[] = []
+  const unavailable: string[] = []
   for (const holding of holdings) {
     const q = quoteMap.get(holding.ticker)
-    if (!q) {
-      unavailable.push(holding.ticker)
-      continue
-    }
-    const currency = q.currency.toUpperCase()
-    const fxToBase = fxRates.get(currency) ?? 1
-
+    if (!q) { unavailable.push(holding.ticker); continue }
     priced.push({
       ...holding,
       price: q.price,
       prevClose: q.prevClose,
-      fxToBase,
+      fxToBase: fxRates.get(q.currency.toUpperCase()) ?? 1,
     })
   }
 

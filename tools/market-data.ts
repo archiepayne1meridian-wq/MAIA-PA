@@ -3,13 +3,17 @@
 // Provider priority:
 //   OpenBB (OPENBB_URL + OPENBB_TOKEN)
 //   → HybridProvider (TWELVE_DATA_API_KEY set):
-//       US tickers → Twelve Data (free tier covers NASDAQ/NYSE)
-//       LSE tickers (VWRP, VDPG) → Yahoo Finance .L suffix
-//       FX rate → Twelve Data
+//       US tickers (MU, AMAT, IONQ, MSTR) → Twelve Data (confirmed Railway-safe, free tier)
+//       LSE tickers (VWRP, VDPG) → Alpha Vantage (API-key auth, Railway-safe, covers LSE)
+//       FX rate (GBP/USD) → Twelve Data
 //   → StubProvider (no key or USE_STUB_PRICES=true)
 //
-// Pence handling: per-symbol from the raw currency field in each provider's response.
-// Never hardcode which tickers are pence — read the field, call normalisePence.
+// Why not Yahoo Finance: Railway's network firewalls outbound fetches to Yahoo (fetch failed,
+// TCP-level block, not HTTP 4xx). Alpha Vantage uses API-key auth so IP doesn't matter.
+//
+// Pence handling: Alpha Vantage GLOBAL_QUOTE doesn't return a currency field — currency is
+// inferred from the symbol suffix (.LON → GBP, else USD). normalisePence is still called
+// so GBp/GBX division happens automatically if the inferred currency is wrong.
 
 import type { Holding, PricedHolding } from './portfolio'
 
@@ -20,13 +24,13 @@ export interface Quote {
   currency: string  // normalised: USD or GBP (never GBp/GBX after this point)
 }
 
-// Tickers that live on the London Stock Exchange — routed to Yahoo Finance (.L suffix).
+// Tickers that live on the London Stock Exchange — routed to Alpha Vantage (.LON suffix).
 const LSE_TICKERS = new Set(['VWRP', 'VDPG'])
 
-// Yahoo Finance symbol mapping for LSE-listed tickers.
-const YF_SYMBOL: Record<string, string> = {
-  VWRP: 'VWRP.L',
-  VDPG: 'VDPG.L',
+// Alpha Vantage symbol mapping for LSE-listed tickers.
+const AV_LSE_SYMBOL: Record<string, string> = {
+  VWRP: 'VWRP.LON',
+  VDPG: 'VDPG.LON',
 }
 
 // OpenBB uses the same .L suffix convention.
@@ -183,65 +187,74 @@ class TwelveDataProvider {
   }
 }
 
-// ─── Yahoo Finance provider (LSE tickers only) ────────────────────────────────
-// Used exclusively for VWRP.L and VDPG.L.
-// Direct fetch to the public chart/v8 endpoint — no npm package, no API key.
-// Currency is read from meta.currency per symbol; normalisePence handles GBp/GBX.
+// ─── Alpha Vantage provider (LSE tickers only) ────────────────────────────────
+// Used exclusively for VWRP.LON and VDPG.LON.
+// API-key auth → Railway-safe (no IP blocking). Free tier: 25 req/day.
+// GLOBAL_QUOTE doesn't return a currency field, so currency is inferred from the
+// symbol suffix: .LON → GBP, else USD. normalisePence is still called in case AV
+// returns pence values for a ticker.
+// Free key: https://www.alphavantage.co/support/#api-key
 
-interface YFMeta {
-  regularMarketPrice?: number
-  chartPreviousClose?: number
-  currency?: string
+interface AVGlobalQuote {
+  '01. symbol'?: string
+  '05. price'?: string
+  '08. previous close'?: string
 }
 
-class YahooFinanceProvider {
-  async getQuotes(tickers: string[]): Promise<Quote[]> {
-    const settled = await Promise.allSettled(tickers.map(t => this.fetchOne(t)))
+class AlphaVantageProvider {
+  private readonly apiKey: string
+  private readonly base = 'https://www.alphavantage.co/query'
 
+  constructor(apiKey: string) {
+    this.apiKey = apiKey
+  }
+
+  async getQuotes(tickers: string[]): Promise<Quote[]> {
+    // Sequential with a gap to respect AV's free-tier 1-req/sec burst limit.
     const results: Quote[] = []
-    for (let i = 0; i < settled.length; i++) {
-      const r = settled[i]!
-      if (r.status === 'fulfilled') {
-        results.push(r.value)
-      } else {
-        const ticker = tickers[i]!
-        const sym = YF_SYMBOL[ticker] ?? `${ticker}.L`
-        throw new Error(
-          `[market-data] ${ticker} (${sym}): Yahoo Finance failed — ` +
-          `${(r.reason as Error)?.message ?? r.reason}`,
-        )
-      }
+    for (let i = 0; i < tickers.length; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 1200))
+      results.push(await this.fetchOne(tickers[i]!))
     }
     return results
   }
 
   private async fetchOne(ticker: string): Promise<Quote> {
-    const sym = YF_SYMBOL[ticker] ?? `${ticker}.L`
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
-      cache: 'no-store',
-    })
+    const sym = AV_LSE_SYMBOL[ticker] ?? `${ticker}.LON`
+    const url = `${this.base}?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(sym)}&apikey=${this.apiKey}`
+    const res = await fetch(url, { cache: 'no-store' })
     if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`HTTP ${res.status} for ${sym} — body: ${body.slice(0, 200)}`)
+      throw new Error(`[market-data] Alpha Vantage HTTP ${res.status} for ${sym}`)
     }
-    const json = await res.json() as { chart?: { result?: { meta: YFMeta }[]; error?: unknown } }
-    const meta = json.chart?.result?.[0]?.meta
 
-    if (!meta?.regularMarketPrice) {
+    const json = await res.json() as {
+      'Global Quote'?: AVGlobalQuote
+      'Information'?: string
+      'Note'?: string
+    }
+
+    // AV returns Information/Note on rate-limit or auth errors — surface immediately.
+    const apiMsg = json.Information ?? json.Note
+    if (apiMsg) {
+      throw new Error(`[market-data] Alpha Vantage API message for ${sym}: ${apiMsg}`)
+    }
+
+    const q = json['Global Quote']
+    if (!q || !q['05. price']) {
       throw new Error(
-        `no price in Yahoo Finance response for ${sym}. ` +
-        `raw chart.error=${JSON.stringify(json.chart?.error)}, ` +
-        `result=${JSON.stringify(json.chart?.result?.slice(0, 1))}`,
+        `[market-data] Alpha Vantage: no quote data for ${sym}. ` +
+        `Raw response: ${JSON.stringify(json).slice(0, 300)}`,
       )
     }
 
-    const price    = meta.regularMarketPrice
-    const prevClose = meta.chartPreviousClose ?? price
-    const rawCurrency = meta.currency ?? 'GBP'   // LSE default; normalisePence handles GBp
+    const price    = parseFloat(q['05. price'])
+    const prevClose = q['08. previous close'] ? parseFloat(q['08. previous close']) : price
 
-    console.log(`[market-data] Yahoo Finance ${sym}: price=${price} prev=${prevClose} currency=${rawCurrency}`)
+    // Infer currency from symbol suffix: .LON → GBP, else USD.
+    // normalisePence divides by 100 if rawCurrency is GBp/GBX — handles AV returning pence.
+    const rawCurrency = sym.endsWith('.LON') ? 'GBP' : 'USD'
+
+    console.log(`[market-data] Alpha Vantage ${sym}: price=${price} prev=${prevClose} inferredCurrency=${rawCurrency}`)
 
     const { price: p, prevClose: pc, currency } = normalisePence(price, prevClose, rawCurrency)
     return { ticker, price: p, prevClose: pc, currency }
@@ -249,31 +262,32 @@ class YahooFinanceProvider {
 }
 
 // ─── Hybrid provider ──────────────────────────────────────────────────────────
-// Routes by exchange: LSE_TICKERS → Yahoo Finance (.L suffix); all others → Twelve Data.
-// GBP/USD FX always comes from Twelve Data.
+// Routes by exchange:
+//   LSE_TICKERS (VWRP, VDPG) → Alpha Vantage (.LON suffix) — Railway-safe, key auth
+//   US tickers (MU, AMAT, IONQ, MSTR) → Twelve Data — Railway-safe, key auth
+//   GBP/USD FX → Twelve Data
 
 class HybridProvider {
   private td: TwelveDataProvider
-  private yf: YahooFinanceProvider
+  private av: AlphaVantageProvider
 
-  constructor(tdKey: string) {
+  constructor(tdKey: string, avKey: string) {
     this.td = new TwelveDataProvider(tdKey)
-    this.yf = new YahooFinanceProvider()
+    this.av = new AlphaVantageProvider(avKey)
   }
 
   async getQuotes(tickers: string[]): Promise<Quote[]> {
     const lse = tickers.filter(t => LSE_TICKERS.has(t))
     const us  = tickers.filter(t => !LSE_TICKERS.has(t))
 
-    const [lseQuotes, usQuotes] = await Promise.all([
-      lse.length > 0 ? this.yf.getQuotes(lse) : Promise.resolve([] as Quote[]),
+    const [usQuotes, lseQuotes] = await Promise.all([
       us.length  > 0 ? this.td.getQuotes(us)  : Promise.resolve([] as Quote[]),
+      lse.length > 0 ? this.av.getQuotes(lse) : Promise.resolve([] as Quote[]),
     ])
 
     return [...usQuotes, ...lseQuotes]
   }
 
-  // FX always from Twelve Data — confirmed working on free tier.
   async getFxRate(from: string, to: string): Promise<number> {
     return this.td.getFxRate(from, to)
   }
@@ -338,10 +352,13 @@ function getProvider(): StubProvider | HybridProvider | OpenBBProvider {
   if (openbbUrl && openbbToken) return new OpenBBProvider(openbbUrl, openbbToken)
 
   const tdKey = process.env.TWELVE_DATA_API_KEY
-  if (tdKey) return new HybridProvider(tdKey)
+  const avKey = process.env.ALPHA_VANTAGE_API_KEY
+
+  if (tdKey && avKey) return new HybridProvider(tdKey, avKey)
 
   if (process.env.USE_STUB_PRICES !== 'true') {
-    console.warn('[market-data] TWELVE_DATA_API_KEY not set — using stub prices.')
+    if (!tdKey) console.warn('[market-data] TWELVE_DATA_API_KEY not set — using stub prices.')
+    if (!avKey) console.warn('[market-data] ALPHA_VANTAGE_API_KEY not set — using stub prices. Free key: https://www.alphavantage.co/support/#api-key')
   }
   return new StubProvider()
 }

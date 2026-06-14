@@ -344,6 +344,98 @@ function todayStr(): string {
   return new Date().toISOString().split('T')[0]!
 }
 
+// ─── Index + FX quote types (CASSANDRA) ──────────────────────────────────────
+// These always use TwelveDataProvider directly (no portfolio routing needed).
+
+export interface IndexQuote {
+  symbol: string
+  level: number
+  prevClose: number
+  dayChangePct: number
+}
+
+export interface FxQuote {
+  pair: string     // e.g. "GBP/USD"
+  rate: number
+  prevClose: number
+  dayChangePct: number
+}
+
+const STUB_INDICES: IndexQuote[] = [
+  { symbol: 'SPX',  level: 6014.0, prevClose: 5983.9, dayChangePct: 0.50 },
+  { symbol: 'UKX',  level: 8214.0, prevClose: 8181.2, dayChangePct: 0.40 },
+  { symbol: 'IXIC', level: 19450.0, prevClose: 19350.0, dayChangePct: 0.52 },
+]
+
+const STUB_FX_QUOTES: FxQuote[] = [
+  { pair: 'GBP/USD', rate: 1.272, prevClose: 1.274, dayChangePct: -0.16 },
+  { pair: 'EUR/USD', rate: 1.084, prevClose: 1.083, dayChangePct: 0.09  },
+  { pair: 'EUR/GBP', rate: 0.852, prevClose: 0.850, dayChangePct: 0.24  },
+]
+
+function dayChangePct(level: number, prevClose: number): number {
+  if (prevClose === 0) return 0
+  return Math.round(((level - prevClose) / prevClose) * 10000) / 100
+}
+
+export async function getIndexQuotes(symbols: string[]): Promise<IndexQuote[]> {
+  if (symbols.length === 0) return []
+
+  const tdKey = process.env.TWELVE_DATA_API_KEY
+  if (!tdKey) {
+    console.warn('[market-data] TWELVE_DATA_API_KEY not set — using stub index quotes.')
+    return STUB_INDICES.filter(q => symbols.includes(q.symbol))
+  }
+
+  if (process.env.USE_STUB_PRICES === 'true') {
+    return STUB_INDICES.filter(q => symbols.includes(q.symbol))
+  }
+
+  const td = new TwelveDataProvider(tdKey)
+  const rows = await td['batchQuote'](symbols)
+
+  return symbols.map(sym => {
+    const row = rows[sym] ?? {}
+    if (row.status === 'error' || !row.close) {
+      console.error(`[market-data] Index quote unavailable for "${sym}": ${JSON.stringify(row)}`)
+      const stub = STUB_INDICES.find(q => q.symbol === sym)
+      return stub ?? { symbol: sym, level: 0, prevClose: 0, dayChangePct: 0 }
+    }
+    const level = parseFloat(row.close)
+    const prev  = row.previous_close ? parseFloat(row.previous_close) : level
+    return { symbol: sym, level, prevClose: prev, dayChangePct: dayChangePct(level, prev) }
+  })
+}
+
+export async function getFxQuotes(pairs: string[]): Promise<FxQuote[]> {
+  if (pairs.length === 0) return []
+
+  const tdKey = process.env.TWELVE_DATA_API_KEY
+  if (!tdKey) {
+    console.warn('[market-data] TWELVE_DATA_API_KEY not set — using stub FX quotes.')
+    return STUB_FX_QUOTES.filter(q => pairs.includes(q.pair))
+  }
+
+  if (process.env.USE_STUB_PRICES === 'true') {
+    return STUB_FX_QUOTES.filter(q => pairs.includes(q.pair))
+  }
+
+  const td = new TwelveDataProvider(tdKey)
+  const rows = await td['batchQuote'](pairs)
+
+  return pairs.map(pair => {
+    const row = rows[pair] ?? {}
+    if (row.status === 'error' || !row.close) {
+      console.error(`[market-data] FX quote unavailable for "${pair}": ${JSON.stringify(row)}`)
+      const stub = STUB_FX_QUOTES.find(q => q.pair === pair)
+      return stub ?? { pair, rate: 0, prevClose: 0, dayChangePct: 0 }
+    }
+    const rate = parseFloat(row.close)
+    const prev = row.previous_close ? parseFloat(row.previous_close) : rate
+    return { pair, rate, prevClose: prev, dayChangePct: dayChangePct(rate, prev) }
+  })
+}
+
 // ─── Active provider ─────────────────────────────────────────────────────────
 
 function getProvider(): StubProvider | HybridProvider | OpenBBProvider {

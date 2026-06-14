@@ -15,6 +15,11 @@ import {
   handleGoAheadOrCancel,
 } from '@/lib/athena-handler'
 import {
+  detectCassandraIntent,
+  handleCassandraBrief,
+  handleFxOnly,
+} from '@/lib/cassandra-handler'
+import {
   detectDemeterIntent,
   handlePortfolioBrief,
   handleAddHolding,
@@ -119,6 +124,21 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
       await getDb()
         .update(activity)
         .set({ status: 'success', output: 'athena go-ahead handled', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // CASSANDRA intent routing (before DEMETER — "brief me" belongs to CASSANDRA)
+    const cassandraIntent = detectCassandraIntent(text)
+    if (cassandraIntent) {
+      await getDb().update(activity).set({ agent: 'CASSANDRA' }).where(eq(activity.id, rowId))
+      switch (cassandraIntent.type) {
+        case 'morning_brief': await handleCassandraBrief(channel, event.user); break
+        case 'fx_only':       await handleFxOnly(channel, event.user); break
+      }
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
         .where(eq(activity.id, rowId))
       return
     }

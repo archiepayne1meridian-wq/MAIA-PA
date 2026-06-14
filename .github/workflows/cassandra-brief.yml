@@ -1,0 +1,19 @@
+name: CASSANDRA Morning Brief
+
+on:
+  schedule:
+    # 06:35 UTC = 07:35 BST (British Summer Time, UTC+1, May–Oct)
+    # Offset 5 min from DEMETER (06:30) so the two briefs don't fire simultaneously.
+    # Note: in winter (GMT, UTC+0) this fires at 06:35 local. Adjust if needed.
+    - cron: '35 6 * * 1-5'
+  workflow_dispatch: # manual trigger for testing and deployment verification
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger CASSANDRA brief
+        run: |
+          curl -f -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            "https://maia-pa-production.up.railway.app/api/cassandra/brief"

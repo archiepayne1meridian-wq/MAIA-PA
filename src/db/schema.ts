@@ -88,3 +88,12 @@ export const portfolio_snapshots = sqliteTable('portfolio_snapshots', {
   day_change: real('day_change').notNull(),
   holdings_json: text('holdings_json').notNull(),
 })
+
+export const research_briefs = sqliteTable('research_briefs', {
+  id: text('id').primaryKey(),
+  type: text('type').notNull(),        // 'morning' | 'on_demand'
+  markets_json: text('markets_json').notNull(),
+  headlines_json: text('headlines_json').notNull(),
+  summary: text('summary').notNull(),
+  created_at: integer('created_at').notNull(),
+})

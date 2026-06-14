@@ -83,3 +83,28 @@ Append-only audit trail. Each entry: date · agent/human · decision + rationale
 **Compliance note:** DEMETER is informational only. Risk flags are neutral facts (`"MSTR is 45% of the book."`) — never advice. `summariseNews()` is a stub that throws until the news Claude call is explicitly approved. No personal-account trading signals or automation.
 
 **Status:** Scaffold complete. Next: start Railway dev server, verify Slack DEMETER intent routing end-to-end, seed holdings via "DEMETER, seed holdings", then manual POST to `/api/demeter/brief`.
+
+---
+
+## 2026-06-14 — Human + MAIA (Phase 1 — DEMETER live data)
+
+**Decision:** Wire live prices via Twelve Data (US tickers) + Alpha Vantage (LSE ETFs).
+
+**Root cause of delay:** Yahoo Finance (both `yahoo-finance2` npm package and direct `fetch()`) is blocked at TCP level from Railway's datacenter IPs — `fetch failed`, not HTTP 4xx. No workaround; requires an API-key-authenticated provider so the IP doesn't matter.
+
+**Twelve Data free tier** (`TWELVE_DATA_API_KEY`): covers NASDAQ/NYSE. Confirmed Railway-safe. Handles MU, AMAT, IONQ, MSTR + the GBP/USD FX rate.
+
+**Alpha Vantage free tier** (`ALPHA_VANTAGE_API_KEY`, 25 req/day): covers LSE ETFs. Railway-safe (API-key auth). Handles VWRP.LON and VDPG.LON. Sequential fetches with a 1.2s gap to respect the 1-req/sec burst limit. Free key at alphavantage.co/support/#api-key.
+
+**`tools/market-data.ts` design:**
+- `HybridProvider` routes by exchange: `LSE_TICKERS = {VWRP, VDPG}` → Alpha Vantage; all others → Twelve Data. FX always from Twelve Data.
+- Alpha Vantage `GLOBAL_QUOTE` does not return a currency field — currency inferred from symbol suffix (`.LON` → `GBP`). `normalisePence` is still called in case AV returns GBp for any future ticker.
+- Per-symbol error logging in `TwelveDataProvider`: code + message logged immediately on `status:"error"` rows — no silent failures.
+- `getProvider()` warns loudly (console.warn) if either key is missing and falls back to `StubProvider`.
+
+**Verified:**
+- All 6 holdings resolve locally: VWRP £140.08, VDPG £43.40, total ≈ £3,124.
+- Brief posts to Slack with live prices, day P&L, total P&L, allocation %, and concentration flag (VWRP 45%).
+- `workflow_dispatch` on `demeter-brief.yml` fires the brief unattended via GitHub Actions → Railway → Slack.
+
+**Status:** DEMETER Phase 1 complete. Scheduled-push pattern proven.

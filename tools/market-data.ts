@@ -347,8 +347,16 @@ function todayStr(): string {
 // ─── Index + FX quote types (CASSANDRA) ──────────────────────────────────────
 // These always use TwelveDataProvider directly (no portfolio routing needed).
 
+// IndexSpec: symbol is the data-source ticker (e.g. "SPY", "ISF.L"); label is the
+// display name shown in the brief (e.g. "S&P 500", "FTSE 100").
+export interface IndexSpec {
+  symbol: string
+  label: string
+}
+
 export interface IndexQuote {
   symbol: string
+  label: string    // display name — use this in the brief, not the ETF ticker
   level: number
   prevClose: number
   dayChangePct: number
@@ -361,50 +369,99 @@ export interface FxQuote {
   dayChangePct: number
 }
 
+// Stub data uses ETF proxies that match the free Twelve Data tier (NASDAQ/NYSE).
+// ISF.L is the LSE-listed iShares FTSE 100 ETF — routed to Alpha Vantage.
 const STUB_INDICES: IndexQuote[] = [
-  { symbol: 'SPX',  level: 6014.0, prevClose: 5983.9, dayChangePct: 0.50 },
-  { symbol: 'UKX',  level: 8214.0, prevClose: 8181.2, dayChangePct: 0.40 },
-  { symbol: 'IXIC', level: 19450.0, prevClose: 19350.0, dayChangePct: 0.52 },
+  { symbol: 'SPY',   label: 'S&P 500', level: 591.23, prevClose: 588.27, dayChangePct:  0.50 },
+  { symbol: 'QQQ',   label: 'Nasdaq',  level: 511.40, prevClose: 508.77, dayChangePct:  0.52 },
+  { symbol: 'ISF.L', label: 'FTSE 100', level: 19.08, prevClose: 18.97,  dayChangePct:  0.58 },
 ]
 
 const STUB_FX_QUOTES: FxQuote[] = [
   { pair: 'GBP/USD', rate: 1.272, prevClose: 1.274, dayChangePct: -0.16 },
-  { pair: 'EUR/USD', rate: 1.084, prevClose: 1.083, dayChangePct: 0.09  },
-  { pair: 'EUR/GBP', rate: 0.852, prevClose: 0.850, dayChangePct: 0.24  },
+  { pair: 'EUR/USD', rate: 1.084, prevClose: 1.083, dayChangePct:  0.09 },
+  { pair: 'EUR/GBP', rate: 0.852, prevClose: 0.850, dayChangePct:  0.24 },
 ]
 
-function dayChangePct(level: number, prevClose: number): number {
+function calcDayChangePct(level: number, prevClose: number): number {
   if (prevClose === 0) return 0
   return Math.round(((level - prevClose) / prevClose) * 10000) / 100
 }
 
-export async function getIndexQuotes(symbols: string[]): Promise<IndexQuote[]> {
-  if (symbols.length === 0) return []
-
-  const tdKey = process.env.TWELVE_DATA_API_KEY
-  if (!tdKey) {
-    console.warn('[market-data] TWELVE_DATA_API_KEY not set — using stub index quotes.')
-    return STUB_INDICES.filter(q => symbols.includes(q.symbol))
-  }
+// getIndexQuotes: routes by exchange.
+//   LSE symbols (ending .L) → Alpha Vantage (same path as VWRP/VDPG in DEMETER)
+//   US symbols (SPY, QQQ)   → Twelve Data free tier (NASDAQ/NYSE covered)
+// Falls back to stubs on missing keys or API errors; logs loudly on any failure.
+export async function getIndexQuotes(specs: IndexSpec[]): Promise<IndexQuote[]> {
+  if (specs.length === 0) return []
 
   if (process.env.USE_STUB_PRICES === 'true') {
-    return STUB_INDICES.filter(q => symbols.includes(q.symbol))
+    return STUB_INDICES.filter(q => specs.some(s => s.symbol === q.symbol))
   }
 
-  const td = new TwelveDataProvider(tdKey)
-  const rows = await td['batchQuote'](symbols)
+  const tdKey = process.env.TWELVE_DATA_API_KEY
+  const avKey = process.env.ALPHA_VANTAGE_API_KEY
 
-  return symbols.map(sym => {
-    const row = rows[sym] ?? {}
-    if (row.status === 'error' || !row.close) {
-      console.error(`[market-data] Index quote unavailable for "${sym}": ${JSON.stringify(row)}`)
-      const stub = STUB_INDICES.find(q => q.symbol === sym)
-      return stub ?? { symbol: sym, level: 0, prevClose: 0, dayChangePct: 0 }
+  const lseSpecs = specs.filter(s => s.symbol.endsWith('.L'))
+  const usSpecs  = specs.filter(s => !s.symbol.endsWith('.L'))
+
+  const results: IndexQuote[] = []
+
+  // US tickers → Twelve Data
+  if (usSpecs.length > 0) {
+    if (!tdKey) {
+      console.warn('[market-data] TWELVE_DATA_API_KEY not set — using stub index quotes for US.')
+      results.push(...STUB_INDICES.filter(q => usSpecs.some(s => s.symbol === q.symbol)))
+    } else {
+      const td = new TwelveDataProvider(tdKey)
+      const symbols = usSpecs.map(s => s.symbol)
+      const rows = await td['batchQuote'](symbols)
+      for (const spec of usSpecs) {
+        const row = rows[spec.symbol] ?? {}
+        if (row.status === 'error' || !row.close) {
+          console.error(`[market-data] Index quote unavailable for "${spec.symbol}": ${JSON.stringify(row)}`)
+          const stub = STUB_INDICES.find(q => q.symbol === spec.symbol)
+          results.push(stub ?? { symbol: spec.symbol, label: spec.label, level: 0, prevClose: 0, dayChangePct: 0 })
+        } else {
+          const level = parseFloat(row.close)
+          const prev  = row.previous_close ? parseFloat(row.previous_close) : level
+          results.push({ symbol: spec.symbol, label: spec.label, level, prevClose: prev, dayChangePct: calcDayChangePct(level, prev) })
+        }
+      }
     }
-    const level = parseFloat(row.close)
-    const prev  = row.previous_close ? parseFloat(row.previous_close) : level
-    return { symbol: sym, level, prevClose: prev, dayChangePct: dayChangePct(level, prev) }
-  })
+  }
+
+  // LSE tickers → Alpha Vantage (.L → .LON)
+  if (lseSpecs.length > 0) {
+    if (!avKey) {
+      console.warn('[market-data] ALPHA_VANTAGE_API_KEY not set — using stub index quotes for LSE.')
+      results.push(...STUB_INDICES.filter(q => lseSpecs.some(s => s.symbol === q.symbol)))
+    } else {
+      const av = new AlphaVantageProvider(avKey)
+      // AlphaVantageProvider.getQuotes takes tickers without .L suffix; maps to .LON internally
+      const avTickers = lseSpecs.map(s => s.symbol.replace(/\.L$/, ''))
+      const avQuotes = await av.getQuotes(avTickers)
+      for (const spec of lseSpecs) {
+        const baseTicker = spec.symbol.replace(/\.L$/, '')
+        const q = avQuotes.find(r => r.ticker === baseTicker)
+        if (!q) {
+          console.error(`[market-data] Alpha Vantage: no quote for ${spec.symbol}`)
+          const stub = STUB_INDICES.find(s => s.symbol === spec.symbol)
+          results.push(stub ?? { symbol: spec.symbol, label: spec.label, level: 0, prevClose: 0, dayChangePct: 0 })
+        } else {
+          results.push({
+            symbol: spec.symbol,
+            label: spec.label,
+            level: q.price,
+            prevClose: q.prevClose,
+            dayChangePct: calcDayChangePct(q.price, q.prevClose),
+          })
+        }
+      }
+    }
+  }
+
+  return results
 }
 
 export async function getFxQuotes(pairs: string[]): Promise<FxQuote[]> {
@@ -432,7 +489,7 @@ export async function getFxQuotes(pairs: string[]): Promise<FxQuote[]> {
     }
     const rate = parseFloat(row.close)
     const prev = row.previous_close ? parseFloat(row.previous_close) : rate
-    return { pair, rate, prevClose: prev, dayChangePct: dayChangePct(rate, prev) }
+    return { pair, rate, prevClose: prev, dayChangePct: calcDayChangePct(rate, prev) }
   })
 }
 

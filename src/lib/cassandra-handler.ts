@@ -7,7 +7,7 @@ import * as path from 'path'
 import { eq } from 'drizzle-orm'
 import { postMessage } from './slack'
 import { formatBrief } from './cassandra'
-import { getIndexQuotes, getFxQuotes } from '../../tools/market-data'
+import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
 import { getDb } from '@/db'
 import { activity, research_briefs } from '@/db/schema'
@@ -15,7 +15,7 @@ import { activity, research_briefs } from '@/db/schema'
 // ─── Config parsing ───────────────────────────────────────────────────────────
 
 interface CassandraConfig {
-  indices: string[]
+  indices: IndexSpec[]          // { symbol: 'SPY', label: 'S&P 500' }
   fxPairs: string[]
   newsFeeds: { url: string; name: string }[]
   regulatoryFeeds: { url: string; name: string }[]
@@ -86,8 +86,15 @@ function parseCassandraConfig(content: string): CassandraConfig {
         continue
       }
 
-      // Simple string list
-      if (currentSection === 'indices') config.indices.push(val)
+      // Indices: "- SPY:S&P 500" format (symbol:label)
+      if (currentSection === 'indices') {
+        const colonIdx = val.indexOf(':')
+        if (colonIdx > 0) {
+          config.indices.push({ symbol: val.slice(0, colonIdx).trim(), label: val.slice(colonIdx + 1).trim() })
+        } else {
+          config.indices.push({ symbol: val, label: val })  // label defaults to symbol if no colon
+        }
+      }
       if (currentSection === 'fx_pairs') config.fxPairs.push(val)
       continue
     }
@@ -120,7 +127,11 @@ function loadConfig(): CassandraConfig {
   } catch (err) {
     console.warn('[cassandra] context/cassandra.md not found, using defaults:', err)
     return {
-      indices: ['SPX', 'UKX', 'IXIC'],
+      indices: [
+        { symbol: 'SPY',   label: 'S&P 500' },
+        { symbol: 'QQQ',   label: 'Nasdaq' },
+        { symbol: 'ISF.L', label: 'FTSE 100' },
+      ],
       fxPairs: ['GBP/USD', 'EUR/USD', 'EUR/GBP'],
       newsFeeds: [],
       regulatoryFeeds: [],

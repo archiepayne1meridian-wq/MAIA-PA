@@ -37,8 +37,10 @@ export function formatBrief(
   const sections: string[] = []
 
   // ── Markets ──────────────────────────────────────────────────────────────
+  // Use label (e.g. "S&P 500") not the ETF ticker. Show % move only — ETF price
+  // levels aren't meaningful as index levels (ISF.L at £19 ≠ FTSE 100 at 8,200).
   if (indices.length > 0) {
-    const lines = indices.map(q => `${q.symbol} ${q.level.toLocaleString('en-GB')} ${fmtPct(q.dayChangePct)}`).join(' · ')
+    const lines = indices.map(q => `${q.label} ${fmtPct(q.dayChangePct)}`).join(' · ')
     const prose = `*Markets*\n${lines}`
     const guarded = guardProse(prose, 'Markets')
     if (guarded) sections.push(guarded)

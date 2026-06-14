@@ -6,58 +6,50 @@ Agent: CASSANDRA · Tier 2 (public market data + news feeds, no client data)
 
 ## Timing
 
-```
 brief_time: 07:35 Europe/London, Mon–Fri
 items_per_section: 4
-```
 
-## Indices (Twelve Data symbols — verify each resolves before going live)
+## Indices (ETF proxies — free Twelve Data tier; labelled as the index in the brief)
+# Format: - TICKER:Display Label
+# US tickers (SPY, QQQ) → Twelve Data (NASDAQ/NYSE, free tier)
+# LSE tickers (*.L)     → Alpha Vantage (same path as VWRP/VDPG, .LON suffix)
+# The daily % move matches the index; the ETF price level is NOT shown.
 
-```
 indices:
-  - SPX        # S&P 500
-  - UKX        # FTSE 100
-  - IXIC       # Nasdaq Composite
-  # - SX5E     # Euro Stoxx 50
-  # - NKY      # Nikkei 225
-```
+  - SPY:S&P 500
+  - QQQ:Nasdaq
+  - ISF.L:FTSE 100
 
 ## FX pairs (Twelve Data format: BASE/QUOTE)
 
-```
 fx_pairs:
   - GBP/USD
   - EUR/USD
   - EUR/GBP
-  # - USD/JPY
-```
 
-## News feeds (RSS/Atom URLs)
+## News feeds (RSS/Atom)
 
-```
 news_feeds:
   - url: https://feeds.bbci.co.uk/news/business/rss.xml
     name: BBC Business
-  # - url: https://www.ft.com/news-feed
-  #   name: FT
-```
 
-## Regulatory feeds (MFSA and optionally FCA)
+## Regulatory feeds
+# FCA has a real RSS feed — use this for the Regulatory section.
+# MFSA does not have a discoverable RSS feed. A dedicated HTML-scrape tool is planned
+# for v2 (fetch mfsa.mt/news, parse headlines from HTML with loud logging on layout change).
 
-```
 regulatory_feeds:
-  - url: https://www.mfsa.mt/news/feed/
-    name: MFSA
-  # - url: https://www.fca.org.uk/news/rss.xml
-  #   name: FCA
-```
+  - url: https://www.fca.org.uk/news/rss.xml
+    name: FCA
 
 ---
 
 ## Notes
 
-- Index symbols follow Twelve Data's conventions (not Yahoo Finance). Verify symbols
-  in Step 5 before going live — e.g. SPX, UKX, IXIC are correct as of June 2026.
+- Index labels are what CASSANDRA prints (e.g. "S&P 500"), not the ETF ticker.
+  The proxy ETF % move tracks the index closely; this is the data source, not the display.
 - CASSANDRA reports facts only. No buy/sell/hold language anywhere.
 - Each brief is saved to the `research_briefs` table. IRIS will read these later.
 - News digests (Claude summarisation) require explicit "go ahead" before being enabled.
+- MFSA: v2 follow-on. Build tools/mfsa-scraper.ts that fetches mfsa.mt/news and
+  parses <article> headlines; log loudly on any structural change. Not a launch blocker.

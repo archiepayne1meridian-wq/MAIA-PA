@@ -1,24 +1,42 @@
 // CASSANDRA — brief formatter and news digestor.
 //
-// formatBrief: deterministic. Runs the advice-word guard on CASSANDRA's own prose only.
-// digestNews:  Claude call. HARD STOP stub until explicitly enabled — throws if called.
+// formatBrief: deterministic. Advice-word guard applies to Claude-generated digest
+//              lines only — never to attributed third-party titles.
+// digestNews:  One Claude (Haiku) call per section. Produces explanations (what it
+//              means / why it matters) in CASSANDRA's own words. If a headline is
+//              too thin to add context, relays it as a plain factual statement.
+//              Never hallucinates facts not in the title.
 
+import { askWith } from './claude'
 import type { IndexQuote, FxQuote } from '../../tools/market-data'
 import type { FeedItem } from '../../tools/feeds'
 
-// Advice words: whole-word, case-insensitive. Applied to CASSANDRA's prose only.
+// Haiku for short low-stakes summarisation — cheap and fast.
+const DIGEST_MODEL = 'claude-haiku-4-5-20251001'
+
+// Advice words: whole-word, case-insensitive. Applied to CASSANDRA's own prose only.
 // Must NOT trip on: "holdings", "operating", "buyback", "threshold", "withholding"
 const ADVICE_WORD_RE = /\b(buy|sell|hold|consider|recommend(?:ation)?|should|trim|rating|price target|add to)\b/i
 
+// Section-level guard — for deterministic prose (Markets, FX headers).
 function guardProse(text: string, section: string): string | null {
   const match = ADVICE_WORD_RE.exec(text)
   if (match) {
-    console.error(
-      `[cassandra] Advice-word guard tripped in "${section}" on word "${match[0]}" — omitting section.`,
-    )
+    console.error(`[cassandra] Advice-word guard tripped in "${section}" on word "${match[0]}" — omitting section.`)
     return null
   }
   return text
+}
+
+// Per-line guard — for Claude-generated digest lines.
+// Returns the line if clean; null if it trips (log + drop the line, not the whole section).
+function guardDigestLine(line: string, section: string): string | null {
+  const match = ADVICE_WORD_RE.exec(line)
+  if (match) {
+    console.error(`[cassandra] Advice-word guard tripped in "${section}" digest line on word "${match[0]}" — dropping line.`)
+    return null
+  }
+  return line
 }
 
 function fmtPct(pct: number): string {
@@ -26,19 +44,37 @@ function fmtPct(pct: number): string {
   return `${sign}${pct.toFixed(2)}%`
 }
 
+function buildNewsLines(
+  items: FeedItem[],
+  digests: Map<string, string>,
+  section: string,
+): string[] {
+  return items.map(item => {
+    const digest = digests.get(item.link)
+    if (digest) {
+      // Claude-generated prose — apply per-line guard.
+      const guarded = guardDigestLine(digest, section)
+      if (!guarded) return null  // drop the offending line, keep the rest
+      return `• ${guarded} — <${item.link}|${item.source}>`
+    }
+    // Attributed third-party title — no guard (relayed fact, not CASSANDRA's prose).
+    return `• ${item.title} — <${item.link}|${item.source}>`
+  }).filter((l): l is string => l !== null)
+}
+
 export function formatBrief(
   indices: IndexQuote[],
   fx: FxQuote[],
   regulatory: FeedItem[],
   news: FeedItem[],
-  digests: Map<string, string>,  // item.link → one-liner; empty map until digestNews is live
+  digests: Map<string, string>,  // item.link → one-liner from digestNews
   skipped: string[],
 ): string {
   const sections: string[] = []
 
   // ── Markets ──────────────────────────────────────────────────────────────
   // Use label (e.g. "S&P 500") not the ETF ticker. Show % move only — ETF price
-  // levels aren't meaningful as index levels (ISF.L at £19 ≠ FTSE 100 at 8,200).
+  // levels aren't meaningful as index levels (ISF.L at £10 ≠ FTSE 100 at 8,200).
   if (indices.length > 0) {
     const lines = indices.map(q => `${q.label} ${fmtPct(q.dayChangePct)}`).join(' · ')
     const prose = `*Markets*\n${lines}`
@@ -56,26 +92,14 @@ export function formatBrief(
 
   // ── Regulatory ───────────────────────────────────────────────────────────
   if (regulatory.length > 0) {
-    const lines = regulatory.map(item => {
-      const digest = digests.get(item.link)
-      const text   = digest ?? item.title
-      return `• ${text} — <${item.link}|${item.source}>`
-    }).join('\n')
-    const prose = `*Regulatory*\n${lines}`
-    const guarded = guardProse(prose, 'Regulatory')
-    if (guarded) sections.push(guarded)
+    const lines = buildNewsLines(regulatory, digests, 'Regulatory')
+    if (lines.length > 0) sections.push(`*Regulatory*\n${lines.join('\n')}`)
   }
 
   // ── Headlines ────────────────────────────────────────────────────────────
   if (news.length > 0) {
-    const lines = news.map(item => {
-      const digest = digests.get(item.link)
-      const text   = digest ?? item.title
-      return `• ${text} — <${item.link}|${item.source}>`
-    }).join('\n')
-    const prose = `*Headlines*\n${lines}`
-    const guarded = guardProse(prose, 'Headlines')
-    if (guarded) sections.push(guarded)
+    const lines = buildNewsLines(news, digests, 'Headlines')
+    if (lines.length > 0) sections.push(`*Headlines*\n${lines.join('\n')}`)
   }
 
   if (sections.length === 0) {
@@ -91,11 +115,37 @@ export function formatBrief(
   return msg
 }
 
-// HARD STOP — digestNews is not yet enabled.
-// Wire it only after explicit "go ahead" from the user (Step 6).
-export async function digestNews(
-  _items: FeedItem[],
-  _section: string,
-): Promise<Map<string, string>> {
-  throw new Error('[cassandra] digestNews not yet enabled — awaiting go-ahead')
+const DIGEST_SYSTEM = `You are CASSANDRA, a neutral financial news summariser.
+
+For each numbered headline below, write ONE sentence that explains what it means or why it matters — in your own words, grounded only in the information in the title. Do not reword the headline verbatim. Do not hallucinate facts that are not present in the title. If a headline is too thin to add real context, relay it as a plain factual statement rather than inventing detail.
+
+Rules:
+- One sentence per headline, matching the input numbering.
+- Neutral and factual only — no buy, sell, hold, consider, recommend, should, trim, rating, or price target language.
+- Return ONLY the numbered sentences, no preamble, no trailing commentary.`
+
+// digestNews: one Claude (Haiku) call per section.
+// Returns Map<item.link, one-liner>. On parse error for any item, falls back to empty
+// (formatBrief will use the raw title instead).
+export async function digestNews(items: FeedItem[], section: string): Promise<Map<string, string>> {
+  if (items.length === 0) return new Map()
+
+  const userText = items
+    .map((item, i) => `${i + 1}. "${item.title}"`)
+    .join('\n')
+
+  const raw = await askWith(DIGEST_SYSTEM, userText, 512, DIGEST_MODEL)
+
+  const result = new Map<string, string>()
+  const lines = raw.trim().split('\n').filter(l => l.trim())
+
+  for (let i = 0; i < items.length; i++) {
+    const line = lines[i]
+    if (!line) continue
+    const text = line.replace(/^\d+\.\s*/, '').trim()
+    if (text) result.set(items[i]!.link, text)
+  }
+
+  console.log(`[cassandra] digestNews(${section}): ${result.size}/${items.length} digests generated`)
+  return result
 }

@@ -6,7 +6,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { eq } from 'drizzle-orm'
 import { postMessage } from './slack'
-import { formatBrief } from './cassandra'
+import { formatBrief, digestNews } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
 import { getDb } from '@/db'
@@ -195,8 +195,22 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
     .filter(i => config.newsFeeds.some(f => f.name === i.source))
     .slice(0, n)
 
-  // digestNews is a HARD STOP stub — pass an empty map until Step 6.
-  const digests = new Map<string, string>()
+  // One Claude (Haiku) call per section. Errors fall back to raw titles gracefully.
+  const [regulatoryDigests, newsDigests] = await Promise.all([
+    regulatory.length > 0
+      ? digestNews(regulatory, 'Regulatory').catch(err => {
+          console.error('[cassandra] digestNews(Regulatory) failed:', err)
+          return new Map<string, string>()
+        })
+      : Promise.resolve(new Map<string, string>()),
+    news.length > 0
+      ? digestNews(news, 'Headlines').catch(err => {
+          console.error('[cassandra] digestNews(Headlines) failed:', err)
+          return new Map<string, string>()
+        })
+      : Promise.resolve(new Map<string, string>()),
+  ])
+  const digests = new Map([...regulatoryDigests, ...newsDigests])
 
   const text = formatBrief(indices, fx, regulatory, news, digests, feeds.skipped)
 

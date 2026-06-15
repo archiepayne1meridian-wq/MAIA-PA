@@ -21,10 +21,11 @@ export async function ask(userText: string): Promise<string> {
 export async function askWith(
   systemPrompt: string,
   userText: string,
-  maxTokens = 2048
+  maxTokens = 2048,
+  model?: string,  // override for cheap tasks (e.g. Haiku for news digests)
 ): Promise<string> {
   const message = await getClient().messages.create({
-    model: env.ANTHROPIC_MODEL(),
+    model: model ?? env.ANTHROPIC_MODEL(),
     max_tokens: maxTokens,
     system: systemPrompt,
     messages: [{ role: 'user', content: userText }],

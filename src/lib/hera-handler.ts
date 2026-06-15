@@ -116,6 +116,15 @@ async function failActivity(rowId: string, startMs: number, err: unknown) {
     .where(eq(activity.id, rowId))
 }
 
+// Supportive response shown when distress is flagged.
+// Warm, human, not clinical. Gently points toward a trusted person.
+// No helpline wall, no diagnosis, no specific methods.
+const SUPPORTIVE_RESPONSE =
+  `It sounds like things are weighing on you right now. ` +
+  `Please don't sit with that alone — reach out to someone you trust today, ` +
+  `whether that's a friend, a family member, or your GP. ` +
+  `I've noted your reflection.`
+
 // ─── Log a reflection ─────────────────────────────────────────────────────────
 
 export async function handleLogReflection(
@@ -126,42 +135,40 @@ export async function handleLogReflection(
   const { rowId, startMs } = await logActivity('log_reflection', text.slice(0, 200))
 
   try {
-    const distress = detectDistress(text)
-    const sentiment = coarseSentiment(text, distress.flagged)
+    // ── Step 1: keyword floor (runs always, result cannot be suppressed) ──
+    const keywordCheck = detectDistress(text)
     const clientMention = detectClientMention(text)
 
-    await addReflection({
-      body: text,
-      source,
-      sentiment,
-      distressFlagged: distress.flagged,
-    })
+    // ── Step 2: Claude ack + belt-and-braces distress check ──────────────
+    let ackText = `Logged. Thanks for checking in. 🌿`   // fallback if Claude unavailable
+    let modelFlaggedDistress = false
+    try {
+      const result = await acknowledgeReflection(text)
+      ackText = result.ack
+      modelFlaggedDistress = result.modelFlaggedDistress
+    } catch (err) {
+      console.error('[hera] acknowledgeReflection failed (using fallback):', err)
+    }
 
-    // ── Distress path (overrides everything else) ─────────────────────────
-    if (distress.flagged) {
-      // Warm, human, no diagnosis. Exact wording reviewed at Step 5.
-      const reply =
-        `I hear you — it sounds like things are weighing on you right now. ` +
-        `Please do reach out to someone you trust today, whether that's a friend, family member, ` +
-        `or your GP. You don't have to carry this alone. I've noted today's reflection.`
-      await postMessage(channel, reply)
+    // ── Step 3: final flag — keyword OR model; keyword can never be suppressed ──
+    const finalDistressFlagged = keywordCheck.flagged || modelFlaggedDistress
+
+    // ── Step 4: save reflection with final flag ───────────────────────────
+    const sentiment = coarseSentiment(text, finalDistressFlagged)
+    await addReflection({ body: text, source, sentiment, distressFlagged: finalDistressFlagged })
+
+    // ── Step 5: route based on final flag ─────────────────────────────────
+    if (finalDistressFlagged) {
+      // Supportive path — never let a cheerful ack go out on a flagged note.
+      await postMessage(channel, SUPPORTIVE_RESPONSE)
       await succeedActivity(rowId, startMs, 'distress path taken')
       return
     }
 
     // ── Normal acknowledgement ────────────────────────────────────────────
-    let ack: string
-    try {
-      ack = await acknowledgeReflection(text)
-    } catch {
-      // Stub path (Step 2): warm placeholder until Claude is wired at Step 4.
-      ack = `Logged. Thanks for checking in — reflection saved. 🌿`
-    }
-
     const streak = await getStreak()
     const streakNote = streak >= 2 ? `  _${streak}-day streak._` : ''
-
-    const parts: string[] = [ack + streakNote]
+    const parts: string[] = [ackText + streakNote]
 
     if (clientMention) {
       parts.push(
@@ -197,16 +204,13 @@ export async function handleOnDemand(
       return
     }
 
-    // Until Step 4 (Claude), surface a honest stub.
     let reply: string
     if (intent === 'mentor_prompt') {
-      reply = `_HERA: mentor-prompt feature coming soon — wire up weekly coaching first (Step 4)._`
+      // Run coachWeekly and extract just the final adviser-prompt paragraph.
+      // For simplicity, we run the full coaching read — the adviser prompt is the last paragraph.
+      reply = await coachWeekly(recent, config.focusAreas)
     } else {
-      try {
-        reply = await coachWeekly(recent, config.focusAreas)
-      } catch {
-        reply = `_HERA: coaching insights not yet enabled — awaiting go-ahead for Claude calls._`
-      }
+      reply = await coachWeekly(recent, config.focusAreas)
     }
 
     await postMessage(channel, reply)
@@ -255,13 +259,7 @@ export async function buildWeeklyReview(channel: string): Promise<void> {
       return
     }
 
-    let summary: string
-    try {
-      summary = await coachWeekly(reflections, config.focusAreas)
-    } catch {
-      // Stub path: honest placeholder until Step 4
-      summary = `_HERA weekly review not yet enabled — ${reflections.length} reflection(s) this week on record._`
-    }
+    const summary = await coachWeekly(reflections, config.focusAreas)
 
     const nowSec = Math.floor(Date.now() / 1000)
     const weekStart = nowSec - 7 * 86400

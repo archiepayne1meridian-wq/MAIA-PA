@@ -120,10 +120,10 @@ async function failActivity(rowId: string, startMs: number, err: unknown) {
 // Warm, human, not clinical. Gently points toward a trusted person.
 // No helpline wall, no diagnosis, no specific methods.
 const SUPPORTIVE_RESPONSE =
-  `It sounds like things are weighing on you right now. ` +
-  `Please don't sit with that alone — reach out to someone you trust today, ` +
-  `whether that's a friend, a family member, or your GP. ` +
-  `I've noted your reflection.`
+  `It sounds like you're carrying a lot right now, and I'm glad you put it into words. ` +
+  `Please don't carry it on your own — talking to someone you trust, whether a friend, ` +
+  `someone in your family, or someone else close to you, can really help. ` +
+  `I'm always here when you want to reflect.`
 
 // ─── Log a reflection ─────────────────────────────────────────────────────────
 

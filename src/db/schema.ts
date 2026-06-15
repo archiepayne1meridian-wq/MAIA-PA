@@ -97,3 +97,20 @@ export const research_briefs = sqliteTable('research_briefs', {
   summary: text('summary').notNull(),
   created_at: integer('created_at').notNull(),
 })
+
+export const reflections = sqliteTable('reflections', {
+  id: text('id').primaryKey(),
+  body: text('body').notNull(),
+  source: text('source').notNull().default('text'),   // 'text' | 'voice'
+  sentiment: text('sentiment'),                        // 'positive' | 'neutral' | 'low' — internal only, never surfaced as a label
+  distress_flagged: integer('distress_flagged').notNull().default(0),  // 1 = flagged; supportive path taken
+  created_at: integer('created_at').notNull(),
+})
+
+export const weekly_reviews = sqliteTable('weekly_reviews', {
+  id: text('id').primaryKey(),
+  period_start: integer('period_start').notNull(),
+  period_end: integer('period_end').notNull(),
+  summary: text('summary').notNull(),
+  created_at: integer('created_at').notNull(),
+})

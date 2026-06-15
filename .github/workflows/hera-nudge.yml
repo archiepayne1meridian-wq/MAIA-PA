@@ -1,0 +1,47 @@
+name: HERA — Evening Nudge & Weekly Review
+
+on:
+  schedule:
+    # Daily evening nudge: 20:30 UTC = 21:30 BST (BST = UTC+1, summer)
+    # Note: drifts to 20:30 local in winter (GMT = UTC). Adjust cron if needed.
+    - cron: '30 20 * * *'
+    # Sunday weekly review: 20:00 UTC = 21:00 BST (5 min before nudge to avoid overlap)
+    - cron: '0 20 * * 0'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'nudge or weekly'
+        required: false
+        default: 'nudge'
+
+jobs:
+  hera:
+    name: HERA nudge / weekly review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine mode
+        id: mode
+        run: |
+          # workflow_dispatch uses the input; schedule uses day-of-week
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ github.event.inputs.mode || 'nudge' }}" >> $GITHUB_OUTPUT
+          elif [ "$(date +%u)" = "7" ]; then
+            # Sunday cron fires at 20:00 UTC; nudge fires at 20:30 UTC
+            # If minute < 15 it's the 20:00 weekly job; otherwise it's the nudge
+            MIN=$(date +%M)
+            if [ "$MIN" -lt 15 ]; then
+              echo "mode=weekly" >> $GITHUB_OUTPUT
+            else
+              echo "mode=nudge" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "mode=nudge" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post to Railway
+        run: |
+          curl -f -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"mode\":\"${{ steps.mode.outputs.mode }}\"}" \
+            "https://maia-pa-production.up.railway.app/api/hera/nudge"

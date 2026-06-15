@@ -15,6 +15,11 @@ import {
   handleGoAheadOrCancel,
 } from '@/lib/athena-handler'
 import {
+  detectHeraIntent,
+  handleLogReflection,
+  handleOnDemand,
+} from '@/lib/hera-handler'
+import {
   detectCassandraIntent,
   handleCassandraBrief,
   handleFxOnly,
@@ -124,6 +129,27 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
       await getDb()
         .update(activity)
         .set({ status: 'success', output: 'athena go-ahead handled', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // HERA intent routing
+    const heraIntent = detectHeraIntent(text)
+    if (heraIntent) {
+      await getDb().update(activity).set({ agent: 'HERA' }).where(eq(activity.id, rowId))
+      switch (heraIntent.type) {
+        case 'log_reflection':
+          await handleLogReflection(channel, heraIntent.text, 'text')
+          break
+        case 'how_am_i_doing':
+        case 'what_patterns':
+        case 'mentor_prompt':
+          await handleOnDemand(channel, heraIntent.type)
+          break
+      }
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
         .where(eq(activity.id, rowId))
       return
     }

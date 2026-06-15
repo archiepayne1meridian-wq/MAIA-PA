@@ -108,3 +108,39 @@ Append-only audit trail. Each entry: date · agent/human · decision + rationale
 - `workflow_dispatch` on `demeter-brief.yml` fires the brief unattended via GitHub Actions → Railway → Slack.
 
 **Status:** DEMETER Phase 1 complete. Scheduled-push pattern proven.
+
+---
+
+## 2026-06-15 — Human + MAIA (Phase 1 — CASSANDRA complete)
+
+**Decision:** Build CASSANDRA as MAIA's third agent — weekday market & FX morning brief synthesising public index levels, FX rates, regulatory news (FCA RSS), and general financial headlines (BBC Business RSS).
+
+**Autonomy level:** Scheduled-push / on-demand (Tier 2). Public data only. No client data. No approval gate. `digestNews` uses Haiku for neutral one-line explanations per section.
+
+**KPI:** Brief delivered at 07:35 BST Mon–Fri; all four sections populated with live data; no advice language; each brief saved to `research_briefs` for IRIS to draw on later.
+
+**Design choices:**
+
+- `tools/feeds.ts` — `fetchFeed` + `fetchAllFeeds` (Promise.allSettled). Skips unreachable feeds gracefully (log + accumulate skipped names). Handles both RSS 2.0 `<item>` and Atom `<entry>` formats. `fast-xml-parser` added as dependency.
+- Index data via ETF proxies (free Twelve Data tier): `SPY → "S&P 500"`, `QQQ → "Nasdaq"` (TD NASDAQ); `ISF.L → "FTSE 100"` (Alpha Vantage `.LON` path, same as VWRP/VDPG). Brief shows `label + % move` only — ETF price level not shown (avoids ISF.L £10 vs FTSE 100 8,200 confusion). `IndexSpec { symbol, label }` maps proxy ticker → display name.
+- FX data: `getFxQuotes` via Twelve Data `/quote` endpoint (same free tier). Returns `rate + prevClose + dayChangePct` per pair.
+- `src/lib/cassandra.ts` — `formatBrief` + `digestNews`. Advice-word guard: whole-word, case-insensitive, on CASSANDRA's own prose only. Applied per-line to digest output (drop offending line, keep rest — never abort the section). Third-party attributed titles bypass the guard.
+- `digestNews`: one Haiku call per section (2 calls per brief). System prompt instructs: produce one-sentence explanations of what a headline means/why it matters; relay plainly if too thin to add context; never hallucinate; no advice language. Falls back to raw titles on error.
+- `src/app/api/cassandra/brief/route.ts` — Bearer auth + 200-first + setImmediate (identical pattern to DEMETER).
+- `.github/workflows/cassandra-brief.yml` — Mon–Fri 06:35 UTC (07:35 BST), 5 min offset from DEMETER to avoid simultaneous posts. `workflow_dispatch` enabled.
+- `research_briefs` table: stores markets_json, headlines_json, summary per brief. IRIS will read these later (Tier 3, shelved until deVere compliance sign-off).
+- `context/cassandra.md` config parser: plain YAML-lite format parsed at runtime. Indices use `symbol:label` format; feeds use `url: / name:` nested objects.
+
+**Blockers resolved:**
+- Twelve Data free tier doesn't cover index symbols (SPX, UKX → 403). Resolution: ETF proxies (SPY, QQQ via TD; ISF.L via AV).
+- MFSA has no discoverable RSS feed (URL 403). Resolution: use FCA RSS (`fca.org.uk/news/rss.xml`, 20 items confirmed). MFSA is a v2 HTML-scraper follow-on (`tools/mfsa-scraper.ts`).
+
+**Verified:**
+- `tools/feeds.ts`: 5 unit tests pass (RSS parse, Atom parse, HTTP 404, network error, multi-feed).
+- Live brief: S&P 500 +0.54% · Nasdaq +0.59% · FTSE 100 +1.50% · GBP/USD 1.3431 +0.24%.
+- 4/4 Regulatory digests (FCA) + 4/4 Headlines digests (BBC Business) generated via Haiku.
+- Brief saved to `research_briefs`; `activity` rows show `agent='CASSANDRA'`.
+- Manual `curl` POST → brief posts to Slack; `workflow_dispatch` fires unattended.
+- No advice language in any output; advice-word guard tested.
+
+**Status:** CASSANDRA Phase 1 complete. Multi-source RSS synthesis pattern proven.

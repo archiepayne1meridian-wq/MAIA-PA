@@ -178,3 +178,36 @@ Genuine distress (burned out, breaking point, can't cope, not okay) → flagged.
 Supportive response wording approved.
 
 **Status:** HERA Phase 1 complete.
+
+---
+
+## 2026-06-15 — Human + MAIA (Phase 1 — DIANA complete)
+
+**Decision:** Build DIANA as MAIA's fifth agent — objection-handling reference library and full mock cold-call roleplay with rubric-scored feedback.
+
+**Autonomy level:** Info-only / interactive practice (Tier 1). Own use only. No client data. No approval gate. Nothing outbound.
+
+**KPI:** Objection buttons post; tapping returns the four curated blocks; roleplay runs a full in-character mock call with active-session routing interception; exit gives rubric-scored feedback scored on all 7 criteria; no advice or pitch scripting; all actions logged to `activity` with `agent='DIANA'`.
+
+**Design choices:**
+
+- `diana_sessions` table — 9 columns including `last_active_at` (not in minimum spec but required for 4h timeout so a stale session can never trap routing forever).
+- `tools/diana-db.ts` — pure CRUD + three exported pure functions (`parseTranscript`, `appendTurnToTranscript`, `isSessionExpired`) for unit testing. 15 new tests (86 total passing).
+- `parseDianaConfig()` reads `context/diana.md` at runtime — parses all 8 objections (intent/approach/pivot/principles), difficulty default, firmTone, and the full rubric text. Config is human-editable without code change. All 8 objections parse cleanly (verified against actual file).
+- **Active-session check is the first thing in `handleEvent`** — before `handleGoAheadOrCancel`, before all other intent routing. This ensures any message during a roleplay (including ATHENA/HERA keywords) routes to DIANA's roleplay handler until the user explicitly exits.
+- **DIANA intent detection runs before HERA/CASSANDRA/DEMETER/ATHENA** so a `"diana,"` prefix always wins regardless of what other words appear in the start command.
+- Roleplay opening is deterministic ("Hello?") — no Claude call needed at session start; the adviser makes the first move as the caller.
+- `roleplayTurn` (Haiku, 120 tok): receives the transcript BEFORE the latest user message + the user message separately; Claude replies as the prospect in 2–4 natural sentences.
+- `roleplayFeedback` (Haiku, 500 tok): receives the full transcript + rubric from `context/diana.md`; scores all 7 criteria (talk ratio, open questions, rapport, need-led, objection handling, stayed in lane, secured next step); names the single highest-leverage fix; quotes one line well used and one to improve.
+- `objectionGuide` (Haiku, 300 tok): fallback for un-curated objections only; output clearly marked `[DRAFT — refine with firm-approved material]`.
+- Compliance: every reference-mode response carries "Scripts are practice scaffolding — firm-approved material governs real calls." The "Where did you get my details" approach text contains `[YOUR ACTUAL LEAD SOURCE, stated truthfully]` — DIANA serves whatever the user has filled in; never invents a source.
+- Session timeout: `isSessionExpired(lastActiveAt)` returns true after 4h inactivity (14400s). `getActiveSession` auto-expires and returns null, releasing routing to normal agents.
+- `logPractice(userId, objection)` records each objection drill to `activity` table with `type='objection_drill'` for pattern visibility.
+
+**Routing order in events route (final):**
+1. DIANA active-session check (intercepts all routing while roleplay is active)
+2. ATHENA go-ahead/cancel
+3. DIANA intent (reference + roleplay start) — before HERA/CASSANDRA/DEMETER/ATHENA
+4. HERA → CASSANDRA → DEMETER → ATHENA → MAIA spine
+
+**Status:** DIANA Phase 1 complete. Pending live Slack verification (reference buttons, roleplay turn, scored feedback).

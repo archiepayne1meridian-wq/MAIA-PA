@@ -114,3 +114,15 @@ export const weekly_reviews = sqliteTable('weekly_reviews', {
   summary: text('summary').notNull(),
   created_at: integer('created_at').notNull(),
 })
+
+export const diana_sessions = sqliteTable('diana_sessions', {
+  id: text('id').primaryKey(),
+  slack_user: text('slack_user').notNull(),
+  scenario: text('scenario'),                                       // objection label / persona being drilled
+  difficulty: text('difficulty').notNull().default('neutral'),      // 'warm' | 'neutral' | 'tough'
+  transcript_json: text('transcript_json').notNull().default('[]'), // DianaTranscriptTurn[]
+  status: text('status').notNull().default('active'),               // 'active' | 'ended'
+  created_at: integer('created_at').notNull(),
+  last_active_at: integer('last_active_at').notNull(),              // updated on each turn; used for 4h timeout
+  ended_at: integer('ended_at'),
+})

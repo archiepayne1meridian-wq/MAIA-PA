@@ -20,6 +20,15 @@ import {
   handleOnDemand,
 } from '@/lib/hera-handler'
 import {
+  detectDianaIntent,
+  handleObjectionLibrary,
+  handleRoleplayStart,
+  handleRoleplayTurn,
+  handleRoleplayExit,
+  handleRoleplayReset,
+} from '@/lib/diana-handler'
+import { getActiveSession } from '../../../../../tools/diana-db'
+import {
   detectCassandraIntent,
   handleCassandraBrief,
   handleFxOnly,
@@ -123,12 +132,59 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
   })
 
   try {
+    // ── DIANA: active-session check — MUST run before all other intent routing ──
+    // While a diana_session is active, every message routes to DIANA's roleplay
+    // handler until the user says "done" / "exit" / "stop" / "diana, reset".
+    // This prevents "quiz me" (ATHENA) or "reflection" (HERA) said during a roleplay
+    // from routing to the wrong agent.
+    const dianaSession = await getActiveSession(event.user ?? '')
+    if (dianaSession) {
+      await getDb().update(activity).set({ agent: 'DIANA' }).where(eq(activity.id, rowId))
+      if (/^\s*(done|exit|stop)\s*$/i.test(text)) {
+        await handleRoleplayExit(channel, event.user, dianaSession)
+      } else if (/^\s*diana\s*,?\s*reset\s*$/i.test(text)) {
+        await handleRoleplayReset(channel, event.user, dianaSession)
+      } else {
+        await handleRoleplayTurn(channel, event.user, dianaSession, text)
+      }
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
     // Check if this is a "go ahead" / "cancel" response for a pending ATHENA quiz
     const handled = await handleGoAheadOrCancel(text, channel, event.user)
     if (handled) {
       await getDb()
         .update(activity)
         .set({ status: 'success', output: 'athena go-ahead handled', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // ── DIANA intent routing (reference mode + roleplay start) ────────────────
+    // Sits here — before HERA/CASSANDRA/DEMETER/ATHENA — so a "diana," prefix
+    // always wins regardless of what other words appear in the message.
+    const dianaIntent = detectDianaIntent(text)
+    if (dianaIntent) {
+      await getDb().update(activity).set({ agent: 'DIANA' }).where(eq(activity.id, rowId))
+      switch (dianaIntent.type) {
+        case 'reference':
+          await handleObjectionLibrary(channel, event.user)
+          break
+        case 'roleplay_start':
+          await handleRoleplayStart(channel, event.user, dianaIntent)
+          break
+        case 'reset':
+          // No active session to reset (checked above)
+          await postMessage(channel, `_No active roleplay to reset._`)
+          break
+      }
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
         .where(eq(activity.id, rowId))
       return
     }

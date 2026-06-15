@@ -4,6 +4,7 @@ import { getDb } from '@/db'
 import { approvals } from '@/db/schema'
 import { eq } from 'drizzle-orm'
 import { handleReveal, handleGrade, handleMcqAnswer } from '@/lib/athena-handler'
+import { handleObjectionDetail } from '@/lib/diana-handler'
 
 interface SlackAction {
   action_id: string
@@ -92,6 +93,14 @@ async function handleInteractive(payload: InteractivePayload): Promise<void> {
     const sessionId = parts.slice(0, parts.length - 2).join('_')
     if (isNaN(qIndex) || isNaN(choiceIndex)) return
     await handleMcqAnswer(sessionId, qIndex, choiceIndex, channel, messageTs, payload.user?.id)
+    return
+  }
+
+  // ── DIANA: objection button tap ──────────────────────────────────────────────
+  // action_id: diana_obj_<slug>   e.g. diana_obj_not_interested
+  if (actionId.startsWith('diana_obj_')) {
+    const slug = actionId.slice('diana_obj_'.length)
+    await handleObjectionDetail(slug, channel, payload.user?.id)
     return
   }
 

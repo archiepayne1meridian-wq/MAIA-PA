@@ -144,3 +144,37 @@ Append-only audit trail. Each entry: date · agent/human · decision + rationale
 - No advice language in any output; advice-word guard tested.
 
 **Status:** CASSANDRA Phase 1 complete. Multi-source RSS synthesis pattern proven.
+
+---
+
+## 2026-06-15 — Human + MAIA (Phase 1 — HERA complete)
+
+**Decision:** Build HERA as MAIA's fourth agent — daily reflection logging with warm acknowledgement, evening nudge, and Sunday weekly coaching review.
+
+**Autonomy level:** Info-only / scheduled-push (Tier 1). Personal development data only. No client data. No approval gate required.
+
+**KPI:** Reflection logged (text + voice) with warm ack; evening nudge fires unattended and skips if already reflected; weekly review warm and constructive over seeded reflections; distress path verified.
+
+**Design choices:**
+
+- `tools/hera-db.ts` — pure CRUD with `calcStreak` exported for unit testing. No DB-touching logic mixed into the pure streak calculation.
+- `vitest.config.ts` added — resolves `@/*` alias so any future tool tests that import from `@/db` work correctly (was previously untestable).
+- `detectDistress` — keyword floor, deterministic, no API dependency. Tuned to over-flag vs. miss real distress, but NOT so trigger-happy it trips on normal bad days. Split: primary (unambiguous crisis language) and secondary (strong distress). Bare `exhausted` and bare `overwhelmed` removed from secondary after refinement — require qualifier (`completely overwhelmed`, `burned out`, `breaking point`). All 12 boundary test cases pass.
+- Belt-and-braces: `acknowledgeReflection` (Haiku) can raise a distress flag via `[DISTRESS]` prefix if it catches what keywords missed. It can never suppress a keyword flag. Final flag = keyword OR model. Sequence enforced in handler: check flag BEFORE showing any ack to user.
+- Supportive response: warm, human, gently points toward a trusted person (friend/family/GP). Not a helpline wall, no diagnosis, no specific methods. Reviewed and approved.
+- `coachWeekly` (Haiku, 600 tok): leads with what's working; frames sticking points as next steps; adviser prompt grounded in actual reflections — if the week doesn't suggest a specific topic, an open question is used rather than a manufactured concern.
+- `POST /api/hera/nudge` — `mode=nudge|weekly` param; same Bearer + 200-first + setImmediate pattern as DEMETER/CASSANDRA.
+- `.github/workflows/hera-nudge.yml` — daily 20:30 UTC + Sunday 20:00 UTC; `workflow_dispatch` with mode input.
+- Evening nudge skips if a reflection already exists today (`getTodayReflections` check).
+- Client-mention guard: gentle reminder to keep notes self-focused if a reflection names a real client; note still logged.
+- `sentimentTag` (positive/neutral/low) stored internally for pattern-spotting; never surfaced to user as a label.
+
+**Weekly review verified (5 seeded reflections):**
+Haiku produced a warm, specific 3-paragraph review: named the flashcard/repetition pattern as working, identified pension tapering as a recurring gap, ended with a grounded adviser question about explaining pension allowances to clients. Did not fabricate patterns; stayed constructive throughout.
+
+**Distress path verified (12/12 keyword cases):**
+Normal bad days (rattled, frustrated, exhausted, overwhelmed by workload) → clean.
+Genuine distress (burned out, breaking point, can't cope, not okay) → flagged.
+Supportive response wording approved.
+
+**Status:** HERA Phase 1 complete.

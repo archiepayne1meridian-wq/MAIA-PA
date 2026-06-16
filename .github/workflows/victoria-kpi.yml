@@ -1,0 +1,45 @@
+name: VICTORIA — End-of-Day Nudge & Weekly Scorecard
+
+on:
+  schedule:
+    # End-of-day nudge: 17:00 UTC = 18:00 BST (BST = UTC+1, summer), weekdays Mon–Fri
+    # Offset from HERA (20:30 UTC) and CASSANDRA/DEMETER (06:35–07:00 UTC).
+    - cron: '0 17 * * 1-5'
+    # Weekly scorecard: 15:30 UTC Friday (afternoon, clear of all other crons)
+    - cron: '30 15 * * 5'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'nudge or scorecard'
+        required: false
+        default: 'nudge'
+
+jobs:
+  victoria:
+    name: VICTORIA nudge / scorecard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ github.event.inputs.mode || 'nudge' }}" >> $GITHUB_OUTPUT
+          else
+            # Both schedule entries fire; distinguish by time
+            # 17:00 = nudge, 15:30 = scorecard
+            HOUR=$(date -u +%H)
+            MIN=$(date -u +%M)
+            if [ "$HOUR" = "15" ] && [ "$MIN" -lt 45 ]; then
+              echo "mode=scorecard" >> $GITHUB_OUTPUT
+            else
+              echo "mode=nudge" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Post to Railway
+        run: |
+          curl -f -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"mode\":\"${{ steps.mode.outputs.mode }}\"}" \
+            "https://maia-pa-production.up.railway.app/api/victoria/nudge"

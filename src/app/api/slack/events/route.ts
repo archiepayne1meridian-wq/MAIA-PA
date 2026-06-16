@@ -44,6 +44,14 @@ import {
   handleNewsStub,
   handleSeedHoldings,
 } from '@/lib/demeter-handler'
+import {
+  detectVictoriaIntent,
+  handleTally,
+  handleTallyConfirm,
+  buildScorecard,
+  getPendingTally,
+  isPendingConfirm,
+} from '@/lib/victoria-handler'
 
 interface SlackEvent {
   type: string
@@ -298,6 +306,38 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
           break
       }
 
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // ── VICTORIA: pending-confirm check ──────────────────────────────────────
+    // If the user has a pending tally waiting for "yes", intercept before everything else
+    // (except DIANA active-session, which already returned above).
+    if (event.user && getPendingTally(event.user) && isPendingConfirm(text)) {
+      await getDb().update(activity).set({ agent: 'VICTORIA' }).where(eq(activity.id, rowId))
+      await handleTallyConfirm(channel, event.user)
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // ── VICTORIA intent routing ───────────────────────────────────────────────
+    const victoriaIntent = detectVictoriaIntent(text)
+    if (victoriaIntent) {
+      await getDb().update(activity).set({ agent: 'VICTORIA' }).where(eq(activity.id, rowId))
+      switch (victoriaIntent.type) {
+        case 'scorecard':
+          await buildScorecard(channel, event.user)
+          break
+        case 'tally':
+          await handleTally(channel, event.user, victoriaIntent.text)
+          break
+      }
       await getDb()
         .update(activity)
         .set({ status: 'success', duration_ms: Date.now() - startMs })

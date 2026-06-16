@@ -115,6 +115,22 @@ export const weekly_reviews = sqliteTable('weekly_reviews', {
   created_at: integer('created_at').notNull(),
 })
 
+export const kpi_logs = sqliteTable('kpi_logs', {
+  id: text('id').primaryKey(),
+  log_date: integer('log_date').notNull(),   // Unix timestamp for start-of-day (midnight UTC)
+  metrics_json: text('metrics_json').notNull(),   // { calls: 8, connects: 3, ... }
+  note: text('note'),                             // optional free-text note
+  created_at: integer('created_at').notNull(),
+})
+
+export const kpi_weekly = sqliteTable('kpi_weekly', {
+  id: text('id').primaryKey(),
+  week_start: integer('week_start').notNull(),    // Unix timestamp for Monday midnight UTC
+  totals_json: text('totals_json').notNull(),     // { calls: 40, connects: 15, ... }
+  summary: text('summary').notNull(),             // the rendered scorecard text
+  created_at: integer('created_at').notNull(),
+})
+
 export const diana_sessions = sqliteTable('diana_sessions', {
   id: text('id').primaryKey(),
   slack_user: text('slack_user').notNull(),

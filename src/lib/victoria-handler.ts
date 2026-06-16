@@ -8,8 +8,10 @@ import { getDb } from '@/db'
 import { activity } from '@/db/schema'
 import {
   parseTally,
+  parseTallyWithClaude,
   formatEchoConfirm,
   formatScorecard,
+  scorecardNarrative,
   type VictoriaConfig,
   type ScorecardData,
 } from './victoria'
@@ -202,7 +204,7 @@ export async function handleTally(
     noteWarning = '\n_Names stay in the deVere CRM — I\'ve stored the count only._'
   }
 
-  const { parsed, needsClaude, found } = parseTally(rawText, config.metrics)
+  let { parsed, needsClaude, found } = parseTally(rawText, config.metrics)
 
   if (Object.keys(parsed).length === 0 && !needsClaude) {
     await postMessage(channel,
@@ -212,11 +214,23 @@ export async function handleTally(
   }
 
   if (needsClaude) {
-    // Stub — Claude fallback not yet enabled
-    await postMessage(channel,
-      `_VICTORIA: that one's a bit ambiguous — could you rephrase? (e.g. "8 calls, 2 meetings booked")_`)
-    await succeedActivity(rowId, startMs, 'needs claude fallback — stub')
-    return
+    try {
+      const claudeResult = await parseTallyWithClaude(rawText, config.metrics)
+      if (Object.keys(claudeResult).length === 0) {
+        await postMessage(channel,
+          `_VICTORIA: couldn't read any numbers from that — could you rephrase? (e.g. "8 calls, 2 meetings booked")_`)
+        await succeedActivity(rowId, startMs, 'claude fallback: no metrics found')
+        return
+      }
+      parsed = claudeResult
+      found = Object.keys(claudeResult)
+    } catch (err) {
+      console.error('[victoria] parseTallyWithClaude failed:', err)
+      await postMessage(channel,
+        `_VICTORIA: that one's a bit ambiguous — could you rephrase? (e.g. "8 calls, 2 meetings booked")_`)
+      await succeedActivity(rowId, startMs, 'claude fallback failed')
+      return
+    }
   }
 
   const dateStamp = toDateStamp()
@@ -297,6 +311,8 @@ export async function buildScorecard(channel: string, userId?: string): Promise<
     trends[metric] = trend(historicalTotals, metric)
   }
 
+  const isFirstWeek = prevTotals === null
+
   const data: ScorecardData = {
     weekStart: new Date(toWeekStart() * 1000),
     totals: thisTotals,
@@ -304,15 +320,25 @@ export async function buildScorecard(channel: string, userId?: string): Promise<
     targets: targetList,
     trends,
     daysCounted: thisWeekLogs.length,
+    isFirstWeek,
   }
 
   const scorecardText = formatScorecard(data)
 
-  // Save to kpi_weekly
-  await saveWeekly(toWeekStart(), thisTotals, scorecardText)
+  let narrative = ''
+  try {
+    narrative = await scorecardNarrative(data)
+  } catch (err) {
+    console.error('[victoria] scorecardNarrative failed:', err)
+  }
 
-  await postMessage(channel, scorecardText)
-  await succeedActivity(rowId, startMs, `scorecard: ${thisWeekLogs.length} days`)
+  const fullText = narrative ? `${scorecardText}\n${narrative}` : scorecardText
+
+  // Save to kpi_weekly
+  await saveWeekly(toWeekStart(), thisTotals, fullText)
+
+  await postMessage(channel, fullText)
+  await succeedActivity(rowId, startMs, `scorecard: ${thisWeekLogs.length} days, first=${isFirstWeek}`)
 }
 
 // ── End-of-day nudge (also used by cron) ─────────────────────────────────────

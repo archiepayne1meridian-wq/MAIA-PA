@@ -1,8 +1,12 @@
-// VICTORIA — tally parsing, scorecard formatting, and (stub) narrative.
-// parseTally: deterministic-first; Claude fallback only after Step 4 go-ahead.
+// VICTORIA — tally parsing, scorecard formatting, and optional narrative.
+// parseTally: deterministic-first; Haiku fallback for ambiguous natural language.
 // formatScorecard: always deterministic — never let the model total or trend numbers.
+// scorecardNarrative: one honest sentence of Haiku context (skipped on baseline week).
 
+import { askWith } from './claude'
 import type { DailyMetrics, WeeklyTotals, ComparisonItem, TargetItem, TrendDirection } from '../../tools/kpi'
+
+const HAIKU = 'claude-haiku-4-5-20251001'
 
 // ── Config types (parsed from context/victoria.md at runtime) ─────────────────
 
@@ -69,12 +73,38 @@ export function parseTallyDeterministic(text: string, metrics: string[]): DailyM
   return result
 }
 
-// Stub: Claude fallback throws until Step 4 go-ahead.
+// Claude fallback for ambiguous natural-language tallies.
+// Only called when the deterministic parser finds numbers but recognises no metrics.
+// Returns only recognised metrics with non-negative integer values.
 export async function parseTallyWithClaude(
-  _text: string,
-  _metrics: string[],
+  text: string,
+  metrics: string[],
 ): Promise<DailyMetrics> {
-  throw new Error('[victoria] parseTally Claude fallback not yet enabled — awaiting go-ahead')
+  const systemPrompt =
+    `You are VICTORIA, a KPI parsing assistant for a trainee financial adviser.\n` +
+    `Extract activity counts from the user's natural-language tally.\n\n` +
+    `The tracked metrics are: ${metrics.join(', ')}\n\n` +
+    `Return ONLY valid JSON — no prose, no markdown, no explanation.\n` +
+    `Format: { "calls": 12, "connects": 5, "meetings_booked": 2 }\n` +
+    `Omit any metric not mentioned. Use 0 only if the user explicitly says zero.\n` +
+    `If you cannot extract any numbers, return {}.`
+
+  const raw = await askWith(systemPrompt, text, 150, HAIKU)
+
+  try {
+    const jsonMatch = raw.match(/\{[^}]*\}/)
+    if (!jsonMatch) return {}
+    const obj = JSON.parse(jsonMatch[0]) as Record<string, unknown>
+    const filtered: DailyMetrics = {}
+    for (const [key, value] of Object.entries(obj)) {
+      if (metrics.includes(key) && typeof value === 'number' && Number.isFinite(value)) {
+        filtered[key] = Math.max(0, Math.round(value))
+      }
+    }
+    return filtered
+  } catch {
+    return {}
+  }
 }
 
 // Main entry point: try deterministic; if fewer than half the expected metrics
@@ -124,6 +154,7 @@ export interface ScorecardData {
   targets: TargetItem[]
   trends: Record<string, TrendDirection>
   daysCounted: number
+  isFirstWeek: boolean  // no prior week to compare — skip trend language in narrative
 }
 
 const TREND_ARROW: Record<TrendDirection, string> = { up: '↑', down: '↓', flat: '→' }
@@ -185,7 +216,43 @@ export function formatScorecard(data: ScorecardData): string {
   return lines.join('\n')
 }
 
-// Stub: scorecardNarrative throws until Step 4 go-ahead.
-export async function scorecardNarrative(_data: ScorecardData): Promise<string> {
-  throw new Error('[victoria] scorecardNarrative not yet enabled — awaiting go-ahead')
+// One honest Haiku sentence appended below the scorecard.
+// Baseline weeks get a deterministic string — no Claude call, no invented comparisons.
+export async function scorecardNarrative(data: ScorecardData): Promise<string> {
+  if (data.isFirstWeek) {
+    return `_First week logged — this sets your baseline._`
+  }
+
+  // Build a compact data summary for the model — numbers only, no prose.
+  const items = data.comparison.map(c => {
+    if (c.isBaseline || c.delta === null) return `${c.metric}: ${c.thisWeek} (first data point)`
+    const dir = c.delta > 0 ? `↑+${c.delta}` : c.delta < 0 ? `↓${c.delta}` : `→flat`
+    const pct = c.pct !== null ? ` (${c.pct > 0 ? '+' : ''}${c.pct}%)` : ''
+    return `${c.metric.replace(/_/g, ' ')}: ${c.thisWeek} ${dir}${pct}`
+  })
+
+  const upCount = data.comparison.filter(c => !c.isBaseline && (c.delta ?? 0) > 0).length
+  const downCount = data.comparison.filter(c => !c.isBaseline && (c.delta ?? 0) < 0).length
+  const netPicture =
+    upCount > downCount ? 'net positive week' :
+    downCount > upCount ? 'net quieter week' :
+    'mixed week'
+
+  const systemPrompt =
+    `You are VICTORIA, a KPI coach for a trainee financial adviser.\n\n` +
+    `Write ONE short sentence of honest, warm context about this week's activity data.\n\n` +
+    `Tone rules (strict):\n` +
+    `- Good week: name the specific bright spot concisely.\n` +
+    `- Mixed week: acknowledge what worked; note what could use a push.\n` +
+    `- Quiet week overall: say so plainly — e.g. "Quiet week on calls — worth a push next week." No false cheer.\n` +
+    `- Never manufacture a positive where there isn't one in the data.\n` +
+    `- Never use: "great effort", "despite", "amazing", "fantastic", "keep it up".\n` +
+    `- Be the coach who tells the truth warmly, not the one who sugar-coats.\n` +
+    `- Max 20 words. One sentence. No sign-off. No bullet points.`
+
+  const userMsg =
+    `Week data (${netPicture}):\n` +
+    items.join('\n')
+
+  return askWith(systemPrompt, userMsg, 60, HAIKU)
 }

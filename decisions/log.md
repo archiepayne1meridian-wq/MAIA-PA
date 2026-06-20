@@ -4,6 +4,20 @@ Append-only audit trail. Each entry: date · agent/human · decision + rationale
 
 ---
 
+## 2026-06-17 — Dashboard D3a (OpenBB service — infrastructure)
+
+**Decision:** Deploy OpenBB Platform as its own Railway service (separate service, root dir `openbb-service/`, same Railway project as MAIA). MAIA app routes to it via `OPENBB_URL` + `OPENBB_TOKEN`.
+
+**Architecture:** `openbb-service/Dockerfile` (Python 3.11-slim + openbb + openbb-fmp). `main.py` wraps OpenBB's FastAPI app with a `BearerAuth` Starlette middleware — all non-health requests require `Authorization: Bearer <OPENBB_API_KEY>`. Health and docs paths pass through unauthenticated. MAIA's existing `OpenBBProvider` in `tools/market-data.ts` sends the token already; no MAIA-side changes needed.
+
+**Provider strategy:** yfinance is the OpenBB default but Railway's datacenter is TCP-blocked from Yahoo Finance endpoints (same block as direct fetches from the Next.js app). FMP (`openbb-fmp`, `FMP_API_KEY`) is included in requirements.txt as the Railway-safe provider. Both are installed; the verify script (`tools/verify-openbb.ts`) tests both per endpoint and reports which works. Decision to formally switch provider config deferred until verification output is reviewed.
+
+**FMP free tier:** 250 API calls/day, 5/min. Confirmed adequate for personal terminal use (no auto-refresh). LSE ETF historical coverage on FMP free (VWRP.L, VDPG.L) is unconfirmed — verify script will determine this. If FMP free doesn't cover LSE history, split strategy remains: OpenBB/FMP for US tickers + news, HybridProvider (Twelve Data + Alpha Vantage) for LSE quotes.
+
+**D3a complete when:** `tools/verify-openbb.ts` returns confirmed prices + currency for all 6 holdings (MU, AMAT, IONQ, MSTR, VWRP.L, VDPG.L) + GBP/USD FX, plus historical bars from at least one provider.
+
+---
+
 ## 2026-06-10 — Human + MAIA (Phase 0)
 
 **Decision:** Scaffold MAIA as a fresh, isolated repo — no code, data, or credentials shared with Meridian/JARVIS.
@@ -211,3 +225,21 @@ Supportive response wording approved.
 4. HERA → CASSANDRA → DEMETER → ATHENA → MAIA spine
 
 **Status:** DIANA Phase 1 complete. Pending live Slack verification (reference buttons, roleplay turn, scored feedback).
+
+---
+
+## 2026-06-16 — Dashboard D1 (live data wiring)
+
+**Decision:** Converted dashboard home screen from stub data to live DB reads for all 6 built agents (MAIA, ATHENA, CASSANDRA, DEMETER, HERA, DIANA, VICTORIA). Inactive agents (LUNA, IRIS, JUNO) render as greyed coming-soon tiles — no fake data.
+
+**Architecture:** `page.tsx` is now a server component that calls `buildDashboardData()` (all reads from SQLite via Drizzle), passes typed props to `DashboardClient.tsx` (client component with orb/drawer state). Calendar column remains stubbed (D4).
+
+**Security decision (human):** `/api/dashboard/*` routes enforce session cookie authentication in BOTH dev and prod — no `NODE_ENV` bypass. Rationale: these routes serve holdings, P&L, and KPI data; a mis-set `NODE_ENV` would silently expose financial data. Dev bypass kept only on `proxy.ts` (layout access gate), not on data routes.
+
+**DEMETER data source:** Day-change % reads from `portfolio_snapshots` only — no live price fetch on dashboard load. Snapshot from the morning brief is sufficient; hammering the price API on every page open is unnecessary.
+
+**Live vs stubbed:**
+- Live: agent rail status/stat/feed for 7 built agents, "need you" count from `approvals`, ATHENA due-card task, CASSANDRA brief-reviewed task, HERA reflection-done task.
+- Stubbed: calendar events (D4), greeting/message-bubble text, quick-action chips.
+
+**Regression confirmed:** `/api/health` 200, `/api/demeter/brief` 401 (bearer required), `/api/cassandra/brief` 401, `/api/slack/events` 200 (url_verification handled).

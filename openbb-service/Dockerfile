@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Verify the installed version and confirm openbb-api CLI exists.
 # If either check fails the build fails fast with a clear error — better than a runtime crash.
-RUN python -c "import openbb; print('[build] openbb version:', openbb.__version__)" && \
+RUN pip show openbb | grep -E "^(Name|Version)" && \
     which openbb-api && echo "[build] openbb-api CLI found at: $(which openbb-api)"
 
 COPY main.py .

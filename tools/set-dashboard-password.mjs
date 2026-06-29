@@ -35,10 +35,14 @@ process.stdin.on('data', async (ch) => {
     const envPath = join(__dirname, '..', '.env')
     let env = fs.readFileSync(envPath, 'utf8')
 
+    // bcrypt hashes start with $2b$12$... — two hazards when writing to .env:
+    // 1. String.replace() treats $ in replacement as capture-group patterns → use function replacer.
+    // 2. Next.js dotenv-expand expands $VARNAME → escape every $ as \$ before storing.
+    const safeHash = hash.replace(/\$/g, '\\$')
     if (/^DASHBOARD_PASSWORD_HASH=.*$/m.test(env)) {
-      env = env.replace(/^DASHBOARD_PASSWORD_HASH=.*$/m, `DASHBOARD_PASSWORD_HASH=${hash}`)
+      env = env.replace(/^DASHBOARD_PASSWORD_HASH=.*$/m, () => `DASHBOARD_PASSWORD_HASH=${safeHash}`)
     } else {
-      env += `\nDASHBOARD_PASSWORD_HASH=${hash}\n`
+      env += `\nDASHBOARD_PASSWORD_HASH=${safeHash}\n`
     }
 
     fs.writeFileSync(envPath, env, 'utf8')

@@ -313,7 +313,7 @@ class OpenBBProvider {
 
   async getQuotes(tickers: string[]): Promise<Quote[]> {
     const symbols = tickers.map(t => providerSymbol(t)).join(',')
-    const url = `${this.baseUrl}/api/v1/equity/price/quote?symbol=${encodeURIComponent(symbols)}`
+    const url = `${this.baseUrl}/api/v1/equity/price/quote?symbol=${encodeURIComponent(symbols)}&provider=yfinance`
     const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` }, cache: 'no-store' })
     if (!res.ok) throw new Error(`OpenBB price fetch failed: ${res.status}`)
     const json = await res.json() as { results?: unknown[] }
@@ -341,7 +341,7 @@ class OpenBBProvider {
   async getFxRate(from: string, to: string): Promise<number> {
     if (from.toUpperCase() === to.toUpperCase()) return 1
     const pair = `${from.toUpperCase()}${to.toUpperCase()}`
-    const url = `${this.baseUrl}/api/v1/currency/price/historical?symbol=${pair}&interval=1d&start_date=${todayStr()}&end_date=${todayStr()}`
+    const url = `${this.baseUrl}/api/v1/currency/price/historical?symbol=${pair}&interval=1d&start_date=${todayStr()}&end_date=${todayStr()}&provider=fmp`
     const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` } })
     if (!res.ok) {
       console.warn(`[market-data] OpenBB FX ${pair} unavailable (${res.status}), using 1.0`)

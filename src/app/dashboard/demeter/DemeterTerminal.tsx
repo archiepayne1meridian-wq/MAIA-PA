@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createChart, CandlestickSeries, LineStyle } from 'lightweight-charts'
-import type { IChartApi, ISeriesApi, CandlestickData } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi, CandlestickData, UTCTimestamp } from 'lightweight-charts'
 import type { PortfolioResult, HoldingResult } from '../../../../tools/portfolio'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -24,13 +24,19 @@ interface LiveResponse {
   snapshot?:  { total_value: number; holdings_json: string } | null
 }
 
+// time is number (UTCTimestamp) for intraday, string ('YYYY-MM-DD') for daily/weekly
 interface BarRow {
-  time:   string
+  time:   number | string
   open:   number
   high:   number
   low:    number
   close:  number
   volume: number
+}
+
+interface BarsResult {
+  bars:       BarRow[]
+  isIntraday: boolean
 }
 
 interface NewsItem {
@@ -40,9 +46,24 @@ interface NewsItem {
   published: string
 }
 
+interface WatchlistItem {
+  symbol:      string
+  name:        string
+  added_at:    number
+  price:       number | null
+  prevClose:   number | null
+  currency:    string
+  isLivePrice: boolean
+}
+
+type Range = '1D' | '1M' | '3M' | '1Y' | '5Y'
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const WATCH = ['MU', 'VWRP', 'VDPG', 'AMAT', 'IONQ', 'MSTR']
+const HOLDINGS_TICKERS = ['MU', 'VWRP', 'VDPG', 'AMAT', 'IONQ', 'MSTR']
+const RANGES: Range[]  = ['1D', '1M', '3M', '1Y', '5Y']
+const DEFAULT_RANGE: Range = '3M'
+
 const NAMES: Record<string, string> = {
   MU:   'Micron Technology',
   VWRP: 'Vanguard FTSE All-World (Acc)',
@@ -74,6 +95,12 @@ function timeAgo(iso: string): string {
   return `${Math.round(diff / 86400)}d`
 }
 
+function fmtPrice(price: number | null, currency: string): string {
+  if (price === null) return '—'
+  const sym = currency === 'GBP' ? '£' : (currency === 'USD' ? '$' : currency + ' ')
+  return `${sym}${fmt(price)}`
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function DemeterTerminal() {
@@ -81,12 +108,26 @@ export default function DemeterTerminal() {
 
   const [live, setLive]             = useState<LiveResponse | null>(null)
   const [selected, setSelected]     = useState<string>('MU')
+  const [selectedIsHolding, setSelectedIsHolding] = useState(true)
   const [tab, setTab]               = useState<'research' | 'book'>('research')
-  const [bars, setBars]             = useState<BarRow[] | null>(null)
+  const [range, setRange]           = useState<Range>(DEFAULT_RANGE)
+  const [barsResult, setBarsResult] = useState<BarsResult | null>(null)
   const [barsLoading, setBarsLoading] = useState(false)
   const [news, setNews]             = useState<NewsItem[]>([])
-  const [search, setSearch]         = useState('')
   const [error, setError]           = useState<string | null>(null)
+
+  // Watchlist state
+  const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([])
+  const [wlLoading, setWlLoading]     = useState(false)
+  const [showAddInput, setShowAddInput] = useState(false)
+  const [addInput, setAddInput]       = useState('')
+  const [addState, setAddState]       = useState<
+    | { phase: 'idle' }
+    | { phase: 'resolving' }
+    | { phase: 'resolved'; symbol: string; name: string; price: number; currency: string }
+    | { phase: 'error'; message: string }
+    | { phase: 'adding' }
+  >({ phase: 'idle' })
 
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef          = useRef<IChartApi | null>(null)
@@ -105,15 +146,34 @@ export default function DemeterTerminal() {
       .catch((e: Error) => setError(e.message === '401' ? '' : `Failed to load portfolio: ${e.message}`))
   }, [router])
 
+  // ── Fetch watchlist ──────────────────────────────────────────────────────
+
+  const loadWatchlist = useCallback(() => {
+    setWlLoading(true)
+    fetch('/api/dashboard/watchlist')
+      .then(r => r.json() as Promise<{ items: WatchlistItem[] }>)
+      .then(d => setWatchlistItems(d.items ?? []))
+      .catch(() => setWatchlistItems([]))
+      .finally(() => setWlLoading(false))
+  }, [])
+
+  useEffect(() => { loadWatchlist() }, [loadWatchlist])
+
   // ── Fetch history bars ───────────────────────────────────────────────────
 
-  const loadBars = useCallback((sym: string) => {
+  const loadBars = useCallback((sym: string, r: Range) => {
     setBarsLoading(true)
-    setBars(null)
-    fetch(`/api/dashboard/demeter/history?symbol=${sym}`)
-      .then(r => r.json() as Promise<{ bars: BarRow[]; error: boolean }>)
-      .then(d => setBars(d.error ? [] : d.bars))
-      .catch(() => setBars([]))
+    setBarsResult(null)
+    fetch(`/api/dashboard/demeter/history?symbol=${encodeURIComponent(sym)}&range=${r}`)
+      .then(res => res.json() as Promise<{ bars: BarRow[]; isIntraday: boolean; error: boolean; message?: string }>)
+      .then(d => {
+        if (d.error) {
+          setBarsResult({ bars: [], isIntraday: d.isIntraday })
+        } else {
+          setBarsResult({ bars: d.bars, isIntraday: d.isIntraday })
+        }
+      })
+      .catch(() => setBarsResult({ bars: [], isIntraday: false }))
       .finally(() => setBarsLoading(false))
   }, [])
 
@@ -126,22 +186,26 @@ export default function DemeterTerminal() {
       .catch(() => setNews([]))
   }, [])
 
-  // Initial load for selected symbol
-  useEffect(() => { loadBars(selected); loadNews(selected) }, [selected, loadBars, loadNews])
+  // Reload bars + news when symbol or range changes
+  useEffect(() => {
+    loadBars(selected, range)
+    loadNews(selected)
+  }, [selected, range, loadBars, loadNews])
 
   // ── Build chart ──────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!chartContainerRef.current || !bars || bars.length === 0) return
+    if (!chartContainerRef.current || !barsResult || barsResult.bars.length === 0) return
 
-    // Destroy previous chart instance
-    if (chartRef.current) { chartRef.current.remove(); chartRef.current = null }
+    // Destroy previous chart instance cleanly before rebuilding.
+    if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null }
 
+    const { bars, isIntraday } = barsResult
     const extras  = live?.extras?.[selected]
     const holding = live?.portfolio?.holdings.find(h => h.ticker === selected)
     const fx      = extras?.fxToBase ?? 1
 
-    // Convert bars to base currency (GBP). Chart always shows GBP values.
+    // Convert bars to GBP. For intraday, time is already UTCTimestamp (number).
     const gbpBars: CandlestickData[] = bars.map(b => ({
       time:  b.time as CandlestickData['time'],
       open:  Math.round(b.open  * fx * 10000) / 10000,
@@ -167,7 +231,7 @@ export default function DemeterTerminal() {
       rightPriceScale: { borderColor: 'rgba(255,255,255,0.07)' },
       timeScale: {
         borderColor:  'rgba(255,255,255,0.07)',
-        timeVisible:  false,
+        timeVisible:  isIntraday, // show HH:MM for intraday
         fixLeftEdge:  true,
         fixRightEdge: true,
       },
@@ -183,8 +247,8 @@ export default function DemeterTerminal() {
     })
     series.setData(gbpBars)
 
-    // Avg-cost entry line — same value used for badge and table row.
-    if (holding && holding.avgCost > 0) {
+    // Avg-cost entry line — HOLDINGS only (watchlist symbols have no position).
+    if (holding && holding.avgCost > 0 && selectedIsHolding) {
       const inProfit = holding.pnl !== null && holding.pnl >= 0
       series.createPriceLine({
         price:            holding.avgCost,
@@ -198,10 +262,12 @@ export default function DemeterTerminal() {
 
     chart.timeScale().fitContent()
 
-    // Resize observer
     const ro = new ResizeObserver(() => {
       if (chartContainerRef.current) {
-        chart.resize(chartContainerRef.current.clientWidth, Math.max(360, chartContainerRef.current.clientHeight || 400))
+        chart.resize(
+          chartContainerRef.current.clientWidth,
+          Math.max(360, chartContainerRef.current.clientHeight || 400),
+        )
       }
     })
     if (chartContainerRef.current) ro.observe(chartContainerRef.current)
@@ -211,15 +277,85 @@ export default function DemeterTerminal() {
 
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, selected, live?.extras, live?.portfolio])
+  }, [barsResult, selected, selectedIsHolding, live?.extras, live?.portfolio])
 
-  // ── Search ───────────────────────────────────────────────────────────────
+  // ── Select a symbol (holding or watchlist) ───────────────────────────────
 
-  function handleSearch(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== 'Enter') return
-    const v = search.trim().toUpperCase()
-    if (!v) return
-    if (WATCH.includes(v)) { setSelected(v); setTab('research'); setSearch('') }
+  function selectSymbol(sym: string, isHolding: boolean) {
+    setSelected(sym)
+    setSelectedIsHolding(isHolding)
+    setTab('research')
+  }
+
+  // ── Watchlist add flow ───────────────────────────────────────────────────
+
+  async function handleResolve() {
+    const sym = addInput.trim().toUpperCase()
+    if (!sym) return
+    setAddState({ phase: 'resolving' })
+
+    try {
+      const res = await fetch(`/api/dashboard/watchlist/resolve?symbol=${encodeURIComponent(sym)}`)
+      const d = await res.json() as { found: boolean; symbol: string; name: string; price: number; currency: string; message?: string }
+      if (d.found) {
+        setAddState({ phase: 'resolved', symbol: d.symbol, name: d.name, price: d.price, currency: d.currency })
+      } else {
+        setAddState({ phase: 'error', message: d.message ?? `Couldn't resolve ${sym}` })
+      }
+    } catch {
+      setAddState({ phase: 'error', message: 'Network error — try again' })
+    }
+  }
+
+  async function handleConfirmAdd() {
+    if (addState.phase !== 'resolved') return
+    const { symbol } = addState
+    setAddState({ phase: 'adding' })
+
+    try {
+      const res = await fetch('/api/dashboard/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol }),
+      })
+      const d = await res.json() as { ok?: boolean; error?: string; message?: string }
+
+      if (res.ok && d.ok) {
+        setAddInput('')
+        setAddState({ phase: 'idle' })
+        setShowAddInput(false)
+        loadWatchlist()
+      } else if (d.error === 'already_held') {
+        setAddState({ phase: 'error', message: d.message ?? `${symbol} is already in your book` })
+      } else if (d.error === 'already_watching') {
+        setAddState({ phase: 'error', message: d.message ?? `${symbol} is already on your watchlist` })
+      } else {
+        setAddState({ phase: 'error', message: d.message ?? 'Failed to add' })
+      }
+    } catch {
+      setAddState({ phase: 'error', message: 'Network error — try again' })
+    }
+  }
+
+  async function handleRemove(sym: string) {
+    try {
+      await fetch('/api/dashboard/watchlist', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: sym }),
+      })
+      // If the removed symbol was selected, revert to first holding.
+      if (selected === sym) selectSymbol('MU', true)
+      loadWatchlist()
+    } catch {
+      // silent — UI will update on next load
+    }
+  }
+
+  function cancelAdd() {
+    setAddInput('')
+    setAddState({ phase: 'idle' })
+    setShowAddInput(false)
   }
 
   // ── Derived state ────────────────────────────────────────────────────────
@@ -231,38 +367,39 @@ export default function DemeterTerminal() {
     return portfolio?.holdings.find(h => h.ticker === sym)
   }
 
-  function priceLabel(sym: string): string {
-    const h = holdingFor(sym)
-    if (!h) return '—'
-    return `£${fmt(h.priceBase)}`
-  }
-
-  function changeLabel(sym: string): { text: string; up: boolean } {
-    const h = holdingFor(sym)
-    if (!h) return { text: '—', up: true }
-    return {
-      text: `${h.dayChangePct >= 0 ? '+' : ''}${fmt(h.dayChangePct, 2)}%`,
-      up: h.dayChangePct >= 0,
-    }
-  }
-
-  const selectedHolding = holdingFor(selected)
+  const selectedHolding = selectedIsHolding ? holdingFor(selected) : undefined
   const selectedExtras  = extras[selected]
-  const isLive          = selectedExtras?.isLivePrice ?? true
+  const selectedWlItem  = !selectedIsHolding ? watchlistItems.find(w => w.symbol === selected) : undefined
 
-  // Ticker tape items (doubled for seamless scroll)
-  const tapeItems = WATCH.map(sym => {
+  // For watchlist-selected symbols: derive price/change from the watchlist item
+  const wlPrice      = selectedWlItem?.price ?? null
+  const wlPrevClose  = selectedWlItem?.prevClose ?? null
+  const wlDayChangePct = (wlPrice !== null && wlPrevClose !== null && wlPrevClose > 0)
+    ? ((wlPrice - wlPrevClose) / wlPrevClose) * 100 : null
+  const wlIsLive     = selectedWlItem?.isLivePrice ?? true
+  const wlCurrency   = selectedWlItem?.currency ?? 'USD'
+  const wlFx         = selectedExtras?.fxToBase ?? (wlCurrency === 'GBP' ? 1 : null)
+
+  // Market state: data-driven for both holdings and watchlist
+  const isLive = selectedIsHolding
+    ? (selectedExtras?.isLivePrice ?? true)
+    : wlIsLive
+
+  // Ticker tape: holdings only (watchlist items are displayed in the rail)
+  const tapeItems = HOLDINGS_TICKERS.map(sym => {
     const h = holdingFor(sym)
     const px = h ? `£${fmt(h.priceBase)}` : '—'
-    const ch = h ? changeLabel(sym) : { text: '—', up: true }
+    const ch = h
+      ? { text: `${h.dayChangePct >= 0 ? '+' : ''}${fmt(h.dayChangePct, 2)}%`, up: h.dayChangePct >= 0 }
+      : { text: '—', up: true }
     return { sym, px, ch }
   })
-
-  // ── Render ───────────────────────────────────────────────────────────────
 
   const totalPnl    = portfolio && portfolio.totalCost > 0 ? portfolio.totalPnl : null
   const totalPnlPct = (totalPnl !== null && portfolio && portfolio.totalCost > 0)
     ? (totalPnl / portfolio.totalCost) * 100 : null
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -274,19 +411,6 @@ export default function DemeterTerminal() {
           <div className="dt-brand">
             <div className="dt-badge">D</div>
             <span className="dt-wordmark">DEMETER</span>
-          </div>
-
-          <div className="dt-search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
-            </svg>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              onKeyDown={handleSearch}
-              placeholder="Search any symbol — stocks · ETFs · forex"
-            />
-            <span className="dt-kbd">↵</span>
           </div>
 
           <div className="dt-tabs">
@@ -321,32 +445,130 @@ export default function DemeterTerminal() {
         {/* ── Main 3-column grid ── */}
         <div className="dt-main">
 
-          {/* Watchlist rail */}
+          {/* ── Left rail: MY BOOK + WATCHLIST ── */}
           <aside className="dt-rail dt-col">
+
+            {/* MY BOOK section */}
             <div className="dt-sec-h">
-              <span className="dt-eyebrow">Watchlist</span>
+              <span className="dt-eyebrow">My Book</span>
+              <span className="dt-eyebrow dt-num">{HOLDINGS_TICKERS.length}</span>
             </div>
-            {WATCH.map(sym => {
+            {HOLDINGS_TICKERS.map(sym => {
               const h   = holdingFor(sym)
-              const ch  = changeLabel(sym)
               const ext = extras[sym]
+              const ch  = h
+                ? { text: `${h.dayChangePct >= 0 ? '+' : ''}${fmt(h.dayChangePct, 2)}%`, up: h.dayChangePct >= 0 }
+                : { text: '—', up: true }
+              const isActive = selected === sym && selectedIsHolding
               return (
                 <div
                   key={sym}
-                  className={`dt-wl-item${selected === sym ? ' active' : ''}`}
-                  onClick={() => { setSelected(sym); setTab('research') }}
+                  className={`dt-wl-item${isActive ? ' active' : ''}`}
+                  onClick={() => selectSymbol(sym, true)}
                 >
                   <div>
                     <div className="dt-wl-sym">{sym}</div>
                     <div className="dt-wl-name">{NAMES[sym]}</div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div className="dt-wl-px">{h ? `£${fmt(h.priceBase)}` : '—'}</div>
+                    <div className="dt-wl-px">{h ? `£${fmt(h.value)}` : '—'}</div>
+                    <div className="dt-wl-unit">{h ? `£${fmt(h.priceBase)} /sh` : ''}</div>
                     <div className={`dt-wl-ch ${ch.up ? 'dt-up' : 'dt-dn'}`}>{ch.text}</div>
-                    {ext && !ext.isLivePrice && (
-                      <div className="dt-prev-badge">PREV</div>
-                    )}
+                    {ext && !ext.isLivePrice && <div className="dt-prev-badge">PREV</div>}
                   </div>
+                </div>
+              )
+            })}
+
+            {/* Divider */}
+            <div className="dt-rail-divider" />
+
+            {/* WATCHLIST section */}
+            <div className="dt-sec-h">
+              <span className="dt-eyebrow">Watchlist</span>
+              <button
+                className="dt-wl-add-btn"
+                onClick={() => { setShowAddInput(v => !v); setAddState({ phase: 'idle' }); setAddInput('') }}
+                title="Add ticker"
+              >+</button>
+            </div>
+
+            {/* Add ticker inline UI */}
+            {showAddInput && (
+              <div className="dt-add-box">
+                {addState.phase === 'idle' || addState.phase === 'resolving' || addState.phase === 'error' ? (
+                  <>
+                    <div className="dt-add-row">
+                      <input
+                        className="dt-add-input"
+                        value={addInput}
+                        onChange={e => { setAddInput(e.target.value); setAddState({ phase: 'idle' }) }}
+                        onKeyDown={e => { if (e.key === 'Enter') handleResolve(); if (e.key === 'Escape') cancelAdd() }}
+                        placeholder="e.g. NVDA, ISF.L"
+                        autoFocus
+                      />
+                      <button
+                        className="dt-add-go"
+                        onClick={handleResolve}
+                        disabled={addState.phase === 'resolving'}
+                      >
+                        {addState.phase === 'resolving' ? '…' : '↵'}
+                      </button>
+                    </div>
+                    {addState.phase === 'error' && (
+                      <div className="dt-add-err">{addState.message}</div>
+                    )}
+                  </>
+                ) : addState.phase === 'resolved' ? (
+                  <div className="dt-add-confirm">
+                    <div className="dt-add-preview">
+                      <span className="dt-add-sym">{addState.symbol}</span>
+                      <span className="dt-add-name">{addState.name}</span>
+                      <span className="dt-add-price">{fmtPrice(addState.price, addState.currency)}</span>
+                    </div>
+                    <div className="dt-add-actions">
+                      <button className="dt-add-yes" onClick={handleConfirmAdd}>Add</button>
+                      <button className="dt-add-no"  onClick={cancelAdd}>Cancel</button>
+                    </div>
+                  </div>
+                ) : addState.phase === 'adding' ? (
+                  <div className="dt-add-err" style={{ color: 'var(--dt-mid)' }}>Adding…</div>
+                ) : null}
+              </div>
+            )}
+
+            {wlLoading && watchlistItems.length === 0 && (
+              <div className="dt-wl-empty">Loading…</div>
+            )}
+            {!wlLoading && watchlistItems.length === 0 && !showAddInput && (
+              <div className="dt-wl-empty">No watchlist symbols yet.<br/>Tap + to add a ticker.</div>
+            )}
+
+            {watchlistItems.map(w => {
+              const ch = (w.price !== null && w.prevClose !== null && w.prevClose > 0)
+                ? { text: `${((w.price - w.prevClose) / w.prevClose) >= 0 ? '+' : ''}${fmt(((w.price - w.prevClose) / w.prevClose) * 100, 2)}%`, up: w.price >= w.prevClose }
+                : { text: '—', up: true }
+              const isActive = selected === w.symbol && !selectedIsHolding
+              return (
+                <div
+                  key={w.symbol}
+                  className={`dt-wl-item dt-wl-watch${isActive ? ' active' : ''}`}
+                  onClick={() => selectSymbol(w.symbol, false)}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="dt-wl-sym">{w.symbol}</div>
+                    <div className="dt-wl-name" style={{ maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div className="dt-wl-px">{fmtPrice(w.price, w.currency)}</div>
+                    <div className={`dt-wl-ch ${ch.up ? 'dt-up' : 'dt-dn'}`}>{ch.text}</div>
+                    {!w.isLivePrice && <div className="dt-prev-badge">PREV</div>}
+                  </div>
+                  <button
+                    className="dt-wl-remove"
+                    onClick={e => { e.stopPropagation(); handleRemove(w.symbol) }}
+                    title={`Remove ${w.symbol}`}
+                  >×</button>
                 </div>
               )
             })}
@@ -359,7 +581,7 @@ export default function DemeterTerminal() {
             )}
           </aside>
 
-          {/* Centre — research or book */}
+          {/* ── Centre ── */}
           <section className="dt-centre dt-col">
 
             {/* ── Research view ── */}
@@ -369,10 +591,15 @@ export default function DemeterTerminal() {
                 <div className="dt-sym-head">
                   <div>
                     <div className="dt-sym-id">{selected}</div>
-                    <div className="dt-sym-name">{NAMES[selected]}</div>
+                    <div className="dt-sym-name">
+                      {selectedIsHolding ? (NAMES[selected] ?? selected) : (selectedWlItem?.name ?? selected)}
+                      {!selectedIsHolding && (
+                        <span className="dt-wl-chip">WATCHLIST</span>
+                      )}
+                    </div>
                   </div>
                   <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                    {selectedHolding ? (
+                    {selectedIsHolding && selectedHolding ? (
                       <>
                         <div className={`dt-sym-px ${selectedHolding.dayChangePct >= 0 ? 'dt-up' : 'dt-dn'}`}>
                           £{fmt(selectedHolding.priceBase)}
@@ -381,25 +608,36 @@ export default function DemeterTerminal() {
                           {sign(selectedHolding.dayChange)} ({sign(selectedHolding.dayChangePct)}%)
                         </div>
                       </>
+                    ) : !selectedIsHolding && wlPrice !== null ? (
+                      <>
+                        <div className={`dt-sym-px ${wlDayChangePct !== null && wlDayChangePct >= 0 ? 'dt-up' : 'dt-dn'}`}>
+                          {fmtPrice(wlPrice, wlCurrency)}
+                        </div>
+                        {wlDayChangePct !== null && (
+                          <div className={`dt-sym-ch ${wlDayChangePct >= 0 ? 'dt-up' : 'dt-dn'}`}>
+                            {wlDayChangePct >= 0 ? '+' : ''}{fmt(wlDayChangePct, 2)}%
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <div className="dt-sym-px">—</div>
                     )}
                   </div>
                 </div>
 
-                {/* Market state + timestamp */}
+                {/* Market state */}
                 <div className="dt-sym-meta">
-                  {EXCHANGE[selected]} · GBP ·{' '}
-                  {selectedExtras
-                    ? <><span className={`dt-state-badge ${isLive ? 'live' : 'prev'}`}>
-                        {isLive ? 'LIVE' : 'PREV CLOSE'}
-                      </span>{' '}</>
-                    : null}
-                  {live ? new Date(live.fetchedAt * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                  {selectedIsHolding && EXCHANGE[selected] ? `${EXCHANGE[selected]} · GBP · ` : ''}
+                  {(selectedExtras || selectedWlItem) ? (
+                    <span className={`dt-state-badge ${isLive ? 'live' : 'prev'}`}>
+                      {isLive ? 'LIVE' : 'PREV CLOSE'}
+                    </span>
+                  ) : null}
+                  {live ? ` ${new Date(live.fetchedAt * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : '—'}
                 </div>
 
-                {/* Position badge — single source: selectedHolding from computePortfolio */}
-                {selectedHolding && (
+                {/* Position badge — HOLDINGS ONLY */}
+                {selectedIsHolding && selectedHolding && (
                   <div className="dt-pos-badge">
                     <span className="dt-pb-k">YOUR POSITION</span>
                     {fmt(selectedHolding.quantity, 4)} units
@@ -417,21 +655,34 @@ export default function DemeterTerminal() {
                   </div>
                 )}
 
+                {/* Timeframe selector */}
+                <div className="dt-range-row">
+                  {RANGES.map(r => (
+                    <button
+                      key={r}
+                      className={`dt-range-btn${range === r ? ' active' : ''}`}
+                      onClick={() => setRange(r)}
+                    >{r}</button>
+                  ))}
+                </div>
+
                 {/* Chart */}
                 <div className="dt-chart-box">
                   {barsLoading && <div className="dt-chart-loading">Loading chart…</div>}
-                  {!barsLoading && bars !== null && bars.length === 0 && (
-                    <div className="dt-chart-loading">No historical data available</div>
+                  {!barsLoading && barsResult !== null && barsResult.bars.length === 0 && (
+                    <div className="dt-chart-loading">
+                      {range === '1D' ? 'Intraday data not available for this symbol or market is closed' : 'No historical data available'}
+                    </div>
                   )}
                   <div
                     ref={chartContainerRef}
                     className="dt-chart"
-                    style={{ display: (!barsLoading && bars && bars.length > 0) ? 'block' : 'none' }}
+                    style={{ display: (!barsLoading && barsResult && barsResult.bars.length > 0) ? 'block' : 'none' }}
                   />
                 </div>
 
-                {/* Key stats */}
-                {selectedHolding && (
+                {/* Key stats — HOLDINGS ONLY */}
+                {selectedIsHolding && selectedHolding && (
                   <>
                     <div className="dt-sec-h" style={{ marginTop: 16 }}>
                       <span className="dt-eyebrow">Key stats</span>
@@ -502,15 +753,15 @@ export default function DemeterTerminal() {
                     {(portfolio?.holdings ?? [])
                       .slice().sort((a, b) => b.value - a.value)
                       .map(h => {
-                        const isHolding = h.pnl !== null
-                        const pnlPct = isHolding && h.avgCost > 0
+                        const isHoldingRow = h.pnl !== null
+                        const pnlPct = isHoldingRow && h.avgCost > 0
                           ? ((h.pnl!) / (h.quantity * h.avgCost)) * 100 : null
                         const ext = extras[h.ticker]
                         return (
                           <tr
                             key={h.ticker}
                             className="dt-hrow"
-                            onClick={() => { setSelected(h.ticker); setTab('research') }}
+                            onClick={() => selectSymbol(h.ticker, true)}
                           >
                             <td className="l">
                               <div className="dt-t-sym">{h.ticker}</div>
@@ -541,7 +792,7 @@ export default function DemeterTerminal() {
             )}
           </section>
 
-          {/* News side */}
+          {/* ── News side ── */}
           <aside className="dt-side dt-col">
             <div className="dt-sec-h">
               <span className="dt-eyebrow">News</span>
@@ -573,7 +824,7 @@ export default function DemeterTerminal() {
   )
 }
 
-// ── Styles (scoped via dt- prefix — no global bleed) ─────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -609,13 +860,7 @@ const STYLES = `
   .dt-brand  { display:flex; align-items:center; gap:10px; flex-shrink:0; }
   .dt-badge  { width:30px; height:30px; border-radius:8px; background:var(--dt-acc); color:#0D1014; display:grid; place-items:center; font-family:var(--dt-disp); font-weight:700; font-size:15px; }
   .dt-wordmark { font-family:var(--dt-disp); font-weight:600; font-size:17px; letter-spacing:.16em; }
-  .dt-search { flex:1; max-width:460px; display:flex; align-items:center; gap:9px; background:var(--dt-surf); border:1px solid var(--dt-bdr); border-radius:100px; padding:8px 16px; transition:.15s; }
-  .dt-search:focus-within { border-color:var(--dt-acc-d); }
-  .dt-search svg { width:15px; height:15px; color:var(--dt-dim); flex-shrink:0; }
-  .dt-search input { flex:1; background:none; border:none; color:var(--dt-text); font-size:13px; outline:none; font-family:var(--dt-body); }
-  .dt-search input::placeholder { color:var(--dt-dim); }
-  .dt-kbd  { font-family:var(--dt-mono); font-size:10px; color:var(--dt-dim); border:1px solid var(--dt-bdr); border-radius:5px; padding:1px 6px; }
-  .dt-tabs { display:flex; gap:4px; background:var(--dt-surf); border:1px solid var(--dt-bdr); border-radius:100px; padding:3px; flex-shrink:0; }
+  .dt-tabs { display:flex; gap:4px; background:var(--dt-surf); border:1px solid var(--dt-bdr); border-radius:100px; padding:3px; flex-shrink:0; margin-left:auto; }
   .dt-tab  { padding:7px 16px; border-radius:100px; font-size:12.5px; color:var(--dt-mid); font-weight:500; background:none; border:none; cursor:pointer; transition:.12s; font-family:var(--dt-body); }
   .dt-tab.active { background:var(--dt-acc); color:#0D1014; }
   .dt-back { font-family:var(--dt-mono); font-size:11px; color:var(--dt-dim); cursor:pointer; background:none; border:none; flex-shrink:0; white-space:nowrap; transition:.12s; }
@@ -634,27 +879,59 @@ const STYLES = `
   .dt-banner-err { background:rgba(224,122,95,.08); border-bottom-color:rgba(224,122,95,.3); color:var(--dt-dn); }
 
   /* Layout grid */
-  .dt-main { flex:1; display:grid; grid-template-columns:196px 1fr 288px; min-height:0; }
+  .dt-main { flex:1; display:grid; grid-template-columns:210px 1fr 288px; min-height:0; }
   .dt-col  { overflow-y:auto; padding:16px; }
   .dt-rail { border-right:1px solid var(--dt-bdr); }
   .dt-side { border-left:1px solid var(--dt-bdr); }
   .dt-sec-h { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
 
-  /* Watchlist */
-  .dt-wl-item { display:flex; align-items:center; justify-content:space-between; padding:9px 10px; border-radius:9px; cursor:pointer; transition:.12s; margin:0 -4px; }
+  /* Rail divider between My Book and Watchlist */
+  .dt-rail-divider { height:1px; background:var(--dt-bdr); margin:14px -16px 14px; }
+
+  /* Watchlist items */
+  .dt-wl-item { display:flex; align-items:center; gap:6px; padding:9px 10px; border-radius:9px; cursor:pointer; transition:.12s; margin:0 -4px; }
   .dt-wl-item:hover { background:var(--dt-raised); }
   .dt-wl-item.active { background:var(--dt-raised); box-shadow:inset 2px 0 0 var(--dt-acc); }
+  .dt-wl-watch { position:relative; }
   .dt-wl-sym  { font-family:var(--dt-disp); font-weight:600; font-size:13px; }
   .dt-wl-name { font-size:10px; color:var(--dt-dim); margin-top:1px; }
   .dt-wl-px   { font-family:var(--dt-mono); font-size:12px; }
+  .dt-wl-unit { font-family:var(--dt-mono); font-size:9px; color:var(--dt-dim); margin-top:1px; }
   .dt-wl-ch   { font-family:var(--dt-mono); font-size:10px; margin-top:1px; }
   .dt-prev-badge { font-family:var(--dt-mono); font-size:8px; letter-spacing:.08em; color:var(--dt-dim); border:1px solid var(--dt-bdr); border-radius:4px; padding:0 4px; text-transform:uppercase; display:inline-block; margin-top:2px; }
   .dt-stamp { font-family:var(--dt-mono); font-size:9px; color:var(--dt-dim); margin-top:16px; padding:0 6px; letter-spacing:.04em; }
+  .dt-wl-empty { font-family:var(--dt-mono); font-size:10px; color:var(--dt-dim); padding:8px 6px; line-height:1.6; }
+
+  /* Watchlist + button */
+  .dt-wl-add-btn { background:none; border:1px solid var(--dt-bdr); color:var(--dt-dim); border-radius:5px; width:20px; height:20px; line-height:1; font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:.12s; padding:0; }
+  .dt-wl-add-btn:hover { color:var(--dt-text); border-color:var(--dt-mid); }
+
+  /* Watchlist remove button */
+  .dt-wl-remove { background:none; border:none; color:var(--dt-dim); font-size:14px; cursor:pointer; padding:0 2px; line-height:1; opacity:0; transition:.12s; flex-shrink:0; }
+  .dt-wl-item:hover .dt-wl-remove { opacity:1; }
+  .dt-wl-remove:hover { color:var(--dt-dn); }
+
+  /* Add ticker box */
+  .dt-add-box { background:var(--dt-surf); border:1px solid var(--dt-bdr); border-radius:9px; padding:10px; margin-bottom:10px; }
+  .dt-add-row { display:flex; gap:6px; }
+  .dt-add-input { flex:1; background:var(--dt-raised); border:1px solid var(--dt-bdr); border-radius:6px; padding:6px 10px; color:var(--dt-text); font-family:var(--dt-mono); font-size:12px; outline:none; min-width:0; }
+  .dt-add-input:focus { border-color:var(--dt-acc-d); }
+  .dt-add-go { background:var(--dt-acc); color:#0D1014; border:none; border-radius:6px; padding:6px 10px; font-family:var(--dt-mono); font-size:12px; cursor:pointer; flex-shrink:0; }
+  .dt-add-go:disabled { opacity:.5; cursor:default; }
+  .dt-add-err { font-family:var(--dt-mono); font-size:10px; color:var(--dt-dn); margin-top:7px; letter-spacing:.02em; }
+  .dt-add-confirm { display:flex; flex-direction:column; gap:8px; }
+  .dt-add-preview { display:flex; flex-direction:column; gap:2px; }
+  .dt-add-sym  { font-family:var(--dt-disp); font-weight:600; font-size:13px; }
+  .dt-add-name { font-size:10px; color:var(--dt-mid); }
+  .dt-add-price { font-family:var(--dt-mono); font-size:12px; }
+  .dt-add-actions { display:flex; gap:6px; }
+  .dt-add-yes { background:var(--dt-acc); color:#0D1014; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer; font-family:var(--dt-body); font-weight:500; }
+  .dt-add-no  { background:none; color:var(--dt-mid); border:1px solid var(--dt-bdr); border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer; font-family:var(--dt-body); }
 
   /* Chart panel */
   .dt-sym-head { display:flex; align-items:flex-end; gap:16px; margin-bottom:4px; flex-wrap:wrap; }
   .dt-sym-id   { font-family:var(--dt-disp); font-weight:700; font-size:26px; letter-spacing:.02em; }
-  .dt-sym-name { color:var(--dt-mid); font-size:13px; margin-bottom:5px; }
+  .dt-sym-name { color:var(--dt-mid); font-size:13px; margin-bottom:5px; display:flex; align-items:center; gap:8px; }
   .dt-sym-px   { font-family:var(--dt-mono); font-size:26px; font-weight:600; font-variant-numeric:tabular-nums; }
   .dt-sym-ch   { font-family:var(--dt-mono); font-size:14px; margin-bottom:5px; }
   .dt-sym-meta { font-family:var(--dt-mono); font-size:10px; color:var(--dt-dim); margin:6px 0 10px; letter-spacing:.04em; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
@@ -662,14 +939,23 @@ const STYLES = `
   .dt-state-badge.live { background:rgba(91,192,138,.15); color:var(--dt-up); border:1px solid rgba(91,192,138,.3); }
   .dt-state-badge.prev { background:rgba(255,190,50,.1); color:rgb(255,190,50); border:1px solid rgba(255,190,50,.25); }
 
+  /* Watchlist chip next to symbol name */
+  .dt-wl-chip { font-family:var(--dt-mono); font-size:8px; letter-spacing:.1em; padding:2px 6px; border-radius:4px; text-transform:uppercase; color:var(--dt-acc); border:1px solid rgba(138,169,240,.3); background:rgba(138,169,240,.08); }
+
   /* Position badge */
   .dt-pos-badge { font-family:var(--dt-mono); font-size:11px; color:var(--dt-mid); background:var(--dt-surf); border:1px solid var(--dt-bdr); border-radius:8px; padding:8px 12px; margin-bottom:12px; display:inline-block; line-height:1.6; }
   .dt-pb-k { font-size:9px; letter-spacing:.1em; color:var(--dt-dim); margin-right:9px; }
 
+  /* Timeframe selector */
+  .dt-range-row { display:flex; gap:3px; margin-bottom:10px; }
+  .dt-range-btn { background:none; border:1px solid var(--dt-bdr); color:var(--dt-dim); border-radius:6px; padding:4px 10px; font-family:var(--dt-mono); font-size:11px; cursor:pointer; transition:.12s; }
+  .dt-range-btn:hover { border-color:var(--dt-mid); color:var(--dt-text); }
+  .dt-range-btn.active { background:var(--dt-raised); border-color:var(--dt-acc-d); color:var(--dt-acc); }
+
   /* Chart */
   .dt-chart-box { background:var(--dt-surf); border:1px solid var(--dt-bdr); border-radius:var(--dt-r); padding:8px 4px 4px; margin-bottom:14px; min-height:380px; position:relative; }
   .dt-chart { width:100%; height:clamp(360px,52vh,520px); }
-  .dt-chart-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--dt-mono); font-size:11px; color:var(--dt-dim); letter-spacing:.06em; }
+  .dt-chart-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--dt-mono); font-size:11px; color:var(--dt-dim); letter-spacing:.06em; text-align:center; padding:20px; }
 
   /* Stats strip */
   .dt-stats-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--dt-bdr); border:1px solid var(--dt-bdr); border-radius:var(--dt-r); overflow:hidden; margin-bottom:16px; }

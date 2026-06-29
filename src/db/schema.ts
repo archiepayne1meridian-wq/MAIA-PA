@@ -131,6 +131,13 @@ export const kpi_weekly = sqliteTable('kpi_weekly', {
   created_at: integer('created_at').notNull(),
 })
 
+export const watchlist = sqliteTable('watchlist', {
+  id:       text('id').primaryKey(),
+  symbol:   text('symbol').notNull().unique(),
+  name:     text('name'),
+  added_at: integer('added_at').notNull(),
+})
+
 export const diana_sessions = sqliteTable('diana_sessions', {
   id: text('id').primaryKey(),
   slack_user: text('slack_user').notNull(),

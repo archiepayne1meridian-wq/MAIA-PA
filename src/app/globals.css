@@ -1,26 +1,68 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0D1014;
+  --surface: #141921;
+  --raised: #1B212C;
+  --raised-2: #222a37;
+  --border: rgba(255, 255, 255, 0.07);
+  --hairline: rgba(255, 255, 255, 0.05);
+  --text: #E9ECF1;
+  --text-mid: #99A1AD;
+  --text-dim: #59616D;
+  --accent: #8AA9F0;
+  --accent-deep: #6E8BE0;
+  --online: #5BC08A;
+  --idle: #E0B341;
+  --alert: #E07A5F;
+  --display: var(--font-display), 'Space Grotesk', system-ui, sans-serif;
+  --body: var(--font-body), 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: var(--font-mono), 'JetBrains Mono', ui-monospace, monospace;
+  --r: 14px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+html, body { height: 100%; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--raised-2); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+button { font-family: inherit; cursor: pointer; color: inherit; border: none; background: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.92; }
+  50% { transform: scale(1.045); opacity: 1; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+@keyframes churn {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  33% { transform: scale(1.035) rotate(4deg); }
+  66% { transform: scale(0.985) rotate(-4deg); }
+}
+
+/* orbit: satellite rotates around center at 74px radius */
+@keyframes orbit {
+  from { transform: rotate(0deg) translateX(74px); }
+  to { transform: rotate(360deg) translateX(74px); }
 }

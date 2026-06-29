@@ -1,0 +1,131 @@
+.root {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  /* subtle radial glow behind card */
+  background-image: radial-gradient(ellipse 60% 50% at 50% 40%, rgba(138, 169, 240, 0.06) 0%, transparent 70%);
+}
+
+.card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 40px 36px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 8px;
+}
+
+.star {
+  width: 13px;
+  height: 13px;
+  position: relative;
+  flex-shrink: 0;
+}
+.star::before,
+.star::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+  border-radius: 50%;
+  box-shadow: 0 0 14px 2px var(--accent-deep);
+}
+.star::after {
+  transform: scale(0.45);
+  background: #fff;
+  box-shadow: 0 0 8px #fff;
+}
+
+.wordmark {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.22em;
+  color: var(--text);
+}
+
+.sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 32px;
+}
+
+.form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.input {
+  width: 100%;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.input::placeholder {
+  color: var(--text-dim);
+}
+.input:focus {
+  border-color: var(--accent-deep);
+}
+
+.inputError {
+  border-color: var(--alert) !important;
+}
+
+.errorMsg {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--alert);
+  letter-spacing: 0.04em;
+}
+
+.btn {
+  width: 100%;
+  background: var(--accent);
+  color: #0D1014;
+  border-radius: 10px;
+  padding: 12px;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  transition: background 0.15s, transform 0.1s;
+  margin-top: 6px;
+}
+.btn:hover {
+  background: var(--accent-deep);
+}
+.btn:active {
+  transform: scale(0.98);
+}

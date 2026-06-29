@@ -15,13 +15,19 @@
 // inferred from the symbol suffix (.LON → GBP, else USD). normalisePence is still called
 // so GBp/GBX division happens automatically if the inferred currency is wrong.
 
-import type { Holding, PricedHolding } from './portfolio'
+import type { Holding } from './portfolio'
+import type { PricedHolding as BasePricedHolding } from './portfolio'
+
+export interface PricedHolding extends BasePricedHolding {
+  isLivePrice?: boolean
+}
 
 export interface Quote {
-  ticker: string    // canonical ticker (e.g. VWRP, not VWRP.L)
-  price: number     // current price, pence already normalised to GBP
+  ticker: string       // canonical ticker (e.g. VWRP, not VWRP.L)
+  price: number        // current price, pence already normalised to GBP; equals prevClose when market closed
   prevClose: number
-  currency: string  // normalised: USD or GBP (never GBp/GBX after this point)
+  currency: string     // normalised: USD or GBP (never GBp/GBX after this point)
+  isLivePrice?: boolean // false = market closed / OpenBB returned null last_price; price == prevClose
 }
 
 // Tickers that live on the London Stock Exchange — routed to Alpha Vantage (.LON suffix).
@@ -308,7 +314,7 @@ class OpenBBProvider {
   async getQuotes(tickers: string[]): Promise<Quote[]> {
     const symbols = tickers.map(t => providerSymbol(t)).join(',')
     const url = `${this.baseUrl}/api/v1/equity/price/quote?symbol=${encodeURIComponent(symbols)}`
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` } })
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` }, cache: 'no-store' })
     if (!res.ok) throw new Error(`OpenBB price fetch failed: ${res.status}`)
     const json = await res.json() as { results?: unknown[] }
 
@@ -319,10 +325,16 @@ class OpenBBProvider {
         ([, v]) => v === provSym,
       )?.[0] ?? provSym.replace(/\.L$/, '')
 
-      const price    = Number(row.last_price ?? row.price ?? 0)
-      const prevClose = Number(row.prev_close ?? row.previous_close ?? price)
-      const { price: p, prevClose: pc, currency } = normalisePence(price, prevClose, String(row.currency ?? 'USD'))
-      return { ticker, price: p, prevClose: pc, currency }
+      const rawLast = row.last_price ?? row.price
+      const isLivePrice = rawLast != null && Number(rawLast) > 0
+      const prevCloseRaw = Number(row.prev_close ?? row.previous_close ?? 0)
+      // When market is closed OpenBB returns null last_price — fall back to prevClose so
+      // computePortfolio gets a real value (not 0) and the UI shows "PREV CLOSE" badge.
+      const rawPrice = isLivePrice ? Number(rawLast) : prevCloseRaw
+      const prevClose = prevCloseRaw > 0 ? prevCloseRaw : rawPrice
+
+      const { price: p, prevClose: pc, currency } = normalisePence(rawPrice, prevClose, String(row.currency ?? 'USD'))
+      return { ticker, price: p, prevClose: pc, currency, isLivePrice }
     })
   }
 
@@ -570,6 +582,7 @@ export async function getPricedHoldings(
       price:    q.price,
       prevClose: q.prevClose,
       fxToBase:  fxRates.get(q.currency.toUpperCase()) ?? 1,
+      isLivePrice: q.isLivePrice,
     })
   }
 

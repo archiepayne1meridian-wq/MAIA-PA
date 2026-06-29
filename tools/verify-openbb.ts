@@ -139,7 +139,7 @@ async function testFx(pair: string, provider: string) {
 
 async function testNews(symbol: string, provider: string) {
   const r = await get(
-    `/api/v1/news/company?symbols=${encodeURIComponent(symbol)}&limit=3&provider=${provider}`,
+    `/api/v1/news/company?symbol=${encodeURIComponent(symbol)}&limit=3&provider=${provider}`,
   )
   console.log(`\n  ── NEWS [${provider}]  ${symbol}`)
   console.log(`     HTTP ${r.status}`)
@@ -200,6 +200,7 @@ async function main() {
   // ── Section 6: News ────────────────────────────────────────────────────
   console.log('\n● Company news')
   await testNews('MU', 'fmp')
+  await testNews('MU', 'yfinance')
   await testNews('AMAT', 'fmp')
 
   console.log('\n═══════════════════════════════════════════════════════')

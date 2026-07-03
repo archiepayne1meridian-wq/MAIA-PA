@@ -26,7 +26,7 @@ export default function AgentRail({ agents, activeId, onSelect }: Props) {
             !a.inactive && a.id === activeId ? s.active : '',
             a.inactive ? s.agentInactive : '',
           ].filter(Boolean).join(' ')}
-          onClick={() => onSelect(a.id)}
+          onClick={() => { if (!a.inactive) onSelect(a.id) }}
           aria-label={a.inactive ? `${a.id} — coming soon` : a.id}
         >
           <div className={s.agentTop}>

@@ -11,7 +11,6 @@ import Orb from './components/Orb'
 import Composer from './components/Composer'
 import TaskList from './components/TaskList'
 import CalendarColumn from './components/CalendarColumn'
-import AgentDrawer from './components/AgentDrawer'
 
 interface Props {
   agents: Agent[]
@@ -20,16 +19,18 @@ interface Props {
   needYouCount: number
 }
 
+// The only agent ids with a full page at /dashboard/<id>. MAIA (the orchestrator
+// tile) and any greyed/unbuilt agent (LUNA, IRIS, JUNO) have no route — clicking
+// them must stay a no-op, not a 404.
+const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'DEMETER', 'HERA', 'DIANA', 'VICTORIA'])
+
 export default function DashboardClient({ agents, tasks, onlineCount, needYouCount }: Props) {
   const router = useRouter()
   const [orbState, setOrbState] = useState<OrbState>('idle')
-  const [openAgentId, setOpenAgentId] = useState<string | null>(null)
-
-  const openAgent = agents.find(a => a.id === openAgentId) ?? null
 
   function handleAgentSelect(id: string) {
-    if (id === 'DEMETER') { router.push('/dashboard/demeter'); return }
-    setOpenAgentId(id)
+    if (!ROUTABLE_AGENTS.has(id)) return
+    router.push(`/dashboard/${id.toLowerCase()}`)
   }
 
   return (
@@ -38,7 +39,7 @@ export default function DashboardClient({ agents, tasks, onlineCount, needYouCou
 
       <AgentRail
         agents={agents}
-        activeId={openAgentId ?? agents[0]!.id}
+        activeId=""
         onSelect={handleAgentSelect}
       />
 
@@ -63,10 +64,10 @@ export default function DashboardClient({ agents, tasks, onlineCount, needYouCou
             </div>
 
             <div className={s.chips}>
-              <button className={s.chip} onClick={() => setOpenAgentId('CASSANDRA')}>
+              <button className={s.chip} onClick={() => router.push('/dashboard/cassandra')}>
                 Market brief
               </button>
-              <button className={s.chip} onClick={() => setOpenAgentId('ATHENA')}>
+              <button className={s.chip} onClick={() => router.push('/dashboard/athena')}>
                 CISI cards due?
               </button>
               <button className={s.chip} onClick={() => router.push('/dashboard/demeter')}>
@@ -91,8 +92,6 @@ export default function DashboardClient({ agents, tasks, onlineCount, needYouCou
 
         <CalendarColumn events={EVENTS} />
       </div>
-
-      <AgentDrawer agent={openAgent} onClose={() => setOpenAgentId(null)} />
     </div>
   )
 }

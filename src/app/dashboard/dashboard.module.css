@@ -265,18 +265,7 @@
   letter-spacing: 0.06em; text-transform: uppercase; margin-top: 2px;
 }
 
-/* ── Drawer overlay ───────────────────────────────────────────────────────── */
-.overlay {
-  position: fixed; inset: 0; background: rgba(8,10,13,0.66); backdrop-filter: blur(6px);
-  z-index: 50; display: none; justify-content: flex-end;
-}
-.overlay.open { display: flex; }
-.drawer {
-  width: min(480px, 92vw); background: var(--bg); border-left: 1px solid var(--border);
-  height: 100%; overflow-y: auto; padding: 26px;
-  transform: translateX(20px); opacity: 0; transition: 0.28s;
-}
-.overlay.open .drawer { transform: none; opacity: 1; }
+/* ── Agent header (shared by drawer-era panels + full agent pages) ──────────── */
 .drawerHead { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
 .drawerBadge {
   width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center;
@@ -285,12 +274,6 @@
 }
 .drawerName { font-family: var(--display); font-weight: 600; font-size: 22px; letter-spacing: 0.04em; }
 .drawerRole { color: var(--text-mid); font-size: 13px; }
-.drawerClose {
-  position: absolute; top: 26px; right: 26px; width: 34px; height: 34px; border-radius: 50%;
-  background: var(--surface); border: 1px solid var(--border);
-  display: grid; place-items: center; font-size: 18px; color: var(--text-mid);
-}
-.drawerClose:hover { color: var(--text); border-color: var(--accent-deep); }
 .drawerStatus {
   display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px;
   color: var(--text-mid); margin: 18px 0 22px; padding: 7px 13px;
@@ -313,17 +296,6 @@
   border-bottom: 1px solid var(--hairline); font-size: 13px;
 }
 .feedItemTime { color: var(--text-dim); font-family: var(--mono); font-size: 11px; flex-shrink: 0; width: 42px; }
-.drawerActions { display: flex; gap: 10px; margin-top: 22px; }
-.btnPrimary {
-  flex: 1; padding: 12px; border-radius: 10px; font-size: 13px; font-weight: 500;
-  text-align: center; transition: 0.15s; background: var(--accent); color: #0D1014;
-}
-.btnPrimary:hover { background: #a3bdf5; }
-.btnGhost {
-  flex: 1; padding: 12px; border-radius: 10px; font-size: 13px; font-weight: 500;
-  text-align: center; transition: 0.15s; border: 1px solid var(--border); color: var(--text-mid);
-}
-.btnGhost:hover { border-color: var(--accent-deep); color: var(--text); }
 
 /* ── Panel common ─────────────────────────────────────────────────────────── */
 .panelSkeleton { padding: 4px 0; }
@@ -470,6 +442,281 @@
 }
 .chartWrap { height: 200px; margin: 0 -4px 4px; }
 .noDataMetrics { margin-top: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
+
+/* ── Agent full page (D4a) ────────────────────────────────────────────────── */
+.agentPageWrap { max-width: 760px; margin: 0 auto; padding: 36px 24px 60px; height: 100vh; overflow-y: auto; }
+.agentPageBack {
+  font-family: var(--mono); font-size: 11px; color: var(--text-dim); cursor: pointer;
+  background: none; border: none; padding: 0; margin-bottom: 22px; transition: 0.12s;
+}
+.agentPageBack:hover { color: var(--text); }
+.agentPageBody { margin-top: 24px; }
+.interactiveSlot {
+  margin-top: 28px; padding: 22px; border: 1px dashed var(--border); border-radius: var(--r);
+  background: var(--surface);
+}
+.interactiveSlot .eyebrow { margin-bottom: 8px; display: block; }
+.interactiveSlotText { color: var(--text-dim); font-size: 13px; }
+
+/* ── DIANA workspace (D4b) ────────────────────────────────────────────────── */
+.dianaWs { margin-top: 28px; }
+.dianaWsSection { margin-bottom: 32px; }
+.dianaWsSectionHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+
+/* Objection library */
+.dianaObjGrid { display: flex; flex-direction: column; gap: 6px; }
+.dianaObjItem { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+.dianaObjToggle {
+  width: 100%; display: flex; justify-content: space-between; align-items: center;
+  padding: 11px 14px; background: none; border: none; cursor: pointer;
+  text-align: left; transition: background 0.12s;
+}
+.dianaObjToggle:hover { background: var(--raised); }
+.dianaObjToggleOpen { background: var(--raised-2) !important; }
+.dianaObjLabel { font-size: 12.5px; color: var(--text); }
+.dianaObjChevron { font-family: var(--mono); font-size: 9px; color: var(--text-dim); flex-shrink: 0; }
+.dianaObjBody { padding: 0 14px 14px; border-top: 1px solid var(--hairline); }
+.dianaObjField { margin-top: 14px; }
+.dianaObjFieldText { margin-top: 5px; font-size: 12.5px; color: var(--text-mid); line-height: 1.6; }
+.dianaObjTry {
+  margin-top: 5px; font-size: 12.5px; color: var(--text); line-height: 1.6;
+  padding: 9px 13px; background: var(--raised); border-left: 2px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+}
+.dianaObjDisclaimer { margin-top: 14px; font-family: var(--mono); font-size: 10px; color: var(--text-dim); line-height: 1.5; }
+
+/* Roleplay controls */
+.dianaRpControls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dianaDiffLabel { font-family: var(--mono); font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
+.dianaDiffBtns { display: flex; gap: 6px; }
+.dianaDiffBtn {
+  font-family: var(--mono); font-size: 10px; padding: 4px 11px; border-radius: 100px;
+  border: 1px solid var(--border); background: none; color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.dianaDiffBtn:hover { border-color: var(--accent-deep); color: var(--text); }
+.dianaDiffBtnActive { border-color: var(--accent) !important; color: var(--accent) !important; background: rgba(99, 179, 237, 0.08); }
+.dianaStartBtn {
+  font-family: var(--mono); font-size: 11px; padding: 6px 18px;
+  background: var(--accent); color: #0D1014; border: none; border-radius: 100px;
+  cursor: pointer; font-weight: 600; transition: opacity 0.12s;
+}
+.dianaStartBtn:hover { opacity: 0.85; }
+
+/* Chat surface */
+.dianaMessages {
+  display: flex; flex-direction: column; gap: 14px;
+  min-height: 180px; max-height: 400px; overflow-y: auto;
+  padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  margin-bottom: 10px;
+}
+.dianaMessagesEnded { opacity: 0.65; margin-bottom: 16px; }
+.dianaMsgUser { display: flex; flex-direction: column; align-items: flex-end; max-width: 78%; align-self: flex-end; }
+.dianaMsgDiana { display: flex; flex-direction: column; align-items: flex-start; max-width: 78%; align-self: flex-start; }
+.dianaMsgLabel {
+  font-family: var(--mono); font-size: 9px; color: var(--text-dim); margin-bottom: 4px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+.dianaMsgBubbleUser {
+  padding: 9px 13px; background: var(--accent); color: #0D1014;
+  border-radius: 12px 12px 2px 12px; font-size: 12.5px; line-height: 1.55;
+}
+.dianaMsgBubbleDiana {
+  padding: 9px 13px; background: var(--raised-2); color: var(--text);
+  border-radius: 12px 12px 12px 2px; font-size: 12.5px; line-height: 1.55;
+}
+.dianaSending { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); font-style: italic; align-self: flex-start; }
+.dianaInputRow { display: flex; gap: 8px; }
+.dianaInput {
+  flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 9px 13px; font-size: 13px; color: var(--text); font-family: inherit; outline: none; transition: border-color 0.12s;
+}
+.dianaInput:focus { border-color: var(--accent-deep); }
+.dianaInput::placeholder { color: var(--text-dim); }
+.dianaInput:disabled { opacity: 0.5; }
+.dianaSendBtn {
+  padding: 9px 16px; background: var(--accent); color: #0D1014; border: none; border-radius: var(--r);
+  font-family: var(--mono); font-size: 11px; font-weight: 600; cursor: pointer; transition: opacity 0.12s; white-space: nowrap;
+}
+.dianaSendBtn:hover:not(:disabled) { opacity: 0.85; }
+.dianaSendBtn:disabled { opacity: 0.35; cursor: not-allowed; }
+.dianaSessionBtns { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.dianaExitBtn {
+  font-family: var(--mono); font-size: 10.5px; padding: 5px 13px;
+  background: none; border: 1px solid var(--border); border-radius: 100px;
+  color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.dianaExitBtn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.dianaExitBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.dianaResetBtn {
+  font-family: var(--mono); font-size: 10.5px; padding: 5px 13px;
+  background: none; border: 1px solid var(--border); border-radius: 100px;
+  color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.dianaResetBtn:hover:not(:disabled) { border-color: var(--alert); color: var(--alert); }
+.dianaResetBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.dianaNewSessionBtn {
+  font-family: var(--mono); font-size: 10.5px; padding: 5px 13px;
+  background: none; border: 1px solid var(--accent); border-radius: 100px;
+  color: var(--accent); cursor: pointer; transition: 0.12s;
+}
+.dianaNewSessionBtn:hover { background: rgba(99, 179, 237, 0.08); }
+.dianaFeedbackBlock {
+  padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  margin-bottom: 12px;
+}
+.dianaFeedbackText { font-size: 12.5px; color: var(--text-mid); line-height: 1.75; white-space: pre-wrap; }
+.dianaErrorMsg { font-family: var(--mono); font-size: 10.5px; color: var(--alert); margin-bottom: 10px; }
+
+/* ── ATHENA workspace (D4b) ───────────────────────────────────────────────── */
+.athenaWs { margin-top: 28px; }
+
+/* Tab switcher */
+.athenaTabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+.athenaTab {
+  font-family: var(--mono); font-size: 10.5px; padding: 7px 16px;
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--text-dim); cursor: pointer; transition: 0.12s; margin-bottom: -1px;
+}
+.athenaTab:hover { color: var(--text); }
+.athenaTabActive { color: var(--accent) !important; border-bottom-color: var(--accent) !important; }
+
+.athenaPane { min-height: 200px; }
+.athenaLoading { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); margin-top: 24px; }
+.athenaErrorMsg { font-family: var(--mono); font-size: 10.5px; color: var(--alert); margin-bottom: 10px; }
+
+/* Flashcard */
+.athenaCard {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 24px; min-height: 160px; display: flex; flex-direction: column;
+}
+.athenaCardModule {
+  font-family: var(--mono); font-size: 9px; color: var(--accent); text-transform: uppercase;
+  letter-spacing: 0.1em; margin-bottom: 16px; display: block;
+}
+.athenaCardFront { font-size: 15px; color: var(--text); line-height: 1.6; flex: 1; margin: 0; }
+.athenaRevealBtn {
+  margin-top: 20px; align-self: flex-start;
+  font-family: var(--mono); font-size: 10.5px; padding: 6px 16px;
+  background: var(--accent); color: #0D1014; border: none; border-radius: 100px;
+  cursor: pointer; font-weight: 600; transition: opacity 0.12s;
+}
+.athenaRevealBtn:hover { opacity: 0.85; }
+.athenaCardDivider { border: none; border-top: 1px solid var(--hairline); margin: 20px 0; }
+.athenaCardBack {
+  font-size: 13.5px; color: var(--text-mid); line-height: 1.65; margin: 0;
+  padding: 12px 14px; background: var(--raised); border-radius: 6px;
+  border-left: 2px solid var(--accent);
+}
+.athenaGradeBtns { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.athenaGradeBtn {
+  font-family: var(--mono); font-size: 10.5px; padding: 5px 15px;
+  border-radius: 100px; border: 1px solid var(--border);
+  background: none; cursor: pointer; transition: 0.12s;
+}
+.athenaGradeBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.athenaGradeBtnAgain { color: var(--alert); border-color: var(--alert); }
+.athenaGradeBtnAgain:hover:not(:disabled) { background: rgba(245, 101, 101, 0.08); }
+.athenaGradeBtnHard { color: #E2A14B; border-color: #E2A14B; }
+.athenaGradeBtnHard:hover:not(:disabled) { background: rgba(226, 161, 75, 0.08); }
+.athenaGradeBtnGood { color: var(--online); border-color: var(--online); }
+.athenaGradeBtnGood:hover:not(:disabled) { background: rgba(72, 187, 120, 0.08); }
+.athenaGradeBtnEasy { color: var(--accent); border-color: var(--accent); }
+.athenaGradeBtnEasy:hover:not(:disabled) { background: rgba(99, 179, 237, 0.08); }
+.athenaScheduled {
+  font-family: var(--mono); font-size: 10.5px; color: var(--online);
+  margin-top: 12px; transition: opacity 0.3s;
+}
+.athenaNoDue { margin-top: 32px; text-align: center; }
+.athenaNoDueText { font-size: 13px; color: var(--text-mid); margin-bottom: 8px; }
+.athenaNoDueSub { font-size: 11.5px; color: var(--text-dim); margin-bottom: 16px; line-height: 1.6; }
+.athenaCode {
+  font-family: var(--mono); background: var(--raised); padding: 2px 6px;
+  border-radius: 4px; font-size: 10px; color: var(--text);
+}
+.athenaRefreshBtn {
+  font-family: var(--mono); font-size: 10px; padding: 5px 13px;
+  background: none; border: 1px solid var(--border); border-radius: 100px;
+  color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.athenaRefreshBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* MCQ — idle */
+.athenaQuizIdle { display: flex; flex-direction: column; gap: 14px; }
+.athenaQuizNoMaterial { font-size: 11.5px; color: var(--text-dim); margin: 0; }
+.athenaModuleChips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.athenaModuleChip {
+  font-family: var(--mono); font-size: 10px; padding: 4px 12px;
+  border-radius: 100px; border: 1px solid var(--border);
+  background: none; color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.athenaModuleChip:hover:not(:disabled) { border-color: var(--accent-deep); color: var(--text); }
+.athenaModuleChipActive { border-color: var(--accent) !important; color: var(--accent) !important; background: rgba(99, 179, 237, 0.08); }
+.athenaModuleChip:disabled { opacity: 0.4; cursor: not-allowed; }
+.athenaStartQuizBtn {
+  align-self: flex-start;
+  font-family: var(--mono); font-size: 11px; padding: 7px 20px;
+  background: var(--accent); color: #0D1014; border: none; border-radius: 100px;
+  cursor: pointer; font-weight: 600; transition: opacity 0.12s; margin-top: 4px;
+}
+.athenaStartQuizBtn:hover:not(:disabled) { opacity: 0.85; }
+.athenaStartQuizBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* MCQ — question */
+.athenaQuestionBlock { display: flex; flex-direction: column; gap: 0; }
+.athenaQMeta { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
+.athenaQCount { font-family: var(--mono); font-size: 9px; color: var(--text-dim); }
+.athenaQModule { font-family: var(--mono); font-size: 9px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; }
+.athenaQText { font-size: 14px; color: var(--text); line-height: 1.65; margin: 0 0 20px; }
+.athenaOptions { display: flex; flex-direction: column; gap: 7px; }
+.athenaOption {
+  display: flex; align-items: flex-start; gap: 10px; text-align: left;
+  padding: 11px 14px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); cursor: pointer; transition: 0.12s; width: 100%;
+}
+.athenaOption:hover:not(:disabled) { border-color: var(--accent-deep); background: var(--raised); }
+.athenaOption:disabled { cursor: default; }
+.athenaOptionCorrect { border-color: var(--online) !important; background: rgba(72, 187, 120, 0.07) !important; }
+.athenaOptionWrong { border-color: var(--alert) !important; background: rgba(245, 101, 101, 0.07) !important; }
+.athenaOptionLabel {
+  font-family: var(--mono); font-size: 10px; color: var(--accent); flex-shrink: 0;
+  min-width: 16px; padding-top: 1px;
+}
+.athenaOptionText { font-size: 12.5px; color: var(--text); line-height: 1.5; }
+.athenaFeedbackRow {
+  margin-top: 16px; padding: 14px; border-radius: var(--r);
+  border: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;
+}
+.athenaFeedbackCorrect { border-color: var(--online); background: rgba(72, 187, 120, 0.05); }
+.athenaFeedbackWrong { border-color: var(--alert); background: rgba(245, 101, 101, 0.05); }
+.athenaFeedbackText { font-size: 12px; color: var(--text-mid); line-height: 1.65; margin: 0; }
+.athenaNextBtn {
+  align-self: flex-end;
+  font-family: var(--mono); font-size: 10.5px; padding: 5px 14px;
+  background: none; border: 1px solid var(--border); border-radius: 100px;
+  color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.athenaNextBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* MCQ — complete */
+.athenaScoreBlock { display: flex; flex-direction: column; gap: 20px; }
+.athenaScoreMain { text-align: center; padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+.athenaScoreNum { font-family: var(--mono); font-size: 36px; color: var(--text); margin: 10px 0 4px; letter-spacing: -1px; }
+.athenaScorePct { font-family: var(--mono); font-size: 14px; color: var(--accent); }
+.athenaBreakdown { padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+.athenaBreakdownRow { display: grid; grid-template-columns: 1fr 48px 40px 80px; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--hairline); }
+.athenaBreakdownRow:last-child { border-bottom: none; }
+.athenaBreakdownMod { font-size: 11.5px; color: var(--text-mid); }
+.athenaBreakdownScore { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); text-align: right; }
+.athenaBreakdownPct { font-family: var(--mono); font-size: 10.5px; text-align: right; }
+.athenaBreakdownBar { height: 3px; background: var(--raised-2); border-radius: 2px; overflow: hidden; }
+.athenaBreakdownFill { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+.athenaNewQuizBtn {
+  align-self: flex-start;
+  font-family: var(--mono); font-size: 10.5px; padding: 5px 13px;
+  background: none; border: 1px solid var(--accent); border-radius: 100px;
+  color: var(--accent); cursor: pointer; transition: 0.12s;
+}
+.athenaNewQuizBtn:hover { background: rgba(99, 179, 237, 0.08); }
 
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 1080px) {

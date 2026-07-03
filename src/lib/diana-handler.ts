@@ -131,7 +131,7 @@ export function parseDianaConfig(content: string): DianaConfig {
   return { difficulty, firmTone, objections, rubric }
 }
 
-function loadDianaConfig(): DianaConfig {
+export function loadDianaConfig(): DianaConfig {
   const p = path.join(process.cwd(), 'context', 'diana.md')
   const defaults: DianaConfig = {
     difficulty: 'neutral', firmTone: '', objections: [], rubric: '',

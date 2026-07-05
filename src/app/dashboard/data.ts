@@ -2,7 +2,7 @@ import { getDb } from '@/db'
 import {
   activity, study_cards, study_reviews, research_briefs,
   portfolio_snapshots, holdings, reflections, diana_sessions,
-  kpi_logs, kpi_weekly, approvals,
+  kpi_logs, kpi_weekly, approvals, iris_posts,
 } from '@/db/schema'
 import { desc, eq, gte, lte, and, count } from 'drizzle-orm'
 import type { Agent, Task } from './types'
@@ -43,18 +43,6 @@ export const INACTIVE_AGENTS: Agent[] = [
       ['Mode', 'Descriptive', 'never prescriptive'],
     ],
     feed: [['—', 'Not yet active']],
-  },
-  {
-    id: 'IRIS', role: 'LinkedIn news-relay', badge: 'I',
-    status: 'idle', stat: 'Coming soon', statusLabel: 'T3 — awaiting firm sign-off',
-    prog: 0, progAlert: false, inactive: true,
-    tiles: [
-      ['Status', 'Shelved', 'T3 — firm approval required'],
-      ['Role', 'News relay', 'factual only'],
-      ['Data', 'None', 'no real data shown'],
-      ['Mode', 'Draft-only', 'approval required'],
-    ],
-    feed: [['—', 'T3 agent — awaiting deVere compliance clearance']],
   },
   {
     id: 'JUNO', role: 'Compliance helper', badge: 'J',
@@ -234,6 +222,17 @@ export async function buildDashboardData(): Promise<DashboardData> {
   const victoriaTarget = 15
   const victoriaProg = Math.min(Math.round(callsThisWeek / victoriaTarget * 100), 100)
 
+  // ── IRIS ──────────────────────────────────────────────────────────────────────
+  const irisPostsThisWeek = await db
+    .select({ id: iris_posts.id, status: iris_posts.status, pillar: iris_posts.pillar, created_at: iris_posts.created_at })
+    .from(iris_posts).where(gte(iris_posts.created_at, wStart))
+    .orderBy(desc(iris_posts.created_at))
+  const irisTotal = irisPostsThisWeek.length
+  const irisApproved = irisPostsThisWeek.filter(p => p.status === 'approved').length
+  const irisDraft = irisPostsThisWeek.find(p => p.status === 'draft') ?? null
+  const [lastIrisPost] = irisPostsThisWeek
+  const irisFeed = await agentFeed(db, 'IRIS')
+
   // ── Pending approvals ─────────────────────────────────────────────────────────
   const [pendingResult] = await db
     .select({ n: count() }).from(approvals).where(eq(approvals.status, 'pending'))
@@ -386,6 +385,25 @@ export async function buildDashboardData(): Promise<DashboardData> {
         ['Scorecard', 'Weekly', 'sent via Slack'],
       ],
       feed: victoriaFeed,
+    },
+    {
+      id: 'IRIS', role: 'LinkedIn content engine', badge: 'I',
+      status: irisDraft ? 'online' : irisTotal > 0 ? 'idle' : 'idle',
+      stat: irisDraft ? 'Draft pending review' : irisTotal > 0 ? `${irisApproved}/${irisTotal} approved` : 'No drafts this week',
+      statusLabel: irisDraft
+        ? 'Draft ready — approve in dashboard or reply in Slack'
+        : irisTotal > 0
+        ? `${irisApproved} approved · ${irisTotal} drafted this week`
+        : 'Cron runs Mon–Fri 6am and 12pm CET',
+      prog: irisTotal > 0 ? Math.min(Math.round(irisApproved / Math.max(irisTotal, 1) * 100), 100) : 0,
+      progAlert: false,
+      tiles: [
+        ['Drafts this week', String(irisTotal), 'morning + evening'],
+        ['Approved', String(irisApproved), 'ready to post'],
+        ['Last draft', lastIrisPost ? relTime(lastIrisPost.created_at) : 'None', lastIrisPost ? `pillar ${lastIrisPost.pillar}` : 'awaiting cron'],
+        ['Mode', 'Draft-only', 'manual paste to LinkedIn'],
+      ],
+      feed: irisFeed,
     },
     ...INACTIVE_AGENTS,
   ]

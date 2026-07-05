@@ -1,0 +1,41 @@
+name: IRIS LinkedIn Drafts
+
+on:
+  schedule:
+    # 6:00am CET (UTC+1) = 05:00 UTC — morning draft delivery
+    - cron: '0 5 * * 1-5'
+    # 12:00pm CET (UTC+1) = 11:00 UTC — evening draft delivery
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: 'morning or evening'
+        required: true
+        default: morning
+        type: choice
+        options: [morning, evening]
+
+jobs:
+  morning-draft:
+    if: github.event.schedule == '0 5 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.slot == 'morning')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger IRIS morning draft
+        run: |
+          curl -f -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"slot":"morning"}' \
+            "https://maia-pa-production.up.railway.app/api/cron/iris"
+
+  evening-draft:
+    if: github.event.schedule == '0 11 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.slot == 'evening')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger IRIS evening draft
+        run: |
+          curl -f -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"slot":"evening"}' \
+            "https://maia-pa-production.up.railway.app/api/cron/iris"

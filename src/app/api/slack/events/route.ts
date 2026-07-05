@@ -52,11 +52,14 @@ import {
   getPendingTally,
   isPendingConfirm,
 } from '@/lib/victoria-handler'
+import { getActiveIrisDraft } from '../../../../../tools/iris'
+import { detectIrisIntent, handleIrisStatus, handleIrisThread } from '@/lib/iris-handler'
 
 interface SlackEvent {
   type: string
   text?: string
   ts?: string
+  thread_ts?: string
   channel?: string
   user?: string
   bot_id?: string
@@ -140,6 +143,22 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
   })
 
   try {
+    // ── IRIS: thread reply detection — catches replies in IRIS draft threads ──────
+    // Runs before DIANA session check because thread_ts is mutually exclusive
+    // with DIANA roleplay turns (DIANA uses the main channel, not threads).
+    if (event.thread_ts) {
+      const irisDraft = await getActiveIrisDraft(event.thread_ts)
+      if (irisDraft) {
+        await getDb().update(activity).set({ agent: 'IRIS' }).where(eq(activity.id, rowId))
+        await handleIrisThread(irisDraft, text, channel, event.ts!)
+        await getDb()
+          .update(activity)
+          .set({ status: 'success', duration_ms: Date.now() - startMs })
+          .where(eq(activity.id, rowId))
+        return
+      }
+    }
+
     // ── DIANA: active-session check — MUST run before all other intent routing ──
     // While a diana_session is active, every message routes to DIANA's roleplay
     // handler until the user says "done" / "exit" / "stop" / "diana, reset".
@@ -306,6 +325,18 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
           break
       }
 
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // ── IRIS intent routing ───────────────────────────────────────────────────
+    const irisIntent = detectIrisIntent(text)
+    if (irisIntent) {
+      await getDb().update(activity).set({ agent: 'IRIS' }).where(eq(activity.id, rowId))
+      if (irisIntent.type === 'status') await handleIrisStatus(channel)
       await getDb()
         .update(activity)
         .set({ status: 'success', duration_ms: Date.now() - startMs })

@@ -57,6 +57,13 @@
       "when": 1782770482152,
       "tag": "0007_simple_the_captain",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1783179965977,
+      "tag": "0008_sparkling_devos",
+      "breakpoints": true
     }
   ]
 }

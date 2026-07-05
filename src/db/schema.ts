@@ -138,6 +138,28 @@ export const watchlist = sqliteTable('watchlist', {
   added_at: integer('added_at').notNull(),
 })
 
+export const iris_posts = sqliteTable('iris_posts', {
+  id: text('id').primaryKey(),
+  slot: text('slot').notNull(),
+  pillar: integer('pillar').notNull(),
+  topic: text('topic').notNull(),
+  copy: text('copy').notNull(),
+  image_prompt: text('image_prompt'),
+  image_url: text('image_url'),
+  format: text('format'),
+  status: text('status').notNull().default('draft'),
+  slack_ts: text('slack_ts'),
+  created_at: integer('created_at').notNull(),
+})
+
+export const voice_preferences = sqliteTable('voice_preferences', {
+  id: text('id').primaryKey(),
+  preference_type: text('preference_type').notNull(),
+  value: text('value').notNull(),
+  source: text('source').notNull(),
+  created_at: integer('created_at').notNull(),
+})
+
 export const diana_sessions = sqliteTable('diana_sessions', {
   id: text('id').primaryKey(),
   slack_user: text('slack_user').notNull(),

@@ -32,6 +32,7 @@ import {
   detectCassandraIntent,
   handleCassandraBrief,
   handleFxOnly,
+  handleFlagIrisTopic,
 } from '@/lib/cassandra-handler'
 import {
   detectDemeterIntent,
@@ -242,8 +243,9 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
     if (cassandraIntent) {
       await getDb().update(activity).set({ agent: 'CASSANDRA' }).where(eq(activity.id, rowId))
       switch (cassandraIntent.type) {
-        case 'morning_brief': await handleCassandraBrief(channel, event.user); break
-        case 'fx_only':       await handleFxOnly(channel, event.user); break
+        case 'morning_brief':    await handleCassandraBrief(channel, event.user); break
+        case 'fx_only':          await handleFxOnly(channel, event.user); break
+        case 'flag_iris_topic':  await handleFlagIrisTopic(cassandraIntent.description, channel); break
       }
       await getDb()
         .update(activity)

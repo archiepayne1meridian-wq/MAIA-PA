@@ -1,6 +1,6 @@
 // Pure DB functions for IRIS. No Claude calls, no Slack calls.
 
-import { desc, gte, eq } from 'drizzle-orm'
+import { desc, gte, eq, and } from 'drizzle-orm'
 import { getDb } from '@/db'
 import { iris_posts, voice_preferences, research_briefs } from '@/db/schema'
 
@@ -122,14 +122,87 @@ export async function saveVoicePreference(
 }
 
 export async function getTodaysBrief(): Promise<string | null> {
-  const since = Math.floor(Date.now() / 1000) - 86400
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  const startOfToday = Math.floor(d.getTime() / 1000)
   const rows = await getDb()
     .select({ summary: research_briefs.summary })
     .from(research_briefs)
-    .where(gte(research_briefs.created_at, since))
+    .where(gte(research_briefs.created_at, startOfToday))
     .orderBy(desc(research_briefs.created_at))
     .limit(1)
   return rows[0]?.summary ?? null
+}
+
+// ─── CASSANDRA → IRIS signal detection ───────────────────────────────────────
+
+// Patterns for postable LinkedIn moments. Only WHOLE-WORD / meaningful phrases
+// to avoid matching section headers ("Regulatory" alone, "FX" table row, etc.).
+const CASSANDRA_SIGNALS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bipo\b|\bfloated\b|\binitial public offer/i,                          label: 'IPO' },
+  { pattern: /\brate (?:decision|cut|hike|hold)\b|\bfed funds rate\b|\bbase rate\b/i, label: 'Rate decision' },
+  { pattern: /\bearnings?\b|\bprofit warning\b|\brevenue miss\b/i,                    label: 'Earnings' },
+  { pattern: /\bnew (?:regulation|rule|guidance)\b|\bregulatory (?:change|update|ruling|fine|ban)\b/i, label: 'Regulatory change' },
+  { pattern: /\bcrypto\b|\bbitcoin\b|\bbtc\b|\bethereum\b|\beth\b/i,                 label: 'Crypto' },
+]
+
+// Scan the CASSANDRA brief and save up to 3 strong signals as 'suggested' iris_posts.
+// Never throws — errors are logged and swallowed.
+export async function flagIrisTopics(brief: string): Promise<void> {
+  try {
+    const now = Math.floor(Date.now() / 1000)
+    let flagCount = 0
+
+    for (const signal of CASSANDRA_SIGNALS) {
+      if (flagCount >= 3) break
+      const m = signal.pattern.exec(brief)
+      if (!m) continue
+
+      const snippet = brief
+        .slice(Math.max(0, m.index - 30), Math.min(brief.length, m.index + 120))
+        .replace(/\n/g, ' ')
+        .trim()
+      const topic = `${signal.label}: ${snippet.slice(0, 100)}`
+
+      await getDb().insert(iris_posts).values({
+        id: crypto.randomUUID(),
+        slot: '',
+        pillar: 1,
+        topic,
+        copy: '',
+        image_prompt: null,
+        image_url: null,
+        format: null,
+        status: 'suggested',
+        slack_ts: null,
+        created_at: now,
+      })
+
+      console.log(`[iris] flagged topic: ${topic}`)
+      flagCount++
+    }
+  } catch (err) {
+    console.error('[iris] flagIrisTopics failed:', err)
+  }
+}
+
+// Return the earliest 'suggested' iris_post from today, or null if none.
+// Called by buildScheduledDraft before falling back to the topic bank.
+export async function getSuggestedTopic(): Promise<IrisPost | null> {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  const startOfToday = Math.floor(d.getTime() / 1000)
+
+  const rows = await getDb()
+    .select()
+    .from(iris_posts)
+    .where(and(eq(iris_posts.status, 'suggested'), gte(iris_posts.created_at, startOfToday)))
+    .orderBy(iris_posts.created_at)
+    .limit(1)
+
+  const row = rows[0]
+  if (!row) return null
+  return row as IrisPost
 }
 
 export async function getRecentPosts(days: number): Promise<IrisPost[]> {

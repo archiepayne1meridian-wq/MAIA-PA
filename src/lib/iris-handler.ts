@@ -19,6 +19,7 @@ import {
   getVoicePreferences,
   saveVoicePreference,
   getTodaysBrief,
+  getSuggestedTopic,
   type IrisPost,
 } from '../../tools/iris'
 import { getDb } from '@/db'
@@ -197,13 +198,25 @@ export async function buildScheduledDraft(
   })
 
   try {
-    const [recentTopics, lastThreePillars, brief] = await Promise.all([
+    const [recentTopics, lastThreePillars, brief, suggestedPost] = await Promise.all([
       getRecentTopics(7),
       getLastThreePillars(),
       getTodaysBrief(),
+      getSuggestedTopic(),
     ])
 
-    const selected = selectTopic(brief, recentTopics, lastThreePillars)
+    let selected: SelectedTopic
+    if (suggestedPost) {
+      // Consume the CASSANDRA-flagged topic: mark it selected, use it for this draft.
+      await updatePostStatus(suggestedPost.id, 'selected')
+      selected = {
+        pillar: suggestedPost.pillar as 1 | 2 | 3,
+        topic: suggestedPost.topic,
+        cassandraSignal: null,
+      }
+    } else {
+      selected = selectTopic(brief, recentTopics, lastThreePillars)
+    }
 
     const voicePrefs = await getVoicePreferences()
     const draft: IrisDraft = await generateDraft(

@@ -9,6 +9,7 @@ import { postMessage } from './slack'
 import { formatBrief, digestNews } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
+import { flagIrisTopics, savePost } from '../../tools/iris'
 import { getDb } from '@/db'
 import { activity, research_briefs } from '@/db/schema'
 
@@ -145,6 +146,7 @@ function loadConfig(): CassandraConfig {
 export type CassandraIntent =
   | { type: 'morning_brief' }
   | { type: 'fx_only' }
+  | { type: 'flag_iris_topic'; description: string }
 
 export function detectCassandraIntent(text: string): CassandraIntent | null {
   const lower = text.trim().toLowerCase()
@@ -163,6 +165,13 @@ export function detectCassandraIntent(text: string): CassandraIntent | null {
     /^what'?s the pound doing/i.test(lower)
   ) {
     return { type: 'fx_only' }
+  }
+
+  // "cassandra, flag this: <description>" or "iris topic: <description>"
+  const flagMatch = text.match(/^(?:cassandra[,.]?\s+flag\s+this[:\s]+|iris\s+topic:\s*)(.+)$/i)
+  if (flagMatch) {
+    const description = (flagMatch[1] ?? '').trim()
+    if (description) return { type: 'flag_iris_topic', description }
   }
 
   return null
@@ -251,6 +260,9 @@ export async function buildScheduledBrief(channel: string): Promise<void> {
       created_at: Math.floor(Date.now() / 1000),
     })
 
+    // Flag any postable LinkedIn moments to IRIS (fire-and-forget, never blocks)
+    void flagIrisTopics(text)
+
     await getDb()
       .update(activity)
       .set({ output: 'brief posted', status: 'success', duration_ms: Date.now() - startMs })
@@ -309,6 +321,30 @@ export async function handleCassandraBrief(channel: string, _slackUser?: string)
       .set({ output: msg, status: 'error', duration_ms: Date.now() - startMs })
       .where(eq(activity.id, rowId))
     await postMessage(channel, `⚠ CASSANDRA: ${msg}`)
+  }
+}
+
+export async function handleFlagIrisTopic(description: string, channel: string): Promise<void> {
+  try {
+    await savePost({
+      slot: '',
+      pillar: 1,
+      topic: description,
+      copy: '',
+      image_prompt: null,
+      image_url: null,
+      format: null,
+      status: 'suggested',
+      slack_ts: null,
+    })
+    await postMessage(
+      channel,
+      `Got it — added *${description}* to IRIS topic queue. It'll be picked up at the next draft.`,
+    )
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[cassandra] handleFlagIrisTopic failed:', err)
+    await postMessage(channel, `⚠ CASSANDRA: could not flag topic — ${msg}`)
   }
 }
 

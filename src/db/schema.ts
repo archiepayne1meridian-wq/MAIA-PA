@@ -171,3 +171,59 @@ export const diana_sessions = sqliteTable('diana_sessions', {
   last_active_at: integer('last_active_at').notNull(),              // updated on each turn; used for 4h timeout
   ended_at: integer('ended_at'),
 })
+
+export const muse_entries = sqliteTable('muse_entries', {
+  id: text('id').primaryKey(),
+  sector: text('sector').notNull(),
+  title: text('title').notNull(),
+  summary: text('summary').notNull(),
+  content: text('content').notNull(),
+  brief_depth: text('brief_depth').notNull(),      // simple/medium/detailed
+  source: text('source').notNull(),                // agent name, 'archie_input', 'brain_dump'
+  source_agent: text('source_agent'),
+  status: text('status').notNull().default('pending'),  // pending/active/archived
+  date_filed: integer('date_filed').notNull(),
+  last_updated: integer('last_updated').notNull(),
+  created_at: integer('created_at').notNull(),
+})
+
+export const muse_change_log = sqliteTable('muse_change_log', {
+  id: text('id').primaryKey(),
+  entry_id: text('entry_id').notNull(),
+  changed_at: integer('changed_at').notNull(),
+  change_summary: text('change_summary').notNull(),
+  previous_content: text('previous_content').notNull(),
+})
+
+export const muse_links = sqliteTable('muse_links', {
+  id: text('id').primaryKey(),
+  entry_id_a: text('entry_id_a').notNull(),
+  entry_id_b: text('entry_id_b').notNull(),
+  link_type: text('link_type').notNull(),   // related/contradicts/updates/supports
+  created_at: integer('created_at').notNull(),
+})
+
+export const muse_pending = sqliteTable('muse_pending', {
+  id: text('id').primaryKey(),
+  source: text('source').notNull(),
+  source_agent: text('source_agent'),
+  suggested_sector: text('suggested_sector').notNull(),
+  suggested_title: text('suggested_title').notNull(),
+  suggested_content: text('suggested_content').notNull(),
+  suggested_depth: text('suggested_depth').notNull(),
+  suggested_links: text('suggested_links').notNull().default('[]'),  // JSON array of titles
+  status: text('status').notNull().default('awaiting'),  // awaiting/approved/discarded
+  slack_ts: text('slack_ts'),                             // thread anchor for confirm/discard flow
+  created_at: integer('created_at').notNull(),
+})
+
+export const mercury_drafts = sqliteTable('mercury_drafts', {
+  id: text('id').primaryKey(),
+  medium: text('medium').notNull(),           // 'email' | 'whatsapp' | 'imessage'
+  context: text('context').notNull(),
+  incoming_message: text('incoming_message'), // nullable — reply scenario only
+  draft: text('draft').notNull(),
+  status: text('status').notNull().default('draft'),  // 'draft' | 'approved'
+  slack_ts: text('slack_ts'),                // thread anchor for refinement loop
+  created_at: integer('created_at').notNull(),
+})

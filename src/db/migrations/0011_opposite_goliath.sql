@@ -1,0 +1,1 @@
+ALTER TABLE `muse_pending` ADD `slack_ts` text;

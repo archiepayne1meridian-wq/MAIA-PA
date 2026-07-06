@@ -405,6 +405,36 @@ export async function buildDashboardData(): Promise<DashboardData> {
       ],
       feed: irisFeed,
     },
+    {
+      id: 'MUSE', role: 'Second Brain', badge: 'M',
+      status: 'idle' as const,
+      stat: 'Ready',
+      statusLabel: 'Knowledge base available — add entries via Slack or dashboard',
+      prog: 0,
+      progAlert: false,
+      tiles: [
+        ['Sectors', '7 active + 1 gated', 'Client Intelligence locked pending compliance'],
+        ['Input streams', '3', 'manual / brain dump / auto-harvest'],
+        ['Harvest', 'Step 5', 'ATHENA + CASSANDRA wired then'],
+        ['Mode', 'Confirm-first', 'nothing commits without approval'],
+      ],
+      feed: [['—', 'Say "MUSE, file this:" or use the brain dump panel']],
+    },
+    {
+      id: 'MERCURY', role: 'Message drafting', badge: 'M',
+      status: 'idle',
+      stat: 'Ready',
+      statusLabel: 'Draft via Slack or dashboard workspace',
+      prog: 0,
+      progAlert: false,
+      tiles: [
+        ['Medium', 'Email / WhatsApp / iMessage', 'you choose per draft'],
+        ['Mode', 'Draft-only', 'you send manually'],
+        ['Voice', 'Shared with IRIS', 'preferences carry across'],
+        ['Source', 'mercury_drafts', 'saved on approval'],
+      ],
+      feed: [['—', 'Say "Mercury, draft an email…" in Slack']],
+    },
     ...INACTIVE_AGENTS,
   ]
 

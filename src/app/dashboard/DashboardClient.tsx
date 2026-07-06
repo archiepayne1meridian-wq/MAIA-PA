@@ -22,7 +22,7 @@ interface Props {
 // The only agent ids with a full page at /dashboard/<id>. MAIA (the orchestrator
 // tile) and any greyed/unbuilt agent (LUNA, IRIS, JUNO) have no route — clicking
 // them must stay a no-op, not a 404.
-const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'DEMETER', 'HERA', 'DIANA', 'VICTORIA'])
+const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'DEMETER', 'HERA', 'DIANA', 'VICTORIA', 'MERCURY', 'IRIS', 'MUSE'])
 
 export default function DashboardClient({ agents, tasks, onlineCount, needYouCount }: Props) {
   const router = useRouter()
@@ -70,8 +70,8 @@ export default function DashboardClient({ agents, tasks, onlineCount, needYouCou
               <button className={s.chip} onClick={() => router.push('/dashboard/athena')}>
                 CISI cards due?
               </button>
-              <button className={s.chip} onClick={() => router.push('/dashboard/demeter')}>
-                Portfolio update
+              <button className={s.chip} onClick={() => router.push('/dashboard/mercury')}>
+                Draft a message
               </button>
             </div>
 

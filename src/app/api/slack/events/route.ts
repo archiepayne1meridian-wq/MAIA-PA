@@ -35,6 +35,22 @@ import {
   handleFlagIrisTopic,
 } from '@/lib/cassandra-handler'
 import {
+  detectMuseIntent,
+  handleMuseStatus,
+  handleMuseSearch,
+  handleMuseFile,
+  handleMuseBrainDump,
+  handleMuseConfirm,
+  getActiveMusePending,
+  handleMuseThread,
+} from '@/lib/muse-handler'
+import {
+  detectMercuryIntent,
+  handleMercuryDraft,
+  handleMercuryThread,
+  getActiveDraft as getActiveMercuryDraft,
+} from '@/lib/mercury-handler'
+import {
   detectDemeterIntent,
   handlePortfolioBrief,
   handleAddHolding,
@@ -158,6 +174,30 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
           .where(eq(activity.id, rowId))
         return
       }
+
+      // ── MERCURY: thread reply detection ──────────────────────────────────
+      const mercuryDraft = await getActiveMercuryDraft(event.thread_ts)
+      if (mercuryDraft) {
+        await getDb().update(activity).set({ agent: 'MERCURY' }).where(eq(activity.id, rowId))
+        await handleMercuryThread(mercuryDraft, text, channel)
+        await getDb()
+          .update(activity)
+          .set({ status: 'success', duration_ms: Date.now() - startMs })
+          .where(eq(activity.id, rowId))
+        return
+      }
+
+      // ── MUSE: thread reply detection ──────────────────────────────────────
+      const musePendingItem = await getActiveMusePending(event.thread_ts)
+      if (musePendingItem) {
+        await getDb().update(activity).set({ agent: 'MUSE' }).where(eq(activity.id, rowId))
+        await handleMuseThread(musePendingItem, text, channel)
+        await getDb()
+          .update(activity)
+          .set({ status: 'success', duration_ms: Date.now() - startMs })
+          .where(eq(activity.id, rowId))
+        return
+      }
     }
 
     // ── DIANA: active-session check — MUST run before all other intent routing ──
@@ -230,6 +270,51 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
         case 'mentor_prompt':
           await handleOnDemand(channel, heraIntent.type)
           break
+      }
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // ── MUSE intent routing ───────────────────────────────────────────────────
+    const museIntent = detectMuseIntent(text)
+    if (museIntent) {
+      await getDb().update(activity).set({ agent: 'MUSE' }).where(eq(activity.id, rowId))
+      switch (museIntent.type) {
+        case 'status':
+          await handleMuseStatus(channel, event.user)
+          break
+        case 'search_sector':
+          await handleMuseSearch(channel, museIntent.query, museIntent.sector, event.user)
+          break
+        case 'search_all':
+          await handleMuseSearch(channel, museIntent.query, undefined, event.user)
+          break
+        case 'file_entry':
+          await handleMuseFile(channel, museIntent.content, museIntent.sector, event.user)
+          break
+        case 'brain_dump':
+          await handleMuseBrainDump(channel, museIntent.content, event.user)
+          break
+        case 'confirm':
+          await handleMuseConfirm(channel, museIntent.pendingId, museIntent.decision, undefined, event.user)
+          break
+      }
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // ── MERCURY intent routing ────────────────────────────────────────────────
+    const mercuryIntent = detectMercuryIntent(text)
+    if (mercuryIntent) {
+      await getDb().update(activity).set({ agent: 'MERCURY' }).where(eq(activity.id, rowId))
+      if (mercuryIntent.type === 'draft_message') {
+        await handleMercuryDraft(channel, mercuryIntent.medium, mercuryIntent.context, mercuryIntent.incoming, event.user)
       }
       await getDb()
         .update(activity)

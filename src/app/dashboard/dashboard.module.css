@@ -807,6 +807,329 @@
 .irisPostTopic { font-size: 11.5px; color: var(--text-mid); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .irisPostSlot, .irisPostStatus, .irisPostDate { font-family: var(--mono); font-size: 9px; color: var(--text-dim); flex-shrink: 0; }
 
+/* ── MERCURY ──────────────────────────────────────────────────────────────── */
+.mercuryWs { display: flex; flex-direction: column; gap: 22px; }
+.mercurySection { display: flex; flex-direction: column; gap: 8px; }
+
+.mercuryMediumRow { display: flex; gap: 6px; }
+.mercuryMediumBtn {
+  padding: 6px 14px; border: 1px solid var(--border); border-radius: 100px;
+  background: transparent; color: var(--text-mid); font-family: var(--mono);
+  font-size: 11px; cursor: pointer; transition: 0.15s;
+}
+.mercuryMediumBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
+.mercuryMediumActive { border-color: var(--accent); color: var(--accent); background: rgba(99,179,237,0.06); }
+
+.mercuryTextarea {
+  width: 100%; box-sizing: border-box;
+  background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+  padding: 10px 12px; resize: vertical; outline: none; transition: border-color 0.15s;
+}
+.mercuryTextarea:focus { border-color: var(--accent-deep); }
+.mercuryTextarea::placeholder { color: var(--text-dim); }
+
+.mercuryToggle {
+  background: none; border: none; color: var(--text-dim); font-family: var(--mono);
+  font-size: 10.5px; cursor: pointer; text-align: left; padding: 0;
+  display: flex; align-items: center; gap: 4px;
+}
+.mercuryToggle:hover { color: var(--text-mid); }
+.mercuryToggleHint { font-size: 9.5px; color: var(--text-dim); }
+
+.mercuryGenerateBtn {
+  padding: 9px 20px; border: 1px solid var(--accent-deep); border-radius: 6px;
+  background: rgba(99,179,237,0.06); color: var(--accent); font-family: var(--mono);
+  font-size: 11.5px; cursor: pointer; transition: 0.15s; align-self: flex-start;
+}
+.mercuryGenerateBtn:hover { background: rgba(99,179,237,0.12); }
+.mercuryGenerateBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.mercuryDraftSection { display: flex; flex-direction: column; gap: 12px; }
+.mercuryDraftHead { display: flex; align-items: center; justify-content: space-between; }
+
+.mercurySubjectLine {
+  font-family: var(--mono); font-size: 11px; color: var(--text-mid);
+  padding: 6px 10px; background: var(--surface-raised); border-radius: 4px;
+  border-left: 2px solid var(--accent-deep);
+}
+.mercurySubjectLabel { color: var(--text-dim); }
+
+.mercuryDraftBody {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text); line-height: 1.65;
+  background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px;
+  padding: 14px 16px; white-space: pre-wrap; word-break: break-word; margin: 0;
+}
+
+.mercuryCopyBtn {
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; color: var(--text-dim); font-family: var(--mono);
+  font-size: 9.5px; cursor: pointer; transition: 0.15s;
+}
+.mercuryCopyBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
+
+.mercuryRefineRow { display: flex; gap: 8px; }
+.mercuryRefineInput {
+  flex: 1; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font-family: var(--mono); font-size: 11.5px;
+  padding: 8px 12px; outline: none; transition: border-color 0.15s;
+}
+.mercuryRefineInput:focus { border-color: var(--accent-deep); }
+.mercuryRefineInput::placeholder { color: var(--text-dim); }
+.mercuryRefineBtn {
+  padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
+  background: transparent; color: var(--text-mid); font-family: var(--mono);
+  font-size: 11px; cursor: pointer; transition: 0.15s; white-space: nowrap;
+}
+.mercuryRefineBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
+.mercuryRefineBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.mercuryDoneBtn {
+  padding: 9px 20px; border: 1px solid var(--online); border-radius: 6px;
+  background: rgba(104,211,145,0.06); color: var(--online); font-family: var(--mono);
+  font-size: 11.5px; cursor: pointer; transition: 0.15s; align-self: flex-start;
+}
+.mercuryDoneBtn:hover { background: rgba(104,211,145,0.12); }
+.mercuryDoneBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.mercuryDoneMsg {
+  font-family: var(--mono); font-size: 11px; color: var(--online); margin: 0;
+}
+.mercuryError {
+  font-family: var(--mono); font-size: 10.5px; color: var(--alert); margin: 0;
+}
+
+.mercuryHistorySection { display: flex; flex-direction: column; gap: 10px; }
+.mercuryHistoryRow {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 4px; border-bottom: 1px solid var(--hairline);
+}
+.mercuryHistoryRow:last-child { border-bottom: none; }
+.mercuryHistoryMedium {
+  font-family: var(--mono); font-size: 9px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.08em; padding-top: 2px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.mercuryHistoryBody { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.mercuryHistoryContext {
+  font-size: 11.5px; color: var(--text-mid);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mercuryHistoryMeta { font-family: var(--mono); font-size: 9.5px; color: var(--text-dim); }
+.mercuryEmpty { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+
+/* ── MUSE ─────────────────────────────────────────────────────────────────── */
+
+/* Outer shell — fills the page, brain graph behind everything */
+.museWs {
+  position: relative; width: 100%; height: 100vh; overflow: hidden; background: var(--bg);
+}
+
+/* Floating back button */
+.museBackBtn {
+  position: absolute; top: 18px; left: 18px; z-index: 30;
+  font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  background: none; border: none; cursor: pointer; padding: 0; transition: color 0.12s;
+}
+.museBackBtn:hover { color: var(--text); }
+
+/* Edge trigger tabs */
+.museLeftTab, .museRightTab {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 20;
+  width: 22px; height: 64px; background: var(--surface); border: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  font-family: var(--mono); font-size: 13px; color: var(--text-dim); cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.museLeftTab { left: 0; border-left: none; border-radius: 0 8px 8px 0; }
+.museRightTab { right: 0; border-right: none; border-radius: 8px 0 0 8px; }
+.museLeftTab:hover, .museRightTab:hover { color: var(--accent); border-color: var(--accent-deep); }
+.museTabOpen { color: var(--accent) !important; border-color: var(--accent-deep) !important; }
+.museTabBadge {
+  font-family: var(--mono); font-size: 9px; font-weight: 600;
+  background: var(--accent); color: #0D1014; border-radius: 100px;
+  padding: 1px 5px; line-height: 1.4;
+}
+
+/* Sliding panels — overlays on the brain */
+.museLeftPanel, .museRightPanel {
+  position: absolute; top: 0; bottom: 0; width: 320px; z-index: 15;
+  background: var(--surface); display: flex; flex-direction: column;
+  transition: transform 300ms ease; overflow: hidden;
+}
+.museLeftPanel { left: 0; border-right: 1px solid var(--border); transform: translateX(-100%); }
+.museRightPanel { right: 0; border-left: 1px solid var(--border); transform: translateX(100%); }
+.museLeftPanelOpen { transform: translateX(0) !important; }
+.museRightPanelOpen { transform: translateX(0) !important; }
+
+/* Panel header */
+.musePanelHead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 16px 12px; border-bottom: 1px solid var(--hairline); flex-shrink: 0;
+}
+.musePanelClose {
+  font-size: 13px; color: var(--text-dim); background: none; border: none;
+  cursor: pointer; padding: 2px 5px; transition: color 0.12s;
+}
+.musePanelClose:hover { color: var(--text); }
+.musePanelEmpty { font-family: var(--mono); font-size: 11px; color: var(--text-dim); padding: 14px 16px; }
+
+/* Sector list */
+.museSectorList { display: flex; flex-direction: column; padding: 8px 0; flex-shrink: 0; }
+.museSectorItem {
+  display: flex; align-items: center; gap: 10px; padding: 9px 16px;
+  background: none; border: none; cursor: pointer; text-align: left; transition: background 0.1s; width: 100%;
+}
+.museSectorItem:hover { background: var(--raised); }
+.museSectorActive { background: var(--raised-2) !important; }
+.museSectorLocked { opacity: 0.45; cursor: default; }
+.museSectorLocked:hover { background: none !important; }
+.museSectorDot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.museSectorLabel { font-size: 12.5px; color: var(--text); flex: 1; }
+.museLock { font-size: 11px; }
+
+/* Sector entries sub-panel */
+.museSectorEntries { flex: 1; overflow-y: auto; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; }
+.musePanelSearchWrap { padding: 10px 16px; border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
+.musePanelSearch {
+  width: 100%; background: var(--raised); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; font-size: 11.5px; color: var(--text);
+  font-family: inherit; outline: none; transition: border-color 0.12s;
+}
+.musePanelSearch:focus { border-color: var(--accent-deep); }
+.musePanelSearch::placeholder { color: var(--text-dim); }
+.museEntryList { display: flex; flex-direction: column; }
+.museEntryRow {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 16px; border-bottom: 1px solid var(--hairline);
+  background: none; border-left: none; border-right: none; cursor: pointer; text-align: left;
+  transition: background 0.1s; width: 100%;
+}
+.museEntryRow:hover { background: var(--raised); }
+.museEntryTitle { font-size: 12px; color: var(--text); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.museEntryDate { font-family: var(--mono); font-size: 9.5px; color: var(--text-dim); flex-shrink: 0; }
+
+/* Brain graph centre */
+.museBrainContainer {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+}
+.museBrainSvg { width: 100%; height: 100%; display: block; }
+.museEmptyState { text-align: center; pointer-events: none; }
+.museEmptyIcon { font-size: 48px; margin-bottom: 16px; opacity: 0.35; }
+.museEmptyTitle {
+  font-family: var(--display); font-weight: 500; font-size: 16px;
+  color: var(--text-mid); margin-bottom: 6px;
+}
+.museEmptyText { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+
+/* Right panel: approvals queue */
+.museApprovalsQueue {
+  flex: 1; overflow-y: auto; padding: 10px 0; border-bottom: 1px solid var(--hairline);
+}
+.museApprovalItem {
+  padding: 12px 16px; border-bottom: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 6px;
+}
+.museApprovalItem:last-child { border-bottom: none; }
+.museApprovalMeta { display: flex; align-items: center; gap: 6px; }
+.museApprovalSector {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 100px; color: #0D1014; font-weight: 600;
+}
+.museApprovalSource { font-family: var(--mono); font-size: 9.5px; color: var(--text-dim); }
+.museApprovalTitle { font-size: 12px; color: var(--text); line-height: 1.4; }
+.museApprovalActions { display: flex; gap: 8px; margin-top: 2px; }
+.museKeepBtn {
+  font-family: var(--mono); font-size: 10px; padding: 4px 12px;
+  background: none; border: 1px solid var(--online); border-radius: 100px;
+  color: var(--online); cursor: pointer; transition: background 0.12s;
+}
+.museKeepBtn:hover:not(:disabled) { background: rgba(91, 192, 138, 0.08); }
+.museKeepBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.museDiscardBtn {
+  font-family: var(--mono); font-size: 10px; padding: 4px 12px;
+  background: none; border: 1px solid var(--border); border-radius: 100px;
+  color: var(--text-dim); cursor: pointer; transition: border-color 0.12s, color 0.12s;
+}
+.museDiscardBtn:hover:not(:disabled) { border-color: var(--alert); color: var(--alert); }
+.museDiscardBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Right panel: brain dump */
+.museBrainDump {
+  flex-shrink: 0; padding: 14px 16px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 8px;
+}
+.museBrainDumpInput {
+  width: 100%; background: var(--raised); border: 1px solid var(--border);
+  border-radius: 6px; padding: 9px 12px; font-size: 12px; color: var(--text);
+  font-family: inherit; outline: none; resize: none; transition: border-color 0.12s; line-height: 1.5;
+}
+.museBrainDumpInput:focus { border-color: var(--accent-deep); }
+.museBrainDumpInput::placeholder { color: var(--text-dim); }
+.museBrainDumpMsg { font-family: var(--mono); font-size: 10.5px; color: var(--online); }
+.museBrainDumpBtn {
+  align-self: flex-start; font-family: var(--mono); font-size: 11px; padding: 7px 16px;
+  background: rgba(138,169,240,0.07); border: 1px solid var(--accent-deep);
+  border-radius: 6px; color: var(--accent); cursor: pointer; transition: background 0.12s;
+}
+.museBrainDumpBtn:hover:not(:disabled) { background: rgba(138,169,240,0.14); }
+.museBrainDumpBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Entry overlay */
+.museOverlay {
+  position: absolute; inset: 0; background: rgba(13,16,20,0.82); z-index: 25;
+  display: flex; align-items: center; justify-content: center;
+  animation: museOverlayIn 0.15s ease;
+}
+@keyframes museOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+.museOverlayCard {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 24px 28px 28px; max-width: 600px; width: 90%; max-height: 80vh;
+  overflow-y: auto; position: relative; display: flex; flex-direction: column; gap: 14px;
+}
+.museOverlayClose {
+  position: absolute; top: 16px; right: 18px; font-size: 15px; color: var(--text-dim);
+  background: none; border: none; cursor: pointer; transition: color 0.12s;
+}
+.museOverlayClose:hover { color: var(--text); }
+.museOverlayLoading { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.museOverlayMeta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.museOverlaySector {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 100px; color: #0D1014; font-weight: 600;
+}
+.museOverlayDate { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.museOverlayTitle { font-family: var(--display); font-weight: 600; font-size: 18px; line-height: 1.3; }
+.museOverlaySummary { font-size: 13px; color: var(--text-mid); line-height: 1.6; }
+.museOverlayBody {
+  font-family: var(--mono); font-size: 12px; color: var(--text-mid); line-height: 1.65;
+  background: var(--raised); border-radius: 6px; padding: 14px;
+  white-space: pre-wrap; word-break: break-word; margin: 0;
+}
+.museChangeLog { margin-top: 4px; }
+.museChangeLogSummary {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-dim);
+  cursor: pointer; list-style: none; padding: 4px 0;
+}
+.museChangeLogSummary:hover { color: var(--text-mid); }
+.museChangeItem { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--hairline); font-size: 12px; color: var(--text-mid); }
+.museChangeDate { font-family: var(--mono); font-size: 10px; color: var(--text-dim); flex-shrink: 0; padding-top: 1px; }
+.museOverlayLinks { display: flex; flex-direction: column; gap: 8px; }
+.museLinksRow { display: flex; flex-wrap: wrap; gap: 6px; }
+.museLinkChip {
+  font-family: var(--mono); font-size: 9.5px; padding: 3px 10px;
+  background: none; border: 1px solid var(--border); border-radius: 100px;
+  color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.museLinkChip:hover { border-color: var(--accent-deep); color: var(--accent); }
+
+/* Error toast */
+.museErrorToast {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 40;
+  background: var(--raised); border: 1px solid rgba(224,122,95,0.4); border-radius: 8px;
+  padding: 10px 16px; display: flex; align-items: center; gap: 12px;
+  font-family: var(--mono); font-size: 11px; color: var(--alert);
+}
+.museErrorToast button { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 13px; }
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 1080px) {
   .main { grid-template-columns: 1fr; overflow-y: auto; }

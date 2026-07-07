@@ -1,4 +1,5 @@
 import { postMessage, updateMessage } from './slack'
+import { checkMuseHarvest } from './muse-handler'
 import {
   generateCards,
   generateMCQs,
@@ -423,6 +424,16 @@ export async function handleMcqAnswer(
       )
       return `score ${finalScore}/${total}`
     })
+
+    // Fire-and-forget: MUSE checks for weak-spot pattern, never blocks
+    for (const b of breakdown) {
+      void checkMuseHarvest('ATHENA', 'quiz_complete', {
+        moduleId: b.module,
+        moduleName: b.module,
+        score: b.correct,
+        total: b.total,
+      })
+    }
   } else {
     const nextQ = currentQuestion(updated)
     if (nextQ) {

@@ -1,0 +1,18 @@
+name: MUSE Morning Insight
+
+on:
+  schedule:
+    # 06:50 UTC = 07:50 BST — fires after CASSANDRA (06:35) so today's brief is already saved.
+    # In winter (GMT, UTC+0) this fires at 06:50 local. Adjust if needed.
+    - cron: '50 6 * * 1-5'
+  workflow_dispatch: # manual trigger for testing and deployment verification
+
+jobs:
+  insight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger MUSE morning insight
+        run: |
+          curl -f -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            "https://maia-pa-production.up.railway.app/api/cron/muse/insights"

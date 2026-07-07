@@ -43,6 +43,7 @@ export interface MusePending {
   source_agent: string | null
   suggested_sector: string
   suggested_title: string
+  suggested_summary: string
   suggested_content: string
   suggested_depth: string
   suggested_links: string  // JSON array of titles
@@ -198,6 +199,7 @@ export async function savePending(
     source_agent: pending.source_agent ?? null,
     suggested_sector: pending.suggested_sector,
     suggested_title: pending.suggested_title,
+    suggested_summary: pending.suggested_summary ?? '',
     suggested_content: pending.suggested_content,
     suggested_depth: pending.suggested_depth,
     suggested_links: pending.suggested_links ?? '[]',
@@ -205,6 +207,19 @@ export async function savePending(
     created_at: now,
   })
   return id
+}
+
+export async function getEntryIdsByTitles(
+  titles: string[],
+): Promise<{ id: string; title: string }[]> {
+  if (titles.length === 0) return []
+  const rows = await getDb()
+    .select({ id: muse_entries.id, title: muse_entries.title })
+    .from(muse_entries)
+    .where(eq(muse_entries.status, 'active'))
+  // Match by exact title (case-insensitive)
+  const lowerTitles = new Set(titles.map(t => t.toLowerCase()))
+  return rows.filter(r => lowerTitles.has(r.title.toLowerCase()))
 }
 
 export async function updatePending(id: string, status: string): Promise<void> {

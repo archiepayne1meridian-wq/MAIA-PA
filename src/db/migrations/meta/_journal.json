@@ -85,6 +85,13 @@
       "when": 1783286282802,
       "tag": "0011_opposite_goliath",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1783373726601,
+      "tag": "0012_steady_virginia_dare",
+      "breakpoints": true
     }
   ]
 }

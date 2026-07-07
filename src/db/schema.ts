@@ -209,6 +209,7 @@ export const muse_pending = sqliteTable('muse_pending', {
   source_agent: text('source_agent'),
   suggested_sector: text('suggested_sector').notNull(),
   suggested_title: text('suggested_title').notNull(),
+  suggested_summary: text('suggested_summary').notNull().default(''),
   suggested_content: text('suggested_content').notNull(),
   suggested_depth: text('suggested_depth').notNull(),
   suggested_links: text('suggested_links').notNull().default('[]'),  // JSON array of titles

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
-import { getPendingById, updatePending } from '../../../../../../tools/muse'
+import { handleMuseConfirm } from '@/lib/muse-handler'
+import { env } from '@/lib/env'
 
 export async function POST(req: NextRequest) {
   if (!(await requireDashboardAuth())) {
@@ -19,13 +20,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'decision must be keep or discard' }, { status: 400 })
   }
 
-  const pending = await getPendingById(pendingId)
-  if (!pending) {
-    return NextResponse.json({ error: 'Pending item not found' }, { status: 404 })
+  try {
+    const channel = env.SLACK_CHANNEL_ID()
+    await handleMuseConfirm(channel, pendingId, decision as 'keep' | 'discard')
+    return NextResponse.json({ status: decision === 'keep' ? 'approved' : 'discarded', id: pendingId })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Confirm error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  const status = decision === 'keep' ? 'approved' : 'discarded'
-  await updatePending(pendingId, status)
-
-  return NextResponse.json({ status, id: pendingId })
 }

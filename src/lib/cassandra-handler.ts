@@ -10,6 +10,7 @@ import { formatBrief, digestNews } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
 import { flagIrisTopics, savePost } from '../../tools/iris'
+import { checkMuseHarvest } from './muse-handler'
 import { getDb } from '@/db'
 import { activity, research_briefs } from '@/db/schema'
 
@@ -260,8 +261,9 @@ export async function buildScheduledBrief(channel: string): Promise<void> {
       created_at: Math.floor(Date.now() / 1000),
     })
 
-    // Flag any postable LinkedIn moments to IRIS (fire-and-forget, never blocks)
+    // Fire-and-forget: flag LinkedIn moments + harvest MUSE signals
     void flagIrisTopics(text)
+    void checkMuseHarvest('CASSANDRA', 'brief_saved', { briefText: text })
 
     await getDb()
       .update(activity)
@@ -308,6 +310,9 @@ export async function handleCassandraBrief(channel: string, _slackUser?: string)
       summary: text,
       created_at: Math.floor(Date.now() / 1000),
     })
+
+    // Fire-and-forget: harvest MUSE signals from on-demand brief
+    void checkMuseHarvest('CASSANDRA', 'brief_saved', { briefText: text })
 
     await getDb()
       .update(activity)

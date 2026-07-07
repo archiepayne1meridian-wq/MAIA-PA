@@ -138,7 +138,7 @@ export async function getTodaysBrief(): Promise<string | null> {
 
 // Patterns for postable LinkedIn moments. Only WHOLE-WORD / meaningful phrases
 // to avoid matching section headers ("Regulatory" alone, "FX" table row, etc.).
-const CASSANDRA_SIGNALS: Array<{ pattern: RegExp; label: string }> = [
+export const CASSANDRA_SIGNALS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bipo\b|\bfloated\b|\binitial public offer/i,                          label: 'IPO' },
   { pattern: /\brate (?:decision|cut|hike|hold)\b|\bfed funds rate\b|\bbase rate\b/i, label: 'Rate decision' },
   { pattern: /\bearnings?\b|\bprofit warning\b|\brevenue miss\b/i,                    label: 'Earnings' },

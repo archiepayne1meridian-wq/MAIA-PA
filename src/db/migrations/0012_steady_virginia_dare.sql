@@ -1,0 +1,1 @@
+ALTER TABLE `muse_pending` ADD `suggested_summary` text DEFAULT '' NOT NULL;

@@ -12,7 +12,7 @@ export async function GET() {
   const db = getDb()
   const thirtyAgo = Math.floor(Date.now() / 1000) - 30 * 86400
 
-  // Last 5 reflections — deliberately omit the `sentiment` column (internal only)
+  // Last 50 reflections — deliberately omit the `sentiment` column (internal only)
   const refRows = await db
     .select({
       id: reflections.id,
@@ -22,7 +22,7 @@ export async function GET() {
     })
     .from(reflections)
     .orderBy(desc(reflections.created_at))
-    .limit(5)
+    .limit(50)
 
   // Streak: distinct days with reflections in last 30 days
   const recentRows = await db
@@ -36,12 +36,23 @@ export async function GET() {
     }),
   )
 
-  // Latest weekly review
-  const [weeklyRow] = await db
+  // All weekly reviews (newest first)
+  const allWeeklyRows = await db
     .select()
     .from(weekly_reviews)
     .orderBy(desc(weekly_reviews.created_at))
-    .limit(1)
+    .limit(12)
+
+  const weeklyReviews = allWeeklyRows.map(r => ({
+    id: r.id,
+    summary: r.summary,
+    periodStart: new Date(r.period_start * 1000).toLocaleDateString('en-GB', {
+      day: '2-digit', month: 'short',
+    }),
+    periodEnd: new Date(r.period_end * 1000).toLocaleDateString('en-GB', {
+      day: '2-digit', month: 'short',
+    }),
+  }))
 
   return NextResponse.json({
     reflections: refRows.map(r => ({
@@ -54,17 +65,7 @@ export async function GET() {
       time: new Date(r.created_at * 1000).toTimeString().slice(0, 5),
     })),
     streak: distinctDays.size,
-    weeklyReview: weeklyRow
-      ? {
-          id: weeklyRow.id,
-          summary: weeklyRow.summary,
-          periodStart: new Date(weeklyRow.period_start * 1000).toLocaleDateString('en-GB', {
-            day: '2-digit', month: 'short',
-          }),
-          periodEnd: new Date(weeklyRow.period_end * 1000).toLocaleDateString('en-GB', {
-            day: '2-digit', month: 'short',
-          }),
-        }
-      : null,
+    weeklyReview: weeklyReviews[0] ?? null,
+    weeklyReviews,
   })
 }

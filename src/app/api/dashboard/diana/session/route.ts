@@ -13,6 +13,7 @@ import {
   parseTranscript,
   type DianaSession,
 } from '../../../../../../tools/diana-db'
+import { loadDianaConfig } from '@/lib/diana-handler'
 
 const WEB_USER = 'web'
 const OPENING_LINE = 'Hello?'
@@ -47,9 +48,19 @@ export async function POST(req: Request) {
     difficulty?: 'warm' | 'neutral' | 'tough'
   }
 
+  // Autonomous selection: pick a random objection when no scenario is provided
+  let scenario = body.scenario
+  if (!scenario) {
+    const config = loadDianaConfig()
+    if (config.objections.length > 0) {
+      const pick = config.objections[Math.floor(Math.random() * config.objections.length)]
+      scenario = pick.label
+    }
+  }
+
   const session = await startSession({
     slackUser: WEB_USER,
-    scenario: body.scenario,
+    scenario,
     difficulty: body.difficulty,
   })
 

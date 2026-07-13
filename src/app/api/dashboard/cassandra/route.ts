@@ -4,10 +4,13 @@ import { getDb } from '@/db'
 import { research_briefs } from '@/db/schema'
 import { desc } from 'drizzle-orm'
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const { searchParams } = new URL(request.url)
+  const offset = Math.max(0, parseInt(searchParams.get('offset') ?? '0', 10))
 
   const db = getDb()
   const [row] = await db
@@ -15,6 +18,7 @@ export async function GET() {
     .from(research_briefs)
     .orderBy(desc(research_briefs.created_at))
     .limit(1)
+    .offset(offset)
 
   if (!row) {
     return NextResponse.json({ brief: null })

@@ -12,7 +12,11 @@ function toWeekStartUtc(nowMs = Date.now()): number {
   return (Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - daysFromMonday * 86400 * 1000) / 1000
 }
 
-// Replicate tools/kpi.ts weeklyTotals — same logic as the scorecard
+function todayStartUtc(): number {
+  const d = new Date()
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000
+}
+
 function weeklyTotals(logs: Record<string, number>[]): Record<string, number> {
   const totals: Record<string, number> = {}
   for (const log of logs) {
@@ -29,8 +33,11 @@ function weekLabel(weekStartSecs: number, isCurrent: boolean): string {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
-// Known ordered metrics — shown in this order if present
 const KNOWN_METRICS = ['calls', 'connects', 'meetings_booked', 'meetings_held', 'follow_ups', 'new_prospects', 'active_clients']
+
+function parseMetrics(json: string): Record<string, number> {
+  try { return JSON.parse(json) as Record<string, number> } catch { return {} }
+}
 
 export async function GET() {
   if (!(await requireDashboardAuth())) {
@@ -39,6 +46,8 @@ export async function GET() {
 
   const db = getDb()
   const currentWeekStart = toWeekStartUtc()
+  const todayStart = todayStartUtc()
+  const thirtyAgo = todayStart - 30 * 86400
 
   // Historical weekly scorecards — up to 8 (newest first)
   const weeklyRows = await db
@@ -47,28 +56,66 @@ export async function GET() {
     .orderBy(desc(kpi_weekly.week_start))
     .limit(8)
 
-  // Parse weekly scorecards
   const parsedWeekly = weeklyRows.map(r => {
-    let totals: Record<string, number> = {}
-    try { totals = JSON.parse(r.totals_json) } catch { /* ignore */ }
-    return { weekStart: r.week_start, totals }
+    return { weekStart: r.week_start, totals: parseMetrics(r.totals_json) }
   })
 
-  // Does this week already have a scorecard? (if scorecard was run mid-week)
   const thisWeekScorecard = parsedWeekly.find(w => w.weekStart === currentWeekStart)
 
-  // Current week from kpi_logs (same computation as the scorecard uses)
   const currentWeekLogs = await db
     .select({ metrics_json: kpi_logs.metrics_json })
     .from(kpi_logs)
     .where(gte(kpi_logs.log_date, currentWeekStart))
-  const currentWeekTotals = thisWeekScorecard?.totals ?? weeklyTotals(
-    currentWeekLogs.map(r => {
-      try { return JSON.parse(r.metrics_json) as Record<string, number> } catch { return {} }
-    }),
-  )
+  const currentWeekTotals = thisWeekScorecard?.totals ?? weeklyTotals(currentWeekLogs.map(r => parseMetrics(r.metrics_json)))
 
-  // Build bars: historical (oldest first) + current week as rightmost
+  // Today's totals
+  const todayLogs = await db
+    .select({ metrics_json: kpi_logs.metrics_json })
+    .from(kpi_logs)
+    .where(gte(kpi_logs.log_date, todayStart))
+  const todayTotals = weeklyTotals(todayLogs.map(r => parseMetrics(r.metrics_json)))
+
+  // Scorecard history (newest first, with summaries)
+  const scorecardHistoryRows = await db
+    .select({ id: kpi_weekly.id, week_start: kpi_weekly.week_start, totals_json: kpi_weekly.totals_json, summary: kpi_weekly.summary })
+    .from(kpi_weekly)
+    .orderBy(desc(kpi_weekly.week_start))
+    .limit(12)
+
+  const weeklyScorecardsHistory = scorecardHistoryRows.map(r => {
+    const totals = parseMetrics(r.totals_json)
+    return {
+      id: r.id,
+      weekStart: r.week_start,
+      label: weekLabel(r.week_start, r.week_start === currentWeekStart),
+      totals,
+      summary: r.summary,
+    }
+  })
+
+  // Daily bars (per-day last 30 days)
+  const dailyLogs = await db
+    .select({ log_date: kpi_logs.log_date, metrics_json: kpi_logs.metrics_json })
+    .from(kpi_logs)
+    .where(gte(kpi_logs.log_date, thirtyAgo))
+    .orderBy(kpi_logs.log_date)
+
+  const dailyMap = new Map<number, Record<string, number>>()
+  for (const log of dailyLogs) {
+    const metrics = parseMetrics(log.metrics_json)
+    const existing = dailyMap.get(log.log_date) ?? {}
+    for (const [k, v] of Object.entries(metrics)) {
+      existing[k] = (existing[k] ?? 0) + (Number.isFinite(v) ? v : 0)
+    }
+    dailyMap.set(log.log_date, existing)
+  }
+  const dailyBars = Array.from(dailyMap.entries()).map(([date, totals]) => ({
+    label: new Date(date * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+    date,
+    ...Object.fromEntries(KNOWN_METRICS.map(k => [k, totals[k] ?? 0])),
+  }))
+
+  // Build weekly bars
   const historicalBars = parsedWeekly
     .filter(w => w.weekStart !== currentWeekStart)
     .slice(0, 8)
@@ -89,15 +136,10 @@ export async function GET() {
     },
   ]
 
-  // Determine which metrics have any non-zero data
-  const allTotals = [
-    ...historicalBars.map(w => w.totals),
-    currentWeekTotals,
-  ]
+  const allTotals = [...historicalBars.map(w => w.totals), currentWeekTotals]
   const activeMetrics = KNOWN_METRICS.filter(m => allTotals.some(t => (t[m] ?? 0) > 0))
   const noDataMetrics = KNOWN_METRICS.filter(m => !activeMetrics.includes(m))
 
-  // Targets — calls=15 matches D1 data.ts hardcode (context/victoria.md targets are blank)
   const targets: Record<string, number | null> = { calls: 15 }
   for (const m of KNOWN_METRICS) {
     if (!(m in targets)) targets[m] = null
@@ -109,5 +151,8 @@ export async function GET() {
     noDataMetrics,
     targets,
     thisWeekTotals: currentWeekTotals,
+    todayTotals,
+    weeklyScorecardsHistory,
+    dailyBars,
   })
 }

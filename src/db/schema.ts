@@ -149,6 +149,10 @@ export const iris_posts = sqliteTable('iris_posts', {
   format: text('format'),
   status: text('status').notNull().default('draft'),
   slack_ts: text('slack_ts'),
+  impressions: integer('impressions').notNull().default(0),
+  likes: integer('likes').notNull().default(0),
+  comments: integer('comments').notNull().default(0),
+  reposts: integer('reposts').notNull().default(0),
   created_at: integer('created_at').notNull(),
 })
 

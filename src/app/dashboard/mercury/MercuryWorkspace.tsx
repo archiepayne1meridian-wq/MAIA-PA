@@ -56,6 +56,8 @@ export default function MercuryWorkspace() {
 
   const [history, setHistory] = useState<MercuryDraft[]>([])
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [copiedExpandId, setCopiedExpandId] = useState<string | null>(null)
 
   const loadHistory = useCallback(() => {
     setHistoryError(null)
@@ -262,12 +264,37 @@ export default function MercuryWorkspace() {
           <div className={s.mercuryEmpty}>No approved drafts in the last 7 days.</div>
         )}
         {history.map(d => (
-          <div key={d.id} className={s.mercuryHistoryRow}>
-            <span className={s.mercuryHistoryMedium}>{d.medium}</span>
-            <div className={s.mercuryHistoryBody}>
-              <div className={s.mercuryHistoryContext}>{d.context.slice(0, 80)}{d.context.length > 80 ? '…' : ''}</div>
-              <div className={s.mercuryHistoryMeta}>{relDate(d.created_at)} · approved</div>
+          <div key={d.id}>
+            <div
+              className={`${s.mercuryHistoryRow} ${s.mercuryHistoryRowClickable}`}
+              onClick={() => setExpandedId(expandedId === d.id ? null : d.id)}
+            >
+              <span className={s.mercuryHistoryMedium}>{d.medium}</span>
+              <div className={s.mercuryHistoryBody}>
+                <div className={s.mercuryHistoryContext}>{d.context.slice(0, 80)}{d.context.length > 80 ? '…' : ''}</div>
+                <div className={s.mercuryHistoryMeta}>{relDate(d.created_at)} · approved</div>
+              </div>
+              <span className={s.mercuryExpandBtn}>{expandedId === d.id ? '▲' : '▼'}</span>
             </div>
+            {expandedId === d.id && (
+              <div className={s.mercuryExpandedDraft}>
+                <div className={s.mercuryExpandedHeader}>
+                  <button
+                    className={s.mercuryCopyExpandBtn}
+                    onClick={e => {
+                      e.stopPropagation()
+                      void navigator.clipboard.writeText(d.draft).then(() => {
+                        setCopiedExpandId(d.id)
+                        setTimeout(() => setCopiedExpandId(null), 2000)
+                      })
+                    }}
+                  >
+                    {copiedExpandId === d.id ? '✓ Copied' : 'Copy'}
+                  </button>
+                </div>
+                <pre className={s.mercuryExpandedBody}>{d.draft}</pre>
+              </div>
+            )}
           </div>
         ))}
       </section>

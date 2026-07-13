@@ -18,7 +18,7 @@ const dotClass: Record<string, string> = {
 export default function AgentRail({ agents, activeId, onSelect }: Props) {
   return (
     <nav className={s.rail}>
-      {agents.map(a => (
+      {agents.filter(a => !a.inactive).map(a => (
         <button
           key={a.id}
           className={[

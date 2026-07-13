@@ -6,12 +6,12 @@ import { eq } from 'drizzle-orm'
 import Anthropic from '@anthropic-ai/sdk'
 import { env } from '@/lib/env'
 
-const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY() })
-
 export async function POST(req: Request) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY() })
 
   const body = await req.json().catch(() => ({})) as {
     draftId?: string

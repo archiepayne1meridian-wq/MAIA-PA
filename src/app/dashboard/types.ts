@@ -29,3 +29,19 @@ export interface CalEvent {
   tag: string
   dot: DotStyle
 }
+
+export interface MaiaTask {
+  id: string
+  title: string
+  due_date: string | null
+  completed: number
+  completed_at: number | null
+  source: string
+  created_at: number
+}
+
+export interface NonNegotiables {
+  linkedinToday: number
+  dianaToday: number
+  athenaToday: number
+}

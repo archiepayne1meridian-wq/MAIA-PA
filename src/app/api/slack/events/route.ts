@@ -71,6 +71,8 @@ import {
 } from '@/lib/victoria-handler'
 import { getActiveIrisDraft } from '../../../../../tools/iris'
 import { detectIrisIntent, handleIrisStatus, handleIrisThread } from '@/lib/iris-handler'
+import { getConfig } from '../../../../../tools/maia-voice'
+import { detectWeeklyPlanReply, handleWeeklyPlanReply } from '@/lib/maia-handler'
 
 interface SlackEvent {
   type: string
@@ -198,6 +200,18 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
           .where(eq(activity.id, rowId))
         return
       }
+
+      // ── MAIA weekly plan: thread reply to the planning message ─────────────
+      const savedPlanTs = await getConfig('weekly_plan_ts')
+      if (detectWeeklyPlanReply(text, event.thread_ts, savedPlanTs)) {
+        await getDb().update(activity).set({ agent: 'MAIA' }).where(eq(activity.id, rowId))
+        await handleWeeklyPlanReply(text, channel, event.thread_ts!)
+        await getDb()
+          .update(activity)
+          .set({ status: 'success', duration_ms: Date.now() - startMs })
+          .where(eq(activity.id, rowId))
+        return
+      }
     }
 
     // ── DIANA: active-session check — MUST run before all other intent routing ──
@@ -228,6 +242,19 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
       await getDb()
         .update(activity)
         .set({ status: 'success', output: 'athena go-ahead handled', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      return
+    }
+
+    // ── MAIA weekly plan: explicit phrase detection (non-thread messages) ────
+    // Catches "this week I'm focusing on …", "my focus this week:", etc.
+    // Thread replies to the planning message are handled above in the thread block.
+    if (!event.thread_ts && detectWeeklyPlanReply(text, undefined, null)) {
+      await getDb().update(activity).set({ agent: 'MAIA' }).where(eq(activity.id, rowId))
+      await handleWeeklyPlanReply(text, channel, event.ts!)
+      await getDb()
+        .update(activity)
+        .set({ status: 'success', duration_ms: Date.now() - startMs })
         .where(eq(activity.id, rowId))
       return
     }

@@ -63,9 +63,13 @@ export async function roleplayTurn(
   userMsg: string,
   scenario: string | null,
   difficulty: 'warm' | 'neutral' | 'tough',
+  voiceMode = false,
 ): Promise<string> {
   const diffGuide = DIFFICULTY_GUIDES[difficulty] ?? DIFFICULTY_GUIDES['neutral']!
-  const systemPrompt = ROLEPLAY_SYSTEM.replace('{DIFFICULTY_GUIDE}', diffGuide)
+  const basePrompt = ROLEPLAY_SYSTEM.replace('{DIFFICULTY_GUIDE}', diffGuide)
+  const systemPrompt = voiceMode
+    ? basePrompt + '\n\nVOICE MODE: Respond in natural spoken English only. No bullet points, no markdown, no lists. Short natural sentences as if speaking on the phone.'
+    : basePrompt
 
   const scenarioLine = scenario
     ? `SCENARIO: The adviser is specifically practising the "${scenario}" objection — introduce it naturally when the moment is right.\n\n`

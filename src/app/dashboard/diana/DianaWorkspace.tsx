@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import s from '../dashboard.module.css'
 
 type Difficulty = 'warm' | 'neutral' | 'tough'
 type Phase = 'idle' | 'active' | 'ended'
+type VoiceInputMode = 'text' | 'voice'
+type SpeakState = 'idle' | 'speaking' | 'listening'
 
 interface Message {
   role: 'user' | 'diana'
@@ -34,6 +36,62 @@ const DIFF_COLORS: Record<Difficulty, string> = {
   tough: 'var(--alert)',
 }
 
+const MEETING_BOOKED_PHRASES = [
+  'put that in the diary',
+  'book you in',
+  'confirm that appointment',
+  'get that scheduled',
+]
+
+function detectMeetingBooked(text: string): boolean {
+  const lower = text.toLowerCase()
+  return MEETING_BOOKED_PHRASES.some(p => lower.includes(p))
+}
+
+// ── Audio queue: plays blobs sequentially, never overlaps ────────────────────
+class AudioQueue {
+  private queue: ArrayBuffer[] = []
+  private playing = false
+  private onStateChange: (state: SpeakState) => void
+
+  constructor(onStateChange: (state: SpeakState) => void) {
+    this.onStateChange = onStateChange
+  }
+
+  enqueue(buf: ArrayBuffer, onDone?: () => void) {
+    this.queue.push(buf)
+    if (!this.playing) this.playNext(onDone)
+  }
+
+  private playNext(onDone?: () => void) {
+    const buf = this.queue.shift()
+    if (!buf) {
+      this.playing = false
+      this.onStateChange('idle')
+      onDone?.()
+      return
+    }
+    this.playing = true
+    this.onStateChange('speaking')
+
+    const blob = new Blob([buf], { type: 'audio/mpeg' })
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio(url)
+    audio.onended = () => {
+      URL.revokeObjectURL(url)
+      this.playNext(onDone)
+    }
+    audio.onerror = () => {
+      URL.revokeObjectURL(url)
+      this.playNext(onDone)
+    }
+    void audio.play().catch(() => {
+      URL.revokeObjectURL(url)
+      this.playNext(onDone)
+    })
+  }
+}
+
 export default function DianaWorkspace() {
   // ── Live session state ────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('idle')
@@ -52,7 +110,21 @@ export default function DianaWorkspace() {
   const [expandedSessId, setExpandedSessId] = useState<string | null>(null)
   const [perfLoading, setPerfLoading] = useState(true)
 
+  // ── Voice state ───────────────────────────────────────────────────────────
+  const [voiceMode, setVoiceMode] = useState<VoiceInputMode>('text')
+  const [speakState, setSpeakState] = useState<SpeakState>('idle')
+  const [listenStatus, setListenStatus] = useState<string | null>(null) // 'Listening…' | 'DIANA is speaking…' | null
+  const [voiceUnavailable, setVoiceUnavailable] = useState(false)
+  const [meetingBooked, setMeetingBooked] = useState(false)
+  const audioQueueRef = useRef<AudioQueue | null>(null)
+  const pendingMeetingEndRef = useRef(false)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Initialise audio queue once
+  useEffect(() => {
+    audioQueueRef.current = new AudioQueue(setSpeakState)
+  }, [])
 
   useEffect(() => {
     Promise.all([
@@ -77,19 +149,101 @@ export default function DianaWorkspace() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, sending])
 
+  // ── TTS: speak a text string, then optionally start mic ──────────────────
+  const speakText = useCallback((text: string, afterDone?: () => void) => {
+    if (voiceMode !== 'voice') return
+    setListenStatus('DIANA is speaking…')
+    fetch('/api/dashboard/diana/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('TTS unavailable')
+        return res.arrayBuffer()
+      })
+      .then(buf => {
+        audioQueueRef.current?.enqueue(buf, () => {
+          setListenStatus(null)
+          afterDone?.()
+        })
+      })
+      .catch(err => {
+        console.error('[diana] TTS error', err)
+        setListenStatus(null)
+        afterDone?.()
+      })
+  }, [voiceMode])
+
+  // ── Start mic via Web Speech API ─────────────────────────────────────────
+  const startMic = useCallback(() => {
+    // Web Speech API is not in standard TS lib — use window cast
+    type AnyWindow = Window & {
+      SpeechRecognition?: new () => SpeechRecognitionInstance
+      webkitSpeechRecognition?: new () => SpeechRecognitionInstance
+    }
+    type SpeechRecognitionInstance = {
+      lang: string; continuous: boolean; interimResults: boolean
+      start: () => void
+      onresult: ((e: { results: { [k: number]: { [k: number]: { transcript: string } } } }) => void) | null
+      onerror: (() => void) | null
+      onend: (() => void) | null
+    }
+    const w = window as AnyWindow
+    const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition
+    if (!SR) {
+      setVoiceUnavailable(true)
+      setVoiceMode('text')
+      return
+    }
+    const recognition = new SR()
+    recognition.lang = 'en-GB'
+    recognition.continuous = false
+    recognition.interimResults = false
+    setListenStatus('Listening…')
+    setSpeakState('listening')
+
+    recognition.onresult = (e) => {
+      const transcript = e.results[0]?.[0]?.transcript ?? ''
+      setInput(transcript)
+      setListenStatus(null)
+      setSpeakState('idle')
+    }
+    recognition.onerror = () => {
+      setListenStatus(null)
+      setSpeakState('idle')
+    }
+    recognition.onend = () => {
+      setListenStatus(null)
+      if (speakState === 'listening') setSpeakState('idle')
+    }
+    recognition.start()
+  }, [speakState])
+
   async function startSession() {
     setError(null)
+    setMeetingBooked(false)
+    pendingMeetingEndRef.current = false
     const res = await fetch('/api/dashboard/diana/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ difficulty }),
+      body: JSON.stringify({ difficulty, mode: voiceMode }),
     })
     const data = await res.json() as { session?: { transcript: Message[]; scenario?: string } }
     if (data.session) {
-      setMessages(data.session.transcript ?? [])
+      const transcript = data.session.transcript ?? []
+      setMessages(transcript)
       setCurrentScenario(data.session.scenario ?? null)
       setFeedback(null)
       setPhase('active')
+
+      // Speak the opening line in voice mode
+      if (voiceMode === 'voice') {
+        const opening = transcript[transcript.length - 1]
+        if (opening?.role === 'diana') {
+          speakText(opening.text, startMic)
+        }
+      }
     }
   }
 
@@ -104,11 +258,30 @@ export default function DianaWorkspace() {
       const res = await fetch('/api/dashboard/diana/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, mode: voiceMode }),
       })
       const data = await res.json() as { reply?: string; error?: string }
-      if (data.reply) setMessages(prev => [...prev, { role: 'diana', text: data.reply! }])
-      else if (data.error) setError(data.error)
+      if (data.reply) {
+        setMessages(prev => [...prev, { role: 'diana', text: data.reply! }])
+        const bookedNow = detectMeetingBooked(data.reply)
+
+        if (voiceMode === 'voice') {
+          if (bookedNow) {
+            pendingMeetingEndRef.current = true
+            speakText(data.reply, () => {
+              setMeetingBooked(true)
+              void exitSession()
+            })
+          } else {
+            speakText(data.reply, startMic)
+          }
+        } else if (bookedNow) {
+          setMeetingBooked(true)
+          setTimeout(() => void exitSession(), 800)
+        }
+      } else if (data.error) {
+        setError(data.error)
+      }
     } catch (e) {
       setError(String(e))
     } finally {
@@ -145,6 +318,10 @@ export default function DianaWorkspace() {
     setFeedback(null)
     setCurrentScenario(null)
     setError(null)
+    setMeetingBooked(false)
+    setSpeakState('idle')
+    setListenStatus(null)
+    pendingMeetingEndRef.current = false
   }
 
   function newSession() {
@@ -153,18 +330,27 @@ export default function DianaWorkspace() {
     setFeedback(null)
     setCurrentScenario(null)
     setError(null)
+    setMeetingBooked(false)
+    setSpeakState('idle')
+    setListenStatus(null)
+    pendingMeetingEndRef.current = false
   }
 
   // ── Chart data: session count per day (last 10 days) ─────────────────────
   const trendData = (() => {
     const map = new Map<string, number>()
-    for (const s of sessions) map.set(s.date, (map.get(s.date) ?? 0) + 1)
+    for (const sess of sessions) map.set(sess.date, (map.get(sess.date) ?? 0) + 1)
     return Array.from(map.entries()).slice(-10).map(([date, count]) => ({ date, count }))
   })()
 
   const weakestObjection = objStats.length >= 3 ? objStats[0] : null
   const totalSessions = sessions.length
-  const completedSessions = sessions.filter(s => s.completed).length
+  const completedSessions = sessions.filter(sess => sess.completed).length
+
+  const isSpeaking = speakState === 'speaking'
+  const isListening = speakState === 'listening'
+  const inputBlocked = sending || isSpeaking
+  const effectiveVoiceMode = voiceMode === 'voice' && phase === 'active'
 
   if (loading) {
     return (
@@ -197,7 +383,50 @@ export default function DianaWorkspace() {
         <div className={s.fpCol} style={{ flex: 6 }}>
           <div className={s.fpColHead}>
             <div className={s.fpColTitle}>Live Session</div>
+
+            {/* Voice toggle — only shown when session is active */}
+            {phase === 'active' && !voiceUnavailable && (
+              <div className={s.dianaVoiceToggleWrap}>
+                <div className={s.dianaVoiceToggle}>
+                  <button
+                    className={`${s.dianaVoicePill} ${voiceMode === 'text' ? s.dianaVoicePillActive : ''}`}
+                    onClick={() => setVoiceMode('text')}
+                  >Text</button>
+                  <button
+                    className={`${s.dianaVoicePill} ${voiceMode === 'voice' ? s.dianaVoicePillActive : ''}`}
+                    onClick={() => setVoiceMode('voice')}
+                  >Voice</button>
+                </div>
+                {voiceMode === 'voice' && (
+                  <span className={s.dianaVoiceHint}>Voice mode uses ElevenLabs + your microphone</span>
+                )}
+              </div>
+            )}
+            {/* Voice toggle on idle screen too */}
+            {phase === 'idle' && !voiceUnavailable && (
+              <div className={s.dianaVoiceToggleWrap}>
+                <div className={s.dianaVoiceToggle}>
+                  <button
+                    className={`${s.dianaVoicePill} ${voiceMode === 'text' ? s.dianaVoicePillActive : ''}`}
+                    onClick={() => setVoiceMode('text')}
+                  >Text</button>
+                  <button
+                    className={`${s.dianaVoicePill} ${voiceMode === 'voice' ? s.dianaVoicePillActive : ''}`}
+                    onClick={() => setVoiceMode('voice')}
+                  >Voice</button>
+                </div>
+                {voiceMode === 'voice' && (
+                  <span className={s.dianaVoiceHint}>Voice mode uses ElevenLabs + your microphone</span>
+                )}
+              </div>
+            )}
           </div>
+
+          {voiceUnavailable && (
+            <p style={{ fontSize: 11, color: 'var(--alert)', marginBottom: 8 }}>
+              Voice input unavailable in this browser — use text mode.
+            </p>
+          )}
 
           {error && <p style={{ fontSize: 12, color: 'var(--alert)', marginBottom: 8 }}>{error}</p>}
 
@@ -233,12 +462,31 @@ export default function DianaWorkspace() {
                 <button
                   className={s.dianaEndBtn}
                   onClick={() => void exitSession()}
-                  disabled={sending}
+                  disabled={sending || isSpeaking}
                   style={{ marginLeft: currentScenario ? 'auto' : undefined }}
                 >
                   End Call — get feedback
                 </button>
               </div>
+
+              {/* Meeting booked banner */}
+              {meetingBooked && (
+                <div className={s.dianaMeetingBooked}>
+                  Meeting Booked ✓
+                </div>
+              )}
+
+              {/* Voice speaking indicator */}
+              {effectiveVoiceMode && isSpeaking && (
+                <div className={s.dianaOrbRow}>
+                  <div className={`${s.orbWrap} ${s.isSpeaking}`} style={{ width: 40, height: 40 }}>
+                    <div className={s.pulse} />
+                    <div className={s.pulse} />
+                    <div className={s.orb} />
+                  </div>
+                  <span className={s.dianaSpeakingLabel}>DIANA is speaking…</span>
+                </div>
+              )}
 
               <div className={s.dianaChatMessages}>
                 {messages.map((msg, i) => (
@@ -261,16 +509,40 @@ export default function DianaWorkspace() {
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendMessage() }
                   }}
-                  placeholder="Your response…"
-                  disabled={sending}
-                  autoFocus
+                  placeholder={
+                    isSpeaking
+                      ? 'DIANA is speaking…'
+                      : isListening
+                        ? 'Listening…'
+                        : 'Your response…'
+                  }
+                  disabled={inputBlocked}
+                  autoFocus={voiceMode === 'text'}
                 />
-                <button
-                  className={s.dianaSendBtn}
-                  onClick={() => void sendMessage()}
-                  disabled={sending || !input.trim()}
-                >Send</button>
+
+                {/* In voice mode: mic button replaces Send when idle, Send when transcript ready */}
+                {effectiveVoiceMode && !input.trim() && !inputBlocked ? (
+                  <button
+                    className={s.dianaMicBtn}
+                    onClick={startMic}
+                    disabled={isListening}
+                    title="Start listening"
+                  >
+                    {isListening ? '…' : '🎙'}
+                  </button>
+                ) : (
+                  <button
+                    className={s.dianaSendBtn}
+                    onClick={() => void sendMessage()}
+                    disabled={inputBlocked || !input.trim()}
+                  >Send</button>
+                )}
               </div>
+
+              {/* Voice status label */}
+              {effectiveVoiceMode && listenStatus && (
+                <p className={s.dianaVoiceStatus}>{listenStatus}</p>
+              )}
 
               <div className={s.dianaSessionBtns}>
                 <button className={s.dianaResetBtn} onClick={() => void resetSession()} disabled={sending}>
@@ -283,6 +555,12 @@ export default function DianaWorkspace() {
           {/* ENDED — feedback */}
           {phase === 'ended' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {meetingBooked && (
+                <div className={s.dianaMeetingBooked}>
+                  Meeting Booked ✓
+                </div>
+              )}
+
               {messages.length > 0 && (
                 <div className={`${s.dianaMessages} ${s.dianaMessagesEnded}`} style={{ maxHeight: 240 }}>
                   {messages.map((msg, i) => (

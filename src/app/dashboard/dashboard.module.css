@@ -1535,3 +1535,75 @@
   padding: 3px 9px; cursor: pointer; transition: 0.12s; flex-shrink: 0;
 }
 .mercuryCopyExpandBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
+
+/* ── DIANA voice additions ────────────────────────────────────────────────── */
+
+.dianaVoiceToggleWrap { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; margin-left: auto; }
+.dianaVoiceToggle {
+  display: flex; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 100px; padding: 2px; gap: 2px;
+}
+.dianaVoicePill {
+  font-family: var(--mono); font-size: 10.5px; padding: 4px 12px;
+  border-radius: 100px; border: none; background: none; color: var(--text-dim);
+  cursor: pointer; transition: 0.12s;
+}
+.dianaVoicePill:hover { color: var(--text); }
+.dianaVoicePillActive { background: var(--accent) !important; color: #000 !important; font-weight: 600; }
+.dianaVoiceHint { font-family: var(--mono); font-size: 10px; color: var(--text-dim); text-align: right; }
+
+.dianaMeetingBooked {
+  display: flex; align-items: center; justify-content: center;
+  padding: 10px 18px; background: rgba(91, 192, 138, 0.10);
+  border: 1px solid var(--online); border-radius: var(--r);
+  font-family: var(--display); font-weight: 600; font-size: 14px; color: var(--online);
+  margin-bottom: 10px;
+}
+
+.dianaOrbRow { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.dianaSpeakingLabel { font-family: var(--mono); font-size: 10.5px; color: var(--accent); font-style: italic; }
+
+.dianaVoiceStatus { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); margin-top: 4px; }
+
+.dianaMicBtn {
+  font-size: 16px; padding: 0 12px; height: 36px;
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  cursor: pointer; transition: 0.12s; flex-shrink: 0;
+}
+.dianaMicBtn:hover:not(:disabled) { border-color: var(--accent-deep); }
+.dianaMicBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── MAIA Voice home-screen additions ─────────────────────────────────────── */
+
+.maiaTaskPinned { border-left: 2px solid var(--accent); padding-left: 8px; }
+
+.maiaAddTaskRow {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 14px; padding: 0 2px;
+}
+
+.maiaAddTaskInput {
+  flex: 1; height: 30px; padding: 0 10px;
+  background: var(--raised-1); border: 1px solid var(--border);
+  border-radius: var(--r); color: var(--text);
+  font-family: var(--mono); font-size: 11px;
+  outline: none; transition: border-color 0.12s;
+}
+.maiaAddTaskInput:focus { border-color: var(--accent-deep); }
+.maiaAddTaskInput:disabled { opacity: 0.4; cursor: not-allowed; }
+.maiaAddTaskInput::placeholder { color: var(--text-dim); }
+
+.maiaAddTaskBtn {
+  width: 30px; height: 30px; flex-shrink: 0;
+  background: none; border: 1px solid var(--border); border-radius: var(--r);
+  color: var(--text-dim); font-size: 18px; line-height: 1; cursor: pointer;
+  transition: 0.12s;
+}
+.maiaAddTaskBtn:hover:not(:disabled) { border-color: var(--accent-deep); color: var(--accent); }
+.maiaAddTaskBtn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.maiaVoiceError {
+  font-family: var(--mono); font-size: 10.5px;
+  color: var(--alert); margin-top: 6px; padding: 0 4px;
+  text-align: center;
+}

@@ -1,0 +1,19 @@
+name: MAIA Daily Evening Summary
+
+on:
+  schedule:
+    # 19:00 UTC Mon–Fri (8pm BST / 7pm GMT)
+    - cron: '0 19 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  evening-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger MAIA end-of-day summary
+        run: |
+          curl -f -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"slot":"evening"}' \
+            "https://maia-pa-production.up.railway.app/api/cron/maia/daily-check"

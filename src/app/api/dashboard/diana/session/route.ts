@@ -16,7 +16,8 @@ import {
 import { loadDianaConfig } from '@/lib/diana-handler'
 
 const WEB_USER = 'web'
-const OPENING_LINE = 'Hello?'
+const OPENING_LINE_TEXT = 'Hello?'
+const OPENING_LINE_VOICE = 'Hello?'
 
 function serialise(s: DianaSession) {
   return {
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({})) as {
     scenario?: string
     difficulty?: 'warm' | 'neutral' | 'tough'
+    mode?: 'text' | 'voice'
   }
 
   // Autonomous selection: pick a random objection when no scenario is provided
@@ -64,8 +66,8 @@ export async function POST(req: Request) {
     difficulty: body.difficulty,
   })
 
-  // Matches the Slack start sequence exactly: deterministic opening, no Claude call.
-  await appendTurn(session.id, 'diana', OPENING_LINE)
+  const openingLine = body.mode === 'voice' ? OPENING_LINE_VOICE : OPENING_LINE_TEXT
+  await appendTurn(session.id, 'diana', openingLine)
 
   return NextResponse.json({
     session: {
@@ -74,7 +76,8 @@ export async function POST(req: Request) {
       difficulty: session.difficulty,
       status: 'active',
       slackUser: WEB_USER,
-      transcript: [{ role: 'diana', text: OPENING_LINE }],
+      transcript: [{ role: 'diana', text: openingLine }],
+      mode: body.mode ?? 'text',
     },
   })
 }

@@ -232,3 +232,38 @@ export const mercury_drafts = sqliteTable('mercury_drafts', {
   slack_ts: text('slack_ts'),                // thread anchor for refinement loop
   created_at: integer('created_at').notNull(),
 })
+
+export const maia_tasks = sqliteTable('maia_tasks', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  due_date: text('due_date'),                              // nullable — YYYY-MM-DD
+  completed: integer('completed').notNull().default(0),   // 0 = false, 1 = true
+  completed_at: integer('completed_at'),                  // nullable — unix timestamp
+  source: text('source').notNull().default('manual'),     // manual | voice | weekly_plan
+  created_at: integer('created_at').notNull(),
+})
+
+export const maia_weekly_intentions = sqliteTable('maia_weekly_intentions', {
+  id: text('id').primaryKey(),
+  week_start: text('week_start').notNull(),   // YYYY-MM-DD — Monday of that week
+  focus_areas: text('focus_areas').notNull(), // JSON array of strings
+  raw_input: text('raw_input').notNull(),
+  created_at: integer('created_at').notNull(),
+})
+
+export const maia_daily_log = sqliteTable('maia_daily_log', {
+  id: text('id').primaryKey(),
+  date: text('date').notNull().unique(),      // YYYY-MM-DD — unique per day for upsert
+  linkedin_posts: integer('linkedin_posts').notNull().default(0),
+  diana_sessions_count: integer('diana_sessions_count').notNull().default(0),
+  athena_sessions: integer('athena_sessions').notNull().default(0),
+  tasks_completed: integer('tasks_completed').notNull().default(0),
+  tasks_total: integer('tasks_total').notNull().default(0),
+  created_at: integer('created_at').notNull(),
+})
+
+export const maia_config = sqliteTable('maia_config', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updated_at: integer('updated_at').notNull(),
+})

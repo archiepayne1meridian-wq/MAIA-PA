@@ -1,0 +1,18 @@
+name: MAIA Weekly Planning
+
+on:
+  schedule:
+    # Sunday 18:00 UTC (6pm) — prompt for next week's focus areas
+    - cron: '0 18 * * 0'
+  workflow_dispatch:
+
+jobs:
+  weekly-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger MAIA weekly planning prompt
+        run: |
+          curl -f -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            "https://maia-pa-production.up.railway.app/api/cron/maia/weekly-plan"

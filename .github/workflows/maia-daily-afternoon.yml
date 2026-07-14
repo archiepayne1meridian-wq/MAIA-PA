@@ -1,0 +1,19 @@
+name: MAIA Daily Afternoon Check
+
+on:
+  schedule:
+    # 14:00 UTC Mon–Fri (3pm BST / 2pm GMT)
+    - cron: '0 14 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  afternoon-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger MAIA afternoon non-negotiables check
+        run: |
+          curl -f -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"slot":"afternoon"}' \
+            "https://maia-pa-production.up.railway.app/api/cron/maia/daily-check"

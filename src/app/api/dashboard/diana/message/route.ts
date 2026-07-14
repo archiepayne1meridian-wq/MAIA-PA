@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { text } = await req.json().catch(() => ({})) as { text?: string }
+  const { text, mode } = await req.json().catch(() => ({})) as { text?: string; mode?: 'text' | 'voice' }
   if (!text?.trim()) {
     return NextResponse.json({ error: 'text required' }, { status: 400 })
   }
@@ -36,6 +36,7 @@ export async function POST(req: Request) {
     text.trim(),
     session.scenario,
     (session.difficulty as 'warm' | 'neutral' | 'tough') || 'neutral',
+    mode === 'voice',
   )
 
   await appendTurn(session.id, 'diana', reply)

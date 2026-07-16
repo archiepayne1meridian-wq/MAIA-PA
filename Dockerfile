@@ -15,4 +15,4 @@ RUN npm run build
 
 EXPOSE 8080
 ENV NODE_ENV=production
-CMD ["sh", "-c", "next start -p ${PORT:-8080}"]
+CMD ["npm", "start"]

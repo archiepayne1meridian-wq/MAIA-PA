@@ -1,9 +1,22 @@
-import { proxy } from './proxy'
+import { NextRequest, NextResponse } from 'next/server'
+import { verifySessionTokenEdge } from '@/lib/session'
 
-export const middleware = proxy
+export async function middleware(req: NextRequest) {
+  // Skip auth gate in local dev — only enforce on Railway (production).
+  if (process.env.NODE_ENV !== 'production') return NextResponse.next()
 
-// Must be defined inline here — Next.js static analysis cannot follow re-exports.
-// Guards /dashboard/* only. Login, API, and all other routes are unprotected.
+  const secret = process.env.SESSION_SECRET
+  const token = req.cookies.get('maia_session')?.value
+
+  if (!secret || !token || !(await verifySessionTokenEdge(token, secret))) {
+    return NextResponse.redirect(new URL('/login', req.url))
+  }
+
+  return NextResponse.next()
+}
+
+// Guards /dashboard/* only. /api/* routes are never intercepted —
+// Slack HMAC and cron Bearer auth remain the sole gate for those endpoints.
 export const config = {
   matcher: ['/dashboard/:path*'],
 }

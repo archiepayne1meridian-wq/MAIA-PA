@@ -4,6 +4,35 @@ import { getDb } from '@/db'
 import { research_briefs } from '@/db/schema'
 import { desc } from 'drizzle-orm'
 
+interface HeadlineRecord {
+  title: string
+  digest: string | null
+  link: string
+  source: string
+  section: 'regulatory' | 'headlines'
+}
+
+// Legacy shape (pre digest/section headlines_json): { regulatory: FeedItem[], news: FeedItem[] }.
+// Older research_briefs rows are still in this shape — flatten them so the dashboard
+// keeps working for briefs generated before this format changed.
+function parseHeadlines(json: string): HeadlineRecord[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return []
+  }
+  if (Array.isArray(parsed)) return parsed as HeadlineRecord[]
+  if (parsed && typeof parsed === 'object') {
+    const legacy = parsed as { regulatory?: { title: string; link: string; source: string }[]; news?: { title: string; link: string; source: string }[] }
+    return [
+      ...(legacy.regulatory ?? []).map(item => ({ ...item, digest: null, section: 'regulatory' as const })),
+      ...(legacy.news ?? []).map(item => ({ ...item, digest: null, section: 'headlines' as const })),
+    ]
+  }
+  return []
+}
+
 export async function GET(request: Request) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -25,9 +54,8 @@ export async function GET(request: Request) {
   }
 
   let markets: { indices: unknown[]; fx: unknown[] } = { indices: [], fx: [] }
-  let headlines: { regulatory: unknown[]; news: unknown[] } = { regulatory: [], news: [] }
   try { markets = JSON.parse(row.markets_json) } catch { /* malformed — use empty */ }
-  try { headlines = JSON.parse(row.headlines_json) } catch { /* malformed — use empty */ }
+  const headlines = parseHeadlines(row.headlines_json)
 
   return NextResponse.json({
     brief: {
@@ -39,8 +67,7 @@ export async function GET(request: Request) {
       }),
       indices: markets.indices,
       fx: markets.fx,
-      regulatory: headlines.regulatory,
-      news: headlines.news,
+      headlines,
       summary: row.summary,
     },
   })

@@ -6,7 +6,7 @@ import s from '../../dashboard.module.css'
 
 interface IndexQuote { symbol: string; level: number; prevClose: number; dayChangePct: number }
 interface FxQuote { pair: string; rate: number; prevClose: number; dayChangePct: number }
-interface FeedItem { title: string; link: string; source: string; published?: string }
+interface HeadlineItem { title: string; digest: string | null; link: string; source: string; section: 'regulatory' | 'headlines' }
 
 interface Brief {
   id: string
@@ -15,8 +15,7 @@ interface Brief {
   briefDate: string
   indices: IndexQuote[]
   fx: FxQuote[]
-  regulatory: FeedItem[]
-  news: FeedItem[]
+  headlines: HeadlineItem[]
   summary: string
 }
 
@@ -97,22 +96,14 @@ export default function CassandraPanel() {
         </>
       )}
 
-      {(brief.regulatory.length > 0 || brief.news.length > 0) && (
+      {brief.headlines.length > 0 && (
         <>
           <div className={`${s.eyebrow} ${s.drawerSectionH}`} style={{ marginTop: 18 }}>Headlines</div>
-          {brief.regulatory.slice(0, 3).map((item: FeedItem, i) => (
+          {brief.headlines.slice(0, 7).map((item: HeadlineItem, i) => (
             <div key={i} className={s.headlineItem}>
               <span className={s.headlineSource}>{item.source}</span>
               <a href={item.link} target="_blank" rel="noopener noreferrer" className={s.headlineTitle}>
-                {item.title}
-              </a>
-            </div>
-          ))}
-          {brief.news.slice(0, 4).map((item: FeedItem, i) => (
-            <div key={i} className={s.headlineItem}>
-              <span className={s.headlineSource}>{item.source}</span>
-              <a href={item.link} target="_blank" rel="noopener noreferrer" className={s.headlineTitle}>
-                {item.title}
+                {item.digest ?? item.title}
               </a>
             </div>
           ))}

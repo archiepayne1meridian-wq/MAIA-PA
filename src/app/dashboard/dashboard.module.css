@@ -1359,10 +1359,12 @@
 
 .cassandraHeadItem { padding: 10px 0; border-bottom: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 5px; }
 .cassandraHeadItem:last-child { border-bottom: none; }
+.cassandraHeadMeta { display: flex; align-items: center; gap: 8px; }
+.cassandraHeadChip { font-family: var(--mono); font-size: 9px; color: var(--text-dim); letter-spacing: 0.06em; }
 .cassandraHeadSource { font-family: var(--mono); font-size: 9.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
-.cassandraHeadLink { font-size: 12.5px; color: var(--text); text-decoration: none; line-height: 1.4; display: block; }
-.cassandraHeadLink:hover { color: var(--accent); }
-.cassandraHeadSummary { font-size: 11.5px; color: var(--text-mid); font-style: italic; }
+.cassandraHeadDigest { font-size: 12.5px; color: var(--text); line-height: 1.5; margin: 0; }
+.cassandraHeadReadMore { font-family: var(--mono); font-size: 10px; color: var(--accent); text-decoration: none; }
+.cassandraHeadReadMore:hover { text-decoration: underline; }
 .cassandraHeadActions { display: flex; gap: 10px; margin-top: 2px; }
 .cassandraHeadActionBtn {
   font-family: var(--mono); font-size: 9px; color: var(--text-dim);

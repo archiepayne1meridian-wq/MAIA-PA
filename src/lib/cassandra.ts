@@ -1,7 +1,10 @@
 // CASSANDRA — brief formatter and news digestor.
 //
-// formatBrief: deterministic. Advice-word guard applies to Claude-generated digest
-//              lines only — never to attributed third-party titles.
+// formatBrief: deterministic. Renders summaries only (no links) — numbered lines,
+//              source name in plain text. Full items incl. links go to
+//              headlines_json instead (see resolveNewsItems / cassandra-handler.ts).
+//              Advice-word guard applies to Claude-generated digest lines only —
+//              never to attributed third-party titles.
 // digestNews:  One Claude (Haiku) call per section. Produces explanations (what it
 //              means / why it matters) in CASSANDRA's own words. If a headline is
 //              too thin to add context, relays it as a plain factual statement.
@@ -44,22 +47,40 @@ function fmtPct(pct: number): string {
   return `${sign}${pct.toFixed(2)}%`
 }
 
-function buildNewsLines(
+// A feed item resolved to what CASSANDRA will actually say about it: the Claude
+// digest if one exists and passed the advice-word guard, else null (falls back to
+// the raw title). Shared by formatBrief (brief prose) and cassandra-handler.ts
+// (headlines_json, which keeps the link the brief prose no longer shows).
+export interface ResolvedNewsItem {
+  title: string
+  digest: string | null
+  link: string
+  source: string
+}
+
+export function resolveNewsItems(
   items: FeedItem[],
   digests: Map<string, string>,
   section: string,
-): string[] {
-  return items.map(item => {
+): ResolvedNewsItem[] {
+  const resolved: ResolvedNewsItem[] = []
+  for (const item of items) {
     const digest = digests.get(item.link)
     if (digest) {
       // Claude-generated prose — apply per-line guard.
       const guarded = guardDigestLine(digest, section)
-      if (!guarded) return null  // drop the offending line, keep the rest
-      return `• ${guarded} — <${item.link}|${item.source}>`
+      if (!guarded) continue  // drop the offending item entirely, keep the rest
+      resolved.push({ title: item.title, digest: guarded, link: item.link, source: item.source })
+    } else {
+      // Attributed third-party title — no guard (relayed fact, not CASSANDRA's prose).
+      resolved.push({ title: item.title, digest: null, link: item.link, source: item.source })
     }
-    // Attributed third-party title — no guard (relayed fact, not CASSANDRA's prose).
-    return `• ${item.title} — <${item.link}|${item.source}>`
-  }).filter((l): l is string => l !== null)
+  }
+  return resolved
+}
+
+function buildNewsLines(resolved: ResolvedNewsItem[]): string[] {
+  return resolved.map((item, i) => `${i + 1}. ${item.digest ?? item.title} (${item.source})`)
 }
 
 export function formatBrief(
@@ -92,13 +113,13 @@ export function formatBrief(
 
   // ── Regulatory ───────────────────────────────────────────────────────────
   if (regulatory.length > 0) {
-    const lines = buildNewsLines(regulatory, digests, 'Regulatory')
+    const lines = buildNewsLines(resolveNewsItems(regulatory, digests, 'Regulatory'))
     if (lines.length > 0) sections.push(`*Regulatory*\n${lines.join('\n')}`)
   }
 
   // ── Headlines ────────────────────────────────────────────────────────────
   if (news.length > 0) {
-    const lines = buildNewsLines(news, digests, 'Headlines')
+    const lines = buildNewsLines(resolveNewsItems(news, digests, 'Headlines'))
     if (lines.length > 0) sections.push(`*Headlines*\n${lines.join('\n')}`)
   }
 

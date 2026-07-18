@@ -19,10 +19,10 @@ interface FxQuote {
 
 interface HeadlineItem {
   title: string
+  digest: string | null
   link: string
   source: string
-  published: string
-  summary?: string
+  section: 'regulatory' | 'headlines'
 }
 
 interface BriefData {
@@ -32,8 +32,7 @@ interface BriefData {
   briefDate: string
   indices: IndexQuote[]
   fx: FxQuote[]
-  regulatory: HeadlineItem[]
-  news: HeadlineItem[]
+  headlines: HeadlineItem[]
   summary: string
 }
 
@@ -118,7 +117,7 @@ export default function CassandraWorkspace() {
     }
   }
 
-  const allHeadlines = brief ? [...(brief.regulatory ?? []), ...(brief.news ?? [])] : []
+  const allHeadlines = brief?.headlines ?? []
   const marketOpen = isMarketOpen()
 
   return (
@@ -267,18 +266,19 @@ export default function CassandraWorkspace() {
             const museMsg = actionMsgs[`muse_${item.link}`]
             return (
               <div key={i} className={s.cassandraHeadItem}>
-                <span className={s.cassandraHeadSource}>{item.source}</span>
+                <div className={s.cassandraHeadMeta}>
+                  <span className={s.cassandraHeadChip}>{item.section === 'regulatory' ? 'REGULATORY' : 'HEADLINES'}</span>
+                  <span className={s.cassandraHeadSource}>{item.source}</span>
+                </div>
+                <p className={s.cassandraHeadDigest}>{item.digest ?? item.title}</p>
                 <a
                   href={item.link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={s.cassandraHeadLink}
+                  className={s.cassandraHeadReadMore}
                 >
-                  {item.title}
+                  Read more →
                 </a>
-                {item.summary && (
-                  <p className={s.cassandraHeadSummary}>{item.summary}</p>
-                )}
                 <div className={s.cassandraHeadActions}>
                   {irisMsg ? (
                     <span className={s.cassandraHeadActionMsg}>{irisMsg}</span>

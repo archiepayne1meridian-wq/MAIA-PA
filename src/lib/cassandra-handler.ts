@@ -6,7 +6,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { eq } from 'drizzle-orm'
 import { postMessage } from './slack'
-import { formatBrief, digestNews } from './cassandra'
+import { formatBrief, digestNews, resolveNewsItems } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
 import { flagIrisTopics, savePost } from '../../tools/iris'
@@ -225,7 +225,13 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
   const text = formatBrief(indices, fx, regulatory, news, digests, feeds.skipped)
 
   const marketsJson = JSON.stringify({ indices, fx })
-  const headlinesJson = JSON.stringify({ regulatory, news })
+
+  // Flat array with links preserved — the brief text above no longer carries them.
+  // Dashboard's Headlines panel reads this for "Read more →" links.
+  const headlinesJson = JSON.stringify([
+    ...resolveNewsItems(regulatory, digests, 'Regulatory').map(item => ({ ...item, section: 'regulatory' as const })),
+    ...resolveNewsItems(news, digests, 'Headlines').map(item => ({ ...item, section: 'headlines' as const })),
+  ])
 
   return { text, marketsJson, headlinesJson }
 }

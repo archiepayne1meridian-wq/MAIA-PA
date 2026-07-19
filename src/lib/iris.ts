@@ -2,7 +2,7 @@
 // formatSlackMessage is live — used by all cron/handler paths.
 
 import OpenAI from 'openai'
-import { askWith } from './claude'
+import { askWith, askWithWebSearch, type WebSearchTrace } from './claude'
 import type { VoicePref } from '../../tools/iris'
 
 let _openai: OpenAI | null = null
@@ -36,30 +36,78 @@ export interface IrisDraft {
   imagePrompt: string
   format: string
   postTime: string
+  groundedInSearch: boolean
+  search: WebSearchTrace
 }
 
-const IRIS_SYSTEM = `You are IRIS, MAIA's LinkedIn content engine for Archie Payne — a 20-something British expat in Malta, training as a financial adviser.
+// System prompt embeds the current year server-side so Claude never has to guess
+// it from (possibly stale) training data when building the search query.
+function buildIrisSystem(): string {
+  const year = new Date().getFullYear()
+  return `You are IRIS, MAIA's LinkedIn content engine for Archie Payne — a 20-something British expat in Malta, training as a financial adviser.
 
-Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. Output ONLY valid JSON matching this schema exactly:
-{"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "..."}
+Before writing, search the web for the most recent news on the given topic (last 7 days). Build the search query from the topic — expand abbreviations, add context — then always append ${year} for recency.
+Examples:
+- Topic "Fed rate decision" → search "Federal Reserve interest rate decision ${year}"
+- Topic "SpaceX IPO" → search "SpaceX IPO latest news ${year}"
+- Topic "expat pension mistakes" → search "UK expat pension mistakes ${year}"
+- Topic "World Cup" → search "World Cup ${year} latest"
 
-Voice rules (non-negotiable):
-- 3-line hook — first 3 lines earn the "see more" click
-- Always end with a question, poll, or call for opinions
-- Present both sides on finance topics — never prescriptive
+Use only current, real information found in search results. Never use training data for facts, stats, or events — only verified live search results. If search returns nothing relevant to the topic, set "groundedInSearch": false in your JSON response and fall back to a general, evergreen angle on the topic — but "copy" must still be a complete, publishable LinkedIn post following every format rule below (hook, structure, length, closing question). Never mention the search, never say what you could or couldn't find, never explain or apologise for a lack of results — a reader must never be able to tell a search happened at all.
+
+Never include citation tags, footnotes, source markers, or inline references of any kind (e.g. <cite>, [1], (Source: ...)) in "copy" — write plain, standalone prose exactly as a person would type it, with no citation apparatus. Use search only to ground the facts, not to annotate them.
+
+Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. After searching, output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON):
+{"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}
+
+POST FORMAT RULES — follow these exactly:
+
+FINANCE & MARKET POSTS (Pillar 1 and 2):
+- Lines 1-3 ONLY visible before "see more" on LinkedIn — these are everything
+- Hook must be one of: bold statement, hot take, surprising angle, or provocative question
+- Never start with "I" — LinkedIn algorithm deprioritises posts starting with "I"
+- Never start with a generic opener ("In today's markets...", "Did you know...")
+- Lines 4 onwards: expand with BOTH sides of the argument
+  Bull case: [one side]
+  Bear case: [other side]
+  Never tell people what to think — plant both sides, let them argue
+- Final line: open question OR poll suggestion (provide poll options if poll)
+- Length: 6-10 lines total
+- White space: one idea per line, blank lines between sections
+- Tone: sharp, current, confident but not arrogant — sounds like a switched-on
+  young finance professional who knows their stuff
+- Show you're up to date: reference the specific current event found in search
+
+CULTURE & SPORTS POSTS (Pillar 3):
+- Shorter: 3-5 lines max
+- Same hook discipline — first line must earn the read
+- More personal, lighter tone
+- End with a question or your opinion
+- No finance angle forced
+
+UNIVERSAL RULES:
+- Never sound AI-generated
+- Never use: "In today's fast-paced world", "It's no secret that", "Game changer",
+  "Dive into", "Landscape", "Leverage", "Unlock", "Delve"
+- Emojis: 1-2 max, only where they add energy not decoration
+- No bullet points in the post itself
+- No hashtags unless 1-2 highly relevant ones at the very end
+- Always end with a question or poll — comments beat likes for reach
 - No price targets, no predictions stated as fact
-- Emojis used sparingly — not sterile, not overloaded
-- Sharp, curious, 20-something tone — not corporate
-- Short paragraphs, punchy sentences, white space
-- Sounds like Archie talking, not a press release
-- NEVER sounds AI-generated
+- No financial advice, no recommendations — observations and questions only`
+}
 
-Content rules:
-- Pillar 1 (Markets): what happened → bull/bear interpretations → open question
-- Pillar 2 (Expat Finance): personal angle, myth-busting, or community question
-- Pillar 3 (Sports & Culture): personality post, no forced finance angle
-- No financial advice, no recommendations, no price targets
-- Observations and questions only`
+// Claude sometimes prefaces its final answer with a sentence of reasoning
+// ("the search shows... I'll use an evergreen angle") before the JSON — strip
+// that rather than requiring the JSON to be the very first thing in the text.
+function extractJson(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+  if (fenced?.[1]) return fenced[1].trim()
+  const first = raw.indexOf('{')
+  const last = raw.lastIndexOf('}')
+  if (first !== -1 && last > first) return raw.slice(first, last + 1)
+  return raw.trim()
+}
 
 export function formatSlackMessage(
   slot: 'morning' | 'evening',
@@ -81,7 +129,6 @@ export function formatSlackMessage(
   ].join('\n')
 }
 
-// HARD STOP — wire after Step 2 approval
 export async function generateDraft(
   slot: 'morning' | 'evening',
   pillar: 1 | 2 | 3,
@@ -95,19 +142,19 @@ export async function generateDraft(
     : ''
 
   const pillarGuide: Record<number, string> = {
-    1: 'MARKETS post: what happened (1-2 lines) → bull interpretation → bear interpretation → open question. No predictions. No price targets.',
-    2: 'EXPAT FINANCE post: personal angle or community question. Archie moved to Malta. Formats: personal story, question to expat community, myth-busting, poll.',
-    3: 'SPORTS & CULTURE post: personality content. No forced finance angle. Sharp 20-something voice. Archie follows golf, football (PL/World Cup), F1.',
+    1: 'MARKETS post — FINANCE & MARKET format rules apply.',
+    2: 'EXPAT FINANCE post — FINANCE & MARKET format rules apply. Archie moved to Malta; personal expat angle where relevant.',
+    3: 'SPORTS & CULTURE post — CULTURE & SPORTS format rules apply. Archie follows golf, football (PL/World Cup), F1.',
   }
 
   const contextBlock = cassandraContext
     ? `\n\nToday's market context (CASSANDRA brief excerpt):\n${cassandraContext.slice(0, 800)}`
     : ''
 
-  const prompt = `Write a LinkedIn post for Archie.\n\nPillar: ${pillar} — ${pillarGuide[pillar]}\nTopic: ${topic}\nSlot: ${slot} (${slot === 'morning' ? '8–9am' : '4–6pm'} CET)${contextBlock}${prefsBlock}\n\nOutput ONLY valid JSON, no markdown.`
+  const prompt = `Write a LinkedIn post for Archie.\n\nPillar: ${pillar} — ${pillarGuide[pillar]}\nTopic: ${topic}\nSlot: ${slot} (${slot === 'morning' ? '8–9am' : '4–6pm'} CET)${contextBlock}${prefsBlock}\n\nSearch the web for this topic first, per your instructions, then output ONLY valid JSON, no markdown.`
 
-  const raw = await askWith(IRIS_SYSTEM, prompt, 1024, HAIKU)
-  const cleaned = raw.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+  const { text: raw, search } = await askWithWebSearch(buildIrisSystem(), prompt, 1536, HAIKU)
+  const cleaned = extractJson(raw)
 
   let parsed: unknown
   try { parsed = JSON.parse(cleaned) }
@@ -116,6 +163,10 @@ export async function generateDraft(
   const obj = parsed as Record<string, unknown>
   if (typeof obj.copy !== 'string') throw new Error('[IRIS] generateDraft missing copy field')
 
+  const groundedInSearch = typeof obj.groundedInSearch === 'boolean' ? obj.groundedInSearch : search.results.length > 0
+
+  console.log(`[iris] generateDraft(${topic}): search query="${search.query ?? 'none'}" results=${search.results.length} groundedInSearch=${groundedInSearch}`)
+
   return {
     pillar,
     topic,
@@ -123,6 +174,8 @@ export async function generateDraft(
     imagePrompt: typeof obj.imagePrompt === 'string' ? obj.imagePrompt : `Professional LinkedIn image for: ${topic}`,
     format: typeof obj.format === 'string' ? obj.format : 'text with image',
     postTime: typeof obj.postTime === 'string' ? obj.postTime : slot === 'morning' ? '8:00–9:00am CET' : '4:00–6:00pm CET',
+    groundedInSearch,
+    search,
   }
 }
 

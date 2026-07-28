@@ -6,7 +6,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { eq } from 'drizzle-orm'
 import { postMessage } from './slack'
-import { formatBrief, digestNews, resolveNewsItems } from './cassandra'
+import { formatBrief, digestNews, resolveNewsItems, isRelevantToDeVere, selectDiverseItems } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
 import { flagIrisTopics, savePost } from '../../tools/iris'
@@ -198,12 +198,22 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
   ])
 
   const n = config.itemsPerSection
-  const regulatory = feeds.items
-    .filter(i => config.regulatoryFeeds.some(f => f.name === i.source))
-    .slice(0, n)
-  const news = feeds.items
-    .filter(i => config.newsFeeds.some(f => f.name === i.source))
-    .slice(0, n)
+  const regulatoryPool = feeds.items.filter(i => config.regulatoryFeeds.some(f => f.name === i.source))
+  const newsPool = feeds.items.filter(i => config.newsFeeds.some(f => f.name === i.source))
+
+  // Topic filter — drop items outside deVere's core advice areas before digesting.
+  const regulatoryRelevant = regulatoryPool.filter(isRelevantToDeVere)
+  const newsRelevant = newsPool.filter(isRelevantToDeVere)
+
+  const totalConsidered = regulatoryPool.length + newsPool.length
+  const totalRelevant = regulatoryRelevant.length + newsRelevant.length
+  const skippedIrrelevant = totalConsidered - totalRelevant
+  console.log(`[cassandra] filtered out ${skippedIrrelevant} irrelevant items from ${totalConsidered} total.`)
+
+  // Round-robin selection — caps any single source at 2 items so a prolific
+  // feed (e.g. Pensions Age) can't crowd out the others before digesting.
+  const regulatory = selectDiverseItems(regulatoryRelevant, n, 2)
+  const news = selectDiverseItems(newsRelevant, n, 2)
 
   // One Claude (Haiku) call per section. Errors fall back to raw titles gracefully.
   const [regulatoryDigests, newsDigests] = await Promise.all([

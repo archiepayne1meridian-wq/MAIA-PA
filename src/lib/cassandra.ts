@@ -47,6 +47,66 @@ function fmtPct(pct: number): string {
   return `${sign}${pct.toFixed(2)}%`
 }
 
+// Topic filter — keeps the brief scoped to deVere's core advice areas instead of
+// general business news. Applied after fetch, before digestNews (see
+// cassandra-handler.ts) so irrelevant items never reach the (paid) digest call.
+const DEVERE_KEYWORDS = [
+  // Pensions
+  'pension', 'qrops', 'sipp', 'iorp', 'annuity', 'drawdown', 'retirement',
+  'pension transfer', 'pension scheme', 'lifetime allowance', 'annual allowance',
+  'pension age', 'defined contribution', 'defined benefit',
+  // Tax & legislation
+  'inheritance tax', 'iht', 'capital gains', 'income tax', 'tax relief',
+  'non-dom', 'domicile', 'residency', 'double taxation', 'hmrc',
+  'legislation', 'budget', 'autumn statement', 'spring statement',
+  // Offshore & investments
+  'offshore', 'portfolio bond', 'structured note', 'investment bond',
+  'wealth management', 'financial planning', 'expat', 'expatriate',
+  // Rates & markets (client conversation relevant)
+  'interest rate', 'base rate', 'bank of england', 'federal reserve',
+  'ecb', 'inflation', 'currency', 'sterling', 'gbp', 'eur',
+  // Regulatory
+  'fca', 'fsa', 'mfsa', 'compliance', 'regulation', 'financial conduct',
+  'consumer duty', 'financial advice', 'adviser',
+]
+
+// Title only — checking source too let curated feed names (e.g. "Bank of
+// England", "Pensions Age") give every one of their items a free pass
+// regardless of content. Every item must now earn its place on content alone.
+export function isRelevantToDeVere(item: FeedItem): boolean {
+  const titleLower = item.title.toLowerCase()
+  return DEVERE_KEYWORDS.some(keyword => titleLower.includes(keyword))
+}
+
+// Round-robin selection — caps how many items a single prolific source (e.g.
+// Pensions Age) can claim, so other sources get a look-in instead of being
+// crowded out by fetch order. Applied after the relevance filter, before
+// digestNews (see cassandra-handler.ts) so the per-source cap governs what
+// actually gets digested, not just what's rendered.
+export function selectDiverseItems(items: FeedItem[], maxTotal: number, maxPerSource = 2): FeedItem[] {
+  const bySource = new Map<string, FeedItem[]>()
+  for (const item of items) {
+    if (!bySource.has(item.source)) bySource.set(item.source, [])
+    bySource.get(item.source)!.push(item)
+  }
+  const selected: FeedItem[] = []
+  let round = 0
+  while (selected.length < maxTotal) {
+    let added = false
+    for (const [, sourceItems] of bySource) {
+      if (round < sourceItems.length && selected.length < maxTotal) {
+        if (selected.filter(i => i.source === sourceItems[round]!.source).length < maxPerSource) {
+          selected.push(sourceItems[round]!)
+          added = true
+        }
+      }
+    }
+    round++
+    if (!added) break
+  }
+  return selected
+}
+
 // A feed item resolved to what CASSANDRA will actually say about it: the Claude
 // digest if one exists and passed the advice-word guard, else null (falls back to
 // the raw title). Shared by formatBrief (brief prose) and cassandra-handler.ts

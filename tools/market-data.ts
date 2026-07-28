@@ -1,12 +1,17 @@
-// Market data layer — fetches current prices and FX rates.
+// Market data layer — fetches current prices, FX rates, and historical bars.
 //
-// Provider priority:
+// Provider priority (quotes, FX, and historical bars all follow this same cascade):
 //   OpenBB (OPENBB_URL + OPENBB_TOKEN)
 //   → HybridProvider (TWELVE_DATA_API_KEY set):
 //       US tickers (MU, AMAT, IONQ, MSTR) → Twelve Data (confirmed Railway-safe, free tier)
 //       LSE tickers (VWRP, VDPG) → Alpha Vantage (API-key auth, Railway-safe, covers LSE)
 //       FX rate (GBP/USD) → Twelve Data
-//   → StubProvider (no key or USE_STUB_PRICES=true)
+//   → StubProvider (no key or USE_STUB_PRICES=true) — throws for historical bars rather
+//       than fabricate price history; quotes/FX still return stub values.
+//
+// Historical bars via Alpha Vantage (LSE tickers) are daily/weekly only — its intraday
+// series isn't reliably UTC, unlike Twelve Data's explicit timezone=UTC param — so the
+// 1D range on an LSE ticker needs OpenBB; Twelve Data (US tickers) supports it fully.
 //
 // Why not Yahoo Finance: Railway's network firewalls outbound fetches to Yahoo (fetch failed,
 // TCP-level block, not HTTP 4xx). Alpha Vantage uses API-key auth so IP doesn't matter.
@@ -28,6 +33,22 @@ export interface Quote {
   prevClose: number
   currency: string     // normalised: USD or GBP (never GBp/GBX after this point)
   isLivePrice?: boolean // false = market closed / OpenBB returned null last_price; price == prevClose
+}
+
+export interface HistoricalBar {
+  time:   string | number  // 'YYYY-MM-DD' for daily/weekly, unix seconds for intraday
+  open:   number
+  high:   number
+  low:    number
+  close:  number
+  volume: number
+}
+
+export interface HistoricalRangeCfg {
+  interval:    string   // '5m' | '1d' | '1wk' (yfinance/OpenBB-style — mapped per-provider below)
+  startDate:   string   // 'YYYY-MM-DD'
+  endDate:     string   // 'YYYY-MM-DD'
+  isIntraday:  boolean
 }
 
 // Tickers that live on the London Stock Exchange — routed to Alpha Vantage (.LON suffix).
@@ -86,6 +107,11 @@ class StubProvider {
     if (STUB_FX[key]) return STUB_FX[key]
     if (STUB_FX[rev]) return 1 / STUB_FX[rev]
     return 1
+  }
+
+  // No fabricated candles — fail loudly rather than invent price history.
+  async getHistoricalBars(): Promise<HistoricalBar[]> {
+    throw new Error('[market-data] Historical bars not available in stub mode.')
   }
 }
 
@@ -191,6 +217,40 @@ class TwelveDataProvider {
     }
     return parseFloat(json.price)
   }
+
+  // interval strings differ from yfinance/OpenBB's convention (5m/1d/1wk).
+  private static readonly TD_INTERVAL: Record<string, string> = { '5m': '5min', '1d': '1day', '1wk': '1week' }
+
+  async getHistoricalBars(ticker: string, cfg: HistoricalRangeCfg): Promise<HistoricalBar[]> {
+    const interval = TwelveDataProvider.TD_INTERVAL[cfg.interval] ?? '1day'
+    const url = `${this.base}/time_series?symbol=${encodeURIComponent(ticker)}&interval=${interval}` +
+      `&start_date=${cfg.startDate}&end_date=${cfg.endDate}&order=ASC&timezone=UTC&apikey=${this.apiKey}`
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) throw new Error(`[market-data] Twelve Data historical HTTP ${res.status} for ${ticker}`)
+
+    const json = await res.json() as {
+      values?: { datetime: string; open: string; high: string; low: string; close: string; volume?: string }[]
+      status?: string
+      code?: number
+      message?: string
+    }
+    if (json.status === 'error' || !json.values) {
+      throw new Error(
+        `[market-data] Twelve Data historical error for ${ticker}: ` +
+        `code=${json.code}, message="${json.message ?? 'no values'}"`,
+      )
+    }
+
+    // timezone=UTC means datetime is already UTC — safe to append 'Z' for Date.parse.
+    return json.values.map(v => ({
+      time:   cfg.isIntraday ? Math.floor(Date.parse(`${v.datetime.replace(' ', 'T')}Z`) / 1000) : v.datetime.slice(0, 10),
+      open:   parseFloat(v.open),
+      high:   parseFloat(v.high),
+      low:    parseFloat(v.low),
+      close:  parseFloat(v.close),
+      volume: v.volume ? parseFloat(v.volume) : 0,
+    }))
+  }
 }
 
 // ─── Alpha Vantage provider (LSE tickers only) ────────────────────────────────
@@ -265,6 +325,56 @@ class AlphaVantageProvider {
     const { price: p, prevClose: pc, currency } = normalisePence(price, prevClose, rawCurrency)
     return { ticker, price: p, prevClose: pc, currency }
   }
+
+  // Daily/weekly only. AV's intraday series for non-US symbols isn't reliably UTC
+  // (unlike Twelve Data's explicit timezone=UTC param), so 1D range on an LSE ticker
+  // falls back to "no data" rather than risk misaligned candle timestamps.
+  //
+  // outputsize=full (complete history) is an Alpha Vantage premium-only parameter for
+  // TIME_SERIES_DAILY — free tier only allows outputsize=compact, the most recent ~100
+  // data points. That covers 1M/3M fully; 1Y/5Y on an LSE ticker will show only the
+  // most recent ~100 trading days (~5 months) rather than the full requested range.
+  // TIME_SERIES_WEEKLY has no such restriction — always returns full history.
+  async getHistoricalBars(ticker: string, cfg: HistoricalRangeCfg): Promise<HistoricalBar[]> {
+    if (cfg.isIntraday) {
+      throw new Error(
+        `[market-data] Alpha Vantage fallback does not support intraday history for LSE ticker ${ticker} ` +
+        `(timezone ambiguity) — OpenBB is required for the 1D range on this symbol.`,
+      )
+    }
+    const sym = AV_LSE_SYMBOL[ticker] ?? `${ticker}.LON`
+    const isWeekly = cfg.interval === '1wk'
+    const fn  = isWeekly ? 'TIME_SERIES_WEEKLY' : 'TIME_SERIES_DAILY'
+    const outputsize = isWeekly ? '' : '&outputsize=compact'
+    const url = `${this.base}?function=${fn}&symbol=${encodeURIComponent(sym)}${outputsize}&apikey=${this.apiKey}`
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) throw new Error(`[market-data] Alpha Vantage historical HTTP ${res.status} for ${sym}`)
+
+    const json = await res.json() as Record<string, unknown>
+    const apiMsg = (json['Information'] ?? json['Note']) as string | undefined
+    if (apiMsg) throw new Error(`[market-data] Alpha Vantage historical message for ${sym}: ${apiMsg}`)
+
+    const seriesKey = Object.keys(json).find(k => k.startsWith('Time Series'))
+    const series = seriesKey ? (json[seriesKey] as Record<string, Record<string, string>>) : null
+    if (!series) {
+      throw new Error(
+        `[market-data] Alpha Vantage historical: no time series for ${sym}. ` +
+        `Raw response: ${JSON.stringify(json).slice(0, 300)}`,
+      )
+    }
+
+    return Object.entries(series)
+      .filter(([date]) => date >= cfg.startDate)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([date, v]) => ({
+        time:   date,
+        open:   parseFloat(v['1. open']!),
+        high:   parseFloat(v['2. high']!),
+        low:    parseFloat(v['3. low']!),
+        close:  parseFloat(v['4. close']!),
+        volume: v['5. volume'] ? parseFloat(v['5. volume']) : 0,
+      }))
+  }
 }
 
 // ─── Hybrid provider ──────────────────────────────────────────────────────────
@@ -296,6 +406,10 @@ class HybridProvider {
 
   async getFxRate(from: string, to: string): Promise<number> {
     return this.td.getFxRate(from, to)
+  }
+
+  async getHistoricalBars(ticker: string, cfg: HistoricalRangeCfg): Promise<HistoricalBar[]> {
+    return LSE_TICKERS.has(ticker) ? this.av.getHistoricalBars(ticker, cfg) : this.td.getHistoricalBars(ticker, cfg)
   }
 }
 
@@ -349,6 +463,35 @@ class OpenBBProvider {
     }
     const json = await res.json() as { results?: { close?: number }[] }
     return json.results?.[0]?.close ?? 1
+  }
+
+  async getHistoricalBars(ticker: string, cfg: HistoricalRangeCfg): Promise<HistoricalBar[]> {
+    const provSym = providerSymbol(ticker)
+    const url = `${this.baseUrl}/api/v1/equity/price/historical?symbol=${encodeURIComponent(provSym)}` +
+      `&start_date=${cfg.startDate}&end_date=${cfg.endDate}&interval=${cfg.interval}&provider=yfinance`
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` }, cache: 'no-store' })
+    if (!res.ok) throw new Error(`OpenBB historical fetch failed: ${res.status}`)
+
+    const json = await res.json() as {
+      results?: { date: string; open: number; high: number; low: number; close: number; volume?: number }[]
+    }
+    const raw = json.results ?? []
+
+    if (cfg.isIntraday) {
+      // Convert datetime strings to unix seconds (lightweight-charts UTCTimestamp).
+      const seen = new Set<number>()
+      return raw
+        .map(r => ({ time: Math.floor(new Date(r.date).getTime() / 1000), open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume ?? 0 }))
+        .filter(b => { if (seen.has(b.time)) return false; seen.add(b.time); return true })
+        .sort((a, b) => a.time - b.time)
+    }
+
+    // Daily/weekly: date strings 'YYYY-MM-DD'.
+    const seen = new Set<string>()
+    return raw
+      .map(r => ({ time: r.date.slice(0, 10), open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume ?? 0 }))
+      .filter(b => { if (seen.has(b.time as string)) return false; seen.add(b.time as string); return true })
+      .sort((a, b) => ((a.time as string) < (b.time as string) ? -1 : (a.time as string) > (b.time as string) ? 1 : 0))
   }
 }
 
@@ -587,4 +730,13 @@ export async function getPricedHoldings(
   }
 
   return { priced, unavailable }
+}
+
+// Historical bars for the DEMETER research chart. Same provider cascade as
+// getPricedHoldings (OpenBB → Hybrid Twelve Data/Alpha Vantage → stub), so a chart
+// keeps working even when OPENBB_URL/OPENBB_TOKEN aren't configured — previously
+// this had no fallback at all and hard-failed to an empty chart.
+export async function getHistoricalBars(ticker: string, cfg: HistoricalRangeCfg): Promise<HistoricalBar[]> {
+  const provider = getProvider()
+  return provider.getHistoricalBars(ticker, cfg)
 }

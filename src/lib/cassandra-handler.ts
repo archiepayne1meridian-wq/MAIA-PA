@@ -6,7 +6,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { eq } from 'drizzle-orm'
 import { postMessage } from './slack'
-import { formatBrief, digestNews, resolveNewsItems, isRelevantToDeVere, selectDiverseItems } from './cassandra'
+import { formatStructuredBrief, generateStructuredBrief, isRelevantToDeVere } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
 import { flagIrisTopics, savePost } from '../../tools/iris'
@@ -184,6 +184,8 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
   text: string
   marketsJson: string
   headlinesJson: string
+  rawJson: string
+  rawSearches: { key: string; label: string; findings: string }[]
 }> {
   const [indices, fx, feeds] = await Promise.all([
     getIndexQuotes(config.indices).catch(err => {
@@ -197,53 +199,26 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
     fetchAllFeeds([...config.regulatoryFeeds, ...config.newsFeeds]),
   ])
 
-  const n = config.itemsPerSection
-  const regulatoryPool = feeds.items.filter(i => config.regulatoryFeeds.some(f => f.name === i.source))
-  const newsPool = feeds.items.filter(i => config.newsFeeds.some(f => f.name === i.source))
+  // Topic filter — RSS is supplementary context now (web search is primary), but
+  // still scoped to deVere's core advice areas before it reaches the Haiku call.
+  const relevant = feeds.items.filter(isRelevantToDeVere)
+  const skippedIrrelevant = feeds.items.length - relevant.length
+  console.log(`[cassandra] filtered out ${skippedIrrelevant} irrelevant items from ${feeds.items.length} total.`)
 
-  // Topic filter — drop items outside deVere's core advice areas before digesting.
-  const regulatoryRelevant = regulatoryPool.filter(isRelevantToDeVere)
-  const newsRelevant = newsPool.filter(isRelevantToDeVere)
+  const { sections, rawJson, rawSearches } = await generateStructuredBrief(relevant, config.itemsPerSection)
+  console.log(`[cassandra] generateStructuredBrief: ${sections.length} sections, raw JSON:`, rawJson)
 
-  const totalConsidered = regulatoryPool.length + newsPool.length
-  const totalRelevant = regulatoryRelevant.length + newsRelevant.length
-  const skippedIrrelevant = totalConsidered - totalRelevant
-  console.log(`[cassandra] filtered out ${skippedIrrelevant} irrelevant items from ${totalConsidered} total.`)
-
-  // Round-robin selection — caps any single source at 2 items so a prolific
-  // feed (e.g. Pensions Age) can't crowd out the others before digesting.
-  const regulatory = selectDiverseItems(regulatoryRelevant, n, 2)
-  const news = selectDiverseItems(newsRelevant, n, 2)
-
-  // One Claude (Haiku) call per section. Errors fall back to raw titles gracefully.
-  const [regulatoryDigests, newsDigests] = await Promise.all([
-    regulatory.length > 0
-      ? digestNews(regulatory, 'Regulatory').catch(err => {
-          console.error('[cassandra] digestNews(Regulatory) failed:', err)
-          return new Map<string, string>()
-        })
-      : Promise.resolve(new Map<string, string>()),
-    news.length > 0
-      ? digestNews(news, 'Headlines').catch(err => {
-          console.error('[cassandra] digestNews(Headlines) failed:', err)
-          return new Map<string, string>()
-        })
-      : Promise.resolve(new Map<string, string>()),
-  ])
-  const digests = new Map([...regulatoryDigests, ...newsDigests])
-
-  const text = formatBrief(indices, fx, regulatory, news, digests, feeds.skipped)
+  const text = formatStructuredBrief(indices, fx, sections, feeds.skipped)
 
   const marketsJson = JSON.stringify({ indices, fx })
 
   // Flat array with links preserved — the brief text above no longer carries them.
-  // Dashboard's Headlines panel reads this for "Read more →" links.
-  const headlinesJson = JSON.stringify([
-    ...resolveNewsItems(regulatory, digests, 'Regulatory').map(item => ({ ...item, section: 'regulatory' as const })),
-    ...resolveNewsItems(news, digests, 'Headlines').map(item => ({ ...item, section: 'headlines' as const })),
-  ])
+  // Dashboard's Headlines panel reads this for "Read more →" links + section colour.
+  const headlinesJson = JSON.stringify(
+    sections.flatMap(sec => sec.items.map(item => ({ ...item, section: sec.key, sectionLabel: sec.label }))),
+  )
 
-  return { text, marketsJson, headlinesJson }
+  return { text, marketsJson, headlinesJson, rawJson, rawSearches }
 }
 
 // ─── Scheduled brief (called by POST /api/cassandra/brief) ───────────────────

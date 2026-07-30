@@ -18,11 +18,12 @@ interface FxQuote {
 }
 
 interface HeadlineItem {
-  title: string
-  digest: string | null
-  link: string
+  summary: string
+  angle: string | null
   source: string
-  section: 'regulatory' | 'headlines'
+  url: string | null
+  section: string       // e.g. 'pensions' — matches SECTION_COLOR below
+  sectionLabel: string  // e.g. 'Pensions & Retirement'
 }
 
 interface BriefData {
@@ -34,6 +35,43 @@ interface BriefData {
   fx: FxQuote[]
   headlines: HeadlineItem[]
   summary: string
+}
+
+// Matches --cassandra-* vars in globals.css and CassandraSectionKey in src/lib/cassandra.ts.
+const SECTION_COLOR: Record<string, string> = {
+  sector: 'var(--cassandra-sector)',
+  pensions: 'var(--cassandra-pensions)',
+  tax: 'var(--cassandra-tax)',
+  expat: 'var(--cassandra-expat)',
+  political: 'var(--cassandra-political)',
+  regulatory: 'var(--cassandra-regulatory)',
+}
+
+function sectionColor(key: string): string {
+  return SECTION_COLOR[key] ?? 'var(--text-dim)'
+}
+
+interface GroupedSection {
+  section: string
+  sectionLabel: string
+  items: HeadlineItem[]
+}
+
+// Groups the flat headlines array by section, preserving first-appearance order —
+// which already matches the backend's canonical section order since headlines_json
+// is built by flatMap-ing sections in that order.
+function groupBySection(headlines: HeadlineItem[]): GroupedSection[] {
+  const order: string[] = []
+  const map = new Map<string, HeadlineItem[]>()
+  for (const item of headlines) {
+    if (!map.has(item.section)) { map.set(item.section, []); order.push(item.section) }
+    map.get(item.section)!.push(item)
+  }
+  return order.map(section => ({
+    section,
+    sectionLabel: map.get(section)![0]!.sectionLabel,
+    items: map.get(section)!,
+  }))
 }
 
 function pctColor(pct: number): string {
@@ -87,13 +125,12 @@ export default function CassandraWorkspace() {
     }
   }
 
-  async function sendToIris(item: HeadlineItem) {
-    const key = item.link
+  async function sendToIris(item: HeadlineItem, key: string) {
     try {
       await fetch('/api/dashboard/iris/suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: item.title, url: item.link, source: item.source }),
+        body: JSON.stringify({ title: item.summary, url: item.url ?? '', source: item.source }),
       })
       setActionMsgs(prev => ({ ...prev, [key]: '→ IRIS sent' }))
       setTimeout(() => setActionMsgs(prev => { const n = { ...prev }; delete n[key]; return n }), 3000)
@@ -102,22 +139,23 @@ export default function CassandraWorkspace() {
     }
   }
 
-  async function sendToMuse(item: HeadlineItem) {
-    const key = `muse_${item.link}`
+  async function sendToMuse(item: HeadlineItem, key: string) {
+    const museKey = `muse_${key}`
     try {
       await fetch('/api/dashboard/muse/braindump', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: `${item.title} — ${item.link}`, source: 'cassandra' }),
+        body: JSON.stringify({ text: item.url ? `${item.summary} — ${item.url}` : item.summary, source: 'cassandra' }),
       })
-      setActionMsgs(prev => ({ ...prev, [key]: '→ MUSE sent' }))
-      setTimeout(() => setActionMsgs(prev => { const n = { ...prev }; delete n[key]; return n }), 3000)
+      setActionMsgs(prev => ({ ...prev, [museKey]: '→ MUSE sent' }))
+      setTimeout(() => setActionMsgs(prev => { const n = { ...prev }; delete n[museKey]; return n }), 3000)
     } catch {
-      setActionMsgs(prev => ({ ...prev, [key]: 'Error' }))
+      setActionMsgs(prev => ({ ...prev, [museKey]: 'Error' }))
     }
   }
 
   const allHeadlines = brief?.headlines ?? []
+  const groupedSections = groupBySection(allHeadlines)
   const marketOpen = isMarketOpen()
 
   return (
@@ -202,24 +240,24 @@ export default function CassandraWorkspace() {
 
           {brief && !loading && (
             <>
-              {brief.summary ? (
-                brief.summary.split('\n').reduce<{ sections: { head: string | null; lines: string[] }[] }>((acc, line) => {
-                  if (/^#{1,3}\s/.test(line)) {
-                    acc.sections.push({ head: line.replace(/^#+\s*/, ''), lines: [] })
-                  } else {
-                    const last = acc.sections[acc.sections.length - 1]
-                    if (last) last.lines.push(line)
-                    else acc.sections.push({ head: null, lines: [line] })
-                  }
-                  return acc
-                }, { sections: [] }).sections.map((sec, i) => (
-                  <div key={i} className={s.cassandraSection}>
-                    {sec.head && <div className={s.cassandraSectionHead}>{sec.head}</div>}
-                    <p className={s.cassandraBriefText}>{sec.lines.join('\n').trim()}</p>
+              {groupedSections.length > 0 ? (
+                groupedSections.map(sec => (
+                  <div
+                    key={sec.section}
+                    className={s.cassandraStructSection}
+                    style={{ borderLeftColor: sectionColor(sec.section) }}
+                  >
+                    <div className={s.cassandraStructLabel}>{sec.sectionLabel}</div>
+                    {sec.items.map((item, i) => (
+                      <div key={i} className={s.cassandraStructItem}>
+                        <p className={s.cassandraStructSummary}>{item.summary}</p>
+                        {item.angle && <p className={s.cassandraStructAngle}>{item.angle}</p>}
+                      </div>
+                    ))}
                   </div>
                 ))
               ) : (
-                <p className={s.cassandraEmptyBrief}>Brief data received but no summary text. Check the CASSANDRA cron.</p>
+                <p className={s.cassandraEmptyBrief}>Brief data received but no sections. Check the CASSANDRA cron.</p>
               )}
 
               <div className={s.cassandraNavRow}>
@@ -262,35 +300,41 @@ export default function CassandraWorkspace() {
           )}
 
           {allHeadlines.map((item, i) => {
-            const irisMsg = actionMsgs[item.link]
-            const museMsg = actionMsgs[`muse_${item.link}`]
+            const key = item.url ?? `${item.section}-${i}`
+            const irisMsg = actionMsgs[key]
+            const museMsg = actionMsgs[`muse_${key}`]
             return (
               <div key={i} className={s.cassandraHeadItem}>
                 <div className={s.cassandraHeadMeta}>
-                  <span className={s.cassandraHeadChip}>{item.section === 'regulatory' ? 'REGULATORY' : 'HEADLINES'}</span>
+                  <span className={s.cassandraHeadChip} style={{ color: sectionColor(item.section) }}>
+                    {item.sectionLabel.toUpperCase()}
+                  </span>
                   <span className={s.cassandraHeadSource}>{item.source}</span>
                 </div>
-                <p className={s.cassandraHeadDigest}>{item.digest ?? item.title}</p>
-                <a
-                  href={item.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={s.cassandraHeadReadMore}
-                >
-                  Read more →
-                </a>
+                <p className={s.cassandraHeadDigest}>{item.summary}</p>
+                {item.angle && <p className={s.cassandraHeadAngle}>{item.angle}</p>}
+                {item.url && (
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={s.cassandraHeadReadMore}
+                  >
+                    Read more →
+                  </a>
+                )}
                 <div className={s.cassandraHeadActions}>
                   {irisMsg ? (
                     <span className={s.cassandraHeadActionMsg}>{irisMsg}</span>
                   ) : (
-                    <button className={s.cassandraHeadActionBtn} onClick={() => void sendToIris(item)}>
+                    <button className={s.cassandraHeadActionBtn} onClick={() => void sendToIris(item, key)}>
                       → IRIS
                     </button>
                   )}
                   {museMsg ? (
                     <span className={s.cassandraHeadActionMsg}>{museMsg}</span>
                   ) : (
-                    <button className={s.cassandraHeadActionBtn} onClick={() => void sendToMuse(item)}>
+                    <button className={s.cassandraHeadActionBtn} onClick={() => void sendToMuse(item, key)}>
                       → MUSE
                     </button>
                   )}

@@ -15,6 +15,12 @@
   --online: #5BC08A;
   --idle: #E0B341;
   --alert: #E07A5F;
+  --cassandra-sector: #7BC99A;
+  --cassandra-pensions: #8AA9F0;
+  --cassandra-tax: #E0B341;
+  --cassandra-expat: #5BC0C0;
+  --cassandra-political: #B87FD4;
+  --cassandra-regulatory: #E07A5F;
   --display: var(--font-display), 'Space Grotesk', system-ui, sans-serif;
   --body: var(--font-body), 'Inter', system-ui, -apple-system, sans-serif;
   --mono: var(--font-mono), 'JetBrains Mono', ui-monospace, monospace;

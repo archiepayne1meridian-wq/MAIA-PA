@@ -6,7 +6,7 @@ import s from '../../dashboard.module.css'
 
 interface IndexQuote { symbol: string; level: number; prevClose: number; dayChangePct: number }
 interface FxQuote { pair: string; rate: number; prevClose: number; dayChangePct: number }
-interface HeadlineItem { title: string; digest: string | null; link: string; source: string; section: 'regulatory' | 'headlines' }
+interface HeadlineItem { summary: string; angle: string | null; source: string; url: string | null; section: string; sectionLabel: string }
 
 interface Brief {
   id: string
@@ -102,9 +102,13 @@ export default function CassandraPanel() {
           {brief.headlines.slice(0, 7).map((item: HeadlineItem, i) => (
             <div key={i} className={s.headlineItem}>
               <span className={s.headlineSource}>{item.source}</span>
-              <a href={item.link} target="_blank" rel="noopener noreferrer" className={s.headlineTitle}>
-                {item.digest ?? item.title}
-              </a>
+              {item.url ? (
+                <a href={item.url} target="_blank" rel="noopener noreferrer" className={s.headlineTitle}>
+                  {item.summary}
+                </a>
+              ) : (
+                <span className={s.headlineTitle}>{item.summary}</span>
+              )}
             </div>
           ))}
         </>

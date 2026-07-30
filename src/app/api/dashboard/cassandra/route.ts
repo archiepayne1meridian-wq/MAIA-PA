@@ -5,16 +5,54 @@ import { research_briefs } from '@/db/schema'
 import { desc } from 'drizzle-orm'
 
 interface HeadlineRecord {
-  title: string
-  digest: string | null
-  link: string
+  summary: string
+  angle: string | null
   source: string
-  section: 'regulatory' | 'headlines'
+  url: string | null
+  section: string
+  sectionLabel: string
 }
 
-// Legacy shape (pre digest/section headlines_json): { regulatory: FeedItem[], news: FeedItem[] }.
-// Older research_briefs rows are still in this shape — flatten them so the dashboard
-// keeps working for briefs generated before this format changed.
+const OLD_SECTION_LABELS: Record<string, string> = { regulatory: 'Regulatory', headlines: 'Headlines' }
+
+// headlines_json has gone through three shapes across CASSANDRA's evolution:
+//   1. { regulatory: FeedItem[], news: FeedItem[] }               — title/link/source only
+//   2. [{ title, digest, link, source, section: 'regulatory'|'headlines' }]
+//   3. [{ summary, angle, source, url, section, sectionLabel }]   — current (web-search brief)
+// normalizeHeadlineItem detects shape per-item so old research_briefs rows keep
+// rendering in the dashboard's "Previous brief" browser rather than breaking.
+function normalizeHeadlineItem(raw: Record<string, unknown>): HeadlineRecord | null {
+  const source = typeof raw.source === 'string' ? raw.source : null
+  if (!source) return null
+
+  // Shape 3 (current): summary/angle/url/section/sectionLabel.
+  if (typeof raw.summary === 'string') {
+    return {
+      summary: raw.summary,
+      angle: typeof raw.angle === 'string' ? raw.angle : null,
+      source,
+      url: typeof raw.url === 'string' ? raw.url : null,
+      section: typeof raw.section === 'string' ? raw.section : 'general',
+      sectionLabel: typeof raw.sectionLabel === 'string' ? raw.sectionLabel : 'Brief',
+    }
+  }
+
+  // Shapes 1/2: title/digest/link/source/section ('regulatory'|'headlines').
+  if (typeof raw.title === 'string') {
+    const section = typeof raw.section === 'string' ? raw.section : 'regulatory'
+    return {
+      summary: typeof raw.digest === 'string' ? raw.digest : raw.title,
+      angle: null,
+      source,
+      url: typeof raw.link === 'string' ? raw.link : null,
+      section,
+      sectionLabel: OLD_SECTION_LABELS[section] ?? section,
+    }
+  }
+
+  return null
+}
+
 function parseHeadlines(json: string): HeadlineRecord[] {
   let parsed: unknown
   try {
@@ -22,14 +60,21 @@ function parseHeadlines(json: string): HeadlineRecord[] {
   } catch {
     return []
   }
-  if (Array.isArray(parsed)) return parsed as HeadlineRecord[]
-  if (parsed && typeof parsed === 'object') {
-    const legacy = parsed as { regulatory?: { title: string; link: string; source: string }[]; news?: { title: string; link: string; source: string }[] }
-    return [
-      ...(legacy.regulatory ?? []).map(item => ({ ...item, digest: null, section: 'regulatory' as const })),
-      ...(legacy.news ?? []).map(item => ({ ...item, digest: null, section: 'headlines' as const })),
-    ]
+
+  if (Array.isArray(parsed)) {
+    return (parsed as Record<string, unknown>[])
+      .map(normalizeHeadlineItem)
+      .filter((r): r is HeadlineRecord => r !== null)
   }
+
+  // Shape 1: { regulatory: [...], news: [...] }
+  if (parsed && typeof parsed === 'object') {
+    const legacy = parsed as { regulatory?: Record<string, unknown>[]; news?: Record<string, unknown>[] }
+    const regulatory = (legacy.regulatory ?? []).map(item => normalizeHeadlineItem({ ...item, section: 'regulatory' }))
+    const news = (legacy.news ?? []).map(item => normalizeHeadlineItem({ ...item, section: 'headlines' }))
+    return [...regulatory, ...news].filter((r): r is HeadlineRecord => r !== null)
+  }
+
   return []
 }
 

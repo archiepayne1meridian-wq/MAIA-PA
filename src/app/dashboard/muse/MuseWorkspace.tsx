@@ -22,6 +22,36 @@ const SECTOR_COLOR: Record<string, string> = Object.fromEntries(
   SECTORS.map(s => [s.id, s.color]),
 )
 
+// ─── Web Speech API types (not in default TS DOM lib without strictLib config) ─
+
+type AnyWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionInstance
+  webkitSpeechRecognition?: new () => SpeechRecognitionInstance
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  lang: string
+  interimResults: boolean
+  maxAlternatives: number
+  start(): void
+  stop(): void
+  abort(): void
+  onresult: ((e: SpeechResultEvent) => void) | null
+  onerror: ((e: SpeechErrorEvent) => void) | null
+  onend: (() => void) | null
+}
+interface SpeechResultEvent {
+  results: { [i: number]: { [j: number]: { transcript: string } } }
+}
+interface SpeechErrorEvent {
+  error: string
+}
+
+function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
+  if (typeof window === 'undefined') return null
+  const win = window as AnyWindow
+  return win.SpeechRecognition ?? win.webkitSpeechRecognition ?? null
+}
+
 // ─── D3 node / link types (compatible with SimulationNodeDatum) ───────────────
 
 interface D3Node {
@@ -53,26 +83,32 @@ export default function MuseWorkspace() {
   const router = useRouter()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const simRef = useRef<{ stop: () => void } | null>(null)
-
-  // Panel state
-  const [leftOpen, setLeftOpen] = useState(false)
-  const [rightOpen, setRightOpen] = useState(false)
+  const recogRef = useRef<SpeechRecognitionInstance | null>(null)
 
   // Graph data
   const [graphNodes, setGraphNodes] = useState<D3Node[]>([])
   const [graphLinks, setGraphLinks] = useState<GraphLink[]>([])
+  const [allEntries, setAllEntries] = useState<MuseEntry[]>([])
 
   // Left panel
   const [selectedSector, setSelectedSector] = useState<string | null>(null)
   const [sectorEntries, setSectorEntries] = useState<MuseEntry[]>([])
   const [sectorSearch, setSectorSearch] = useState('')
 
-  // Right panel
+  // Right panel — approvals
   const [pendingItems, setPendingItems] = useState<MusePending[]>([])
   const [confirmLoading, setConfirmLoading] = useState<string | null>(null)
+  const [refineOpenId, setRefineOpenId] = useState<string | null>(null)
+  const [refineText, setRefineText] = useState('')
+  const [refineLoading, setRefineLoading] = useState<string | null>(null)
+
+  // Right panel — brain dump
   const [brainDumpText, setBrainDumpText] = useState('')
   const [brainDumpLoading, setBrainDumpLoading] = useState(false)
   const [brainDumpMsg, setBrainDumpMsg] = useState<string | null>(null)
+  const [micActive, setMicActive] = useState(false)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
 
   // Entry overlay
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null)
@@ -111,12 +147,14 @@ export default function MuseWorkspace() {
         countMap[l.entry_id_a] = (countMap[l.entry_id_a] ?? 0) + 1
         countMap[l.entry_id_b] = (countMap[l.entry_id_b] ?? 0) + 1
       }
-      const nodes: D3Node[] = (data.entries ?? []).map(e => ({
+      const entries = data.entries ?? []
+      const nodes: D3Node[] = entries.map(e => ({
         id: e.id, sector: e.sector, title: e.title, summary: e.summary,
         linkCount: countMap[e.id] ?? 0,
       }))
       setGraphNodes(nodes)
       setGraphLinks(links)
+      setAllEntries(entries)
     } catch {
       // non-fatal
     }
@@ -244,15 +282,21 @@ export default function MuseWorkspace() {
     simRef.current = { stop: () => sim.stop() }
   }
 
-  // ─── Handlers ──────────────────────────────────────────────────────────────
+  // ─── Handlers — sector nav ──────────────────────────────────────────────────
 
   function handleSectorClick(sectorId: string, locked: boolean) {
     if (locked) return
+    if (selectedSector === sectorId) {
+      setSelectedSector(null)
+      setSectorEntries([])
+      return
+    }
     setSelectedSector(sectorId)
-    setSectorSearch('')
     setSectorEntries([])
     void fetchSectorEntries(sectorId)
   }
+
+  // ─── Handlers — approvals ───────────────────────────────────────────────────
 
   async function handleConfirm(pendingId: string, decision: 'keep' | 'discard') {
     setConfirmLoading(pendingId)
@@ -271,6 +315,38 @@ export default function MuseWorkspace() {
       setConfirmLoading(null)
     }
   }
+
+  function toggleRefine(pendingId: string) {
+    if (refineOpenId === pendingId) {
+      setRefineOpenId(null)
+      setRefineText('')
+    } else {
+      setRefineOpenId(pendingId)
+      setRefineText('')
+    }
+  }
+
+  async function handleRefineSubmit(pendingId: string) {
+    if (!refineText.trim()) return
+    setRefineLoading(pendingId)
+    try {
+      const res = await fetch('/api/dashboard/muse/refine', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingId, instruction: refineText.trim() }),
+      })
+      if (!res.ok) throw new Error('Refine failed')
+      await fetchPending()
+      setRefineOpenId(null)
+      setRefineText('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Refine failed')
+    } finally {
+      setRefineLoading(null)
+    }
+  }
+
+  // ─── Handlers — brain dump ──────────────────────────────────────────────────
 
   async function handleBrainDump() {
     if (!brainDumpText.trim()) return
@@ -294,13 +370,88 @@ export default function MuseWorkspace() {
     }
   }
 
+  function handleBrainDumpMic() {
+    if (micActive) {
+      recogRef.current?.abort()
+      recogRef.current = null
+      setMicActive(false)
+      return
+    }
+
+    const SR = getSpeechRecognition()
+    if (!SR) {
+      setVoiceError('Voice unavailable — type instead')
+      return
+    }
+
+    setVoiceError(null)
+    setMicActive(true)
+
+    const recog = new SR()
+    recog.lang = 'en-GB'
+    recog.interimResults = false
+    recog.maxAlternatives = 1
+    recogRef.current = recog
+
+    recog.onresult = (e) => {
+      const transcript = e.results[0][0].transcript
+      recogRef.current = null
+      setBrainDumpText(prev => prev.trim() ? `${prev.trim()} ${transcript}` : transcript)
+    }
+
+    recog.onerror = (e) => {
+      console.warn('[muse] speech error', e.error)
+      recogRef.current = null
+      setMicActive(false)
+      if (e.error === 'not-allowed') {
+        setVoiceError('Mic permission denied — type instead')
+      }
+    }
+
+    recog.onend = () => {
+      recogRef.current = null
+      setMicActive(false)
+    }
+
+    recog.start()
+  }
+
+  function readFileAsText(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result ?? ''))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(file)
+    })
+  }
+
+  async function handleFileDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files[0]
+    if (!file) return
+    if (!/\.(pdf|txt|md)$/i.test(file.name)) {
+      setBrainDumpMsg('Only .pdf, .txt, or .md files are supported.')
+      return
+    }
+    try {
+      const text = await readFileAsText(file)
+      setBrainDumpText(prev => prev.trim() ? `${prev.trim()}\n\n${text}` : text)
+      setBrainDumpMsg(`Loaded "${file.name}" — review and submit below.`)
+    } catch {
+      setBrainDumpMsg(`Couldn't read "${file.name}".`)
+    }
+  }
+
   // ─── Derived ────────────────────────────────────────────────────────────────
 
-  const filteredEntries = sectorEntries.filter(e =>
-    !sectorSearch ||
-    e.title.toLowerCase().includes(sectorSearch.toLowerCase()) ||
-    e.summary.toLowerCase().includes(sectorSearch.toLowerCase()),
-  )
+  const searchQuery = sectorSearch.trim().toLowerCase()
+  const searchResults = searchQuery
+    ? allEntries.filter(e =>
+        e.title.toLowerCase().includes(searchQuery) ||
+        e.summary.toLowerCase().includes(searchQuery),
+      )
+    : []
 
   const pendingCount = pendingItems.length
 
@@ -309,116 +460,113 @@ export default function MuseWorkspace() {
   return (
     <div className={s.museWs}>
 
-      {/* ── Back button ─────────────────────────────────────────────────── */}
-      <button className={s.museBackBtn} onClick={() => router.push('/dashboard')}>← MAIA</button>
-
-      {/* ── Left tab ────────────────────────────────────────────────────── */}
-      <button
-        className={`${s.museLeftTab} ${leftOpen ? s.museTabOpen : ''}`}
-        onClick={() => setLeftOpen(o => !o)}
-        title="Knowledge sectors"
-      >
-        {leftOpen ? '‹' : '›'}
-      </button>
-
-      {/* ── Right tab ───────────────────────────────────────────────────── */}
-      <button
-        className={`${s.museRightTab} ${rightOpen ? s.museTabOpen : ''}`}
-        onClick={() => setRightOpen(o => !o)}
-        title="Approvals & brain dump"
-      >
-        {pendingCount > 0 && <span className={s.museTabBadge}>{pendingCount}</span>}
-        {rightOpen ? '›' : '‹'}
-      </button>
-
-      {/* ── Brain graph ─────────────────────────────────────────────────── */}
-      <div className={s.museBrainContainer}>
-        {graphNodes.length === 0 ? (
-          <div className={s.museEmptyState}>
-            <div className={s.museEmptyIcon}>🧠</div>
-            <p className={s.museEmptyTitle}>Your knowledge brain is empty — start adding entries to see it grow</p>
-            <p className={s.museEmptyText}>Use the brain dump panel or say &quot;MUSE, file this:&quot; in Slack</p>
-          </div>
-        ) : (
-          <svg ref={svgRef} className={s.museBrainSvg} />
-        )}
-      </div>
-
-      {/* ── Left panel ──────────────────────────────────────────────────── */}
-      <div className={`${s.museLeftPanel} ${leftOpen ? s.museLeftPanelOpen : ''}`}>
+      {/* ── Left panel — sector navigation (permanent) ──────────────────────── */}
+      <div className={s.musePermLeft}>
         <div className={s.musePanelHead}>
-          <span className={s.eyebrow}>Knowledge Sectors</span>
-          <button className={s.musePanelClose} onClick={() => setLeftOpen(false)}>✕</button>
+          <span className={s.eyebrow}>Sector Navigation</span>
         </div>
 
-        <div className={s.museSectorList}>
-          {SECTORS.map(sector => (
-            <button
-              key={sector.id}
-              className={[
-                s.museSectorItem,
-                selectedSector === sector.id ? s.museSectorActive : '',
-                sector.locked ? s.museSectorLocked : '',
-              ].join(' ')}
-              onClick={() => handleSectorClick(sector.id, sector.locked)}
-              title={sector.locked ? 'Available after compliance conversation' : undefined}
-            >
-              <span className={s.museSectorDot} style={{ background: sector.color }} />
-              <span className={s.museSectorLabel}>{sector.label}</span>
-              {sector.locked && <span className={s.museLock}>🔒</span>}
-            </button>
-          ))}
+        <div className={s.musePanelSearchWrap}>
+          <input
+            className={s.museSectorSearch}
+            placeholder="Search all sectors…"
+            value={sectorSearch}
+            onChange={e => setSectorSearch(e.target.value)}
+          />
         </div>
 
-        {selectedSector && !SECTORS.find(sec => sec.id === selectedSector)?.locked && (
-          <div className={s.museSectorEntries}>
-            <div className={s.musePanelSearchWrap}>
-              <input
-                className={s.musePanelSearch}
-                placeholder={`Search ${selectedSector}…`}
-                value={sectorSearch}
-                onChange={e => setSectorSearch(e.target.value)}
-              />
+        {searchQuery ? (
+          searchResults.length === 0 ? (
+            <p className={s.musePanelEmpty}>No matches.</p>
+          ) : (
+            <div className={s.museEntryList}>
+              {searchResults.map(entry => (
+                <button
+                  key={entry.id}
+                  className={s.museEntryRow}
+                  onClick={() => setSelectedEntryId(entry.id)}
+                >
+                  <span className={s.museSectorDot} style={{ background: SECTOR_COLOR[entry.sector] ?? '#8AA9F0' }} />
+                  <span className={s.museEntryTitle}>{entry.title}</span>
+                </button>
+              ))}
             </div>
-            {filteredEntries.length === 0 ? (
-              <p className={s.musePanelEmpty}>
-                {sectorSearch ? 'No matches.' : `No entries in ${selectedSector} yet.`}
-              </p>
-            ) : (
-              <div className={s.museEntryList}>
-                {filteredEntries.map(entry => (
-                  <button
-                    key={entry.id}
-                    className={s.museEntryRow}
-                    onClick={() => setSelectedEntryId(entry.id)}
-                  >
-                    <span className={s.museEntryTitle}>{entry.title}</span>
-                    <span className={s.museEntryDate}>
-                      {new Date(entry.last_updated * 1000).toLocaleDateString('en-GB', {
-                        day: 'numeric', month: 'short',
-                      })}
-                    </span>
-                  </button>
-                ))}
+          )
+        ) : (
+          <div className={s.museSectorList}>
+            {SECTORS.map(sector => (
+              <div key={sector.id}>
+                <button
+                  className={[
+                    s.museSectorItem,
+                    selectedSector === sector.id ? s.museSectorActive : '',
+                    sector.locked ? s.museSectorLocked : '',
+                  ].join(' ')}
+                  onClick={() => handleSectorClick(sector.id, sector.locked)}
+                  title={sector.locked ? 'Available after compliance conversation' : undefined}
+                >
+                  <span className={s.museSectorDot} style={{ background: sector.color }} />
+                  <span className={s.museSectorLabel}>{sector.label}</span>
+                  {sector.locked && <span className={s.museLock}>🔒</span>}
+                </button>
+
+                {selectedSector === sector.id && !sector.locked && (
+                  <div className={s.museEntryList}>
+                    {sectorEntries.length === 0 ? (
+                      <p className={s.musePanelEmpty}>No entries in {sector.label} yet.</p>
+                    ) : (
+                      sectorEntries.map(entry => (
+                        <button
+                          key={entry.id}
+                          className={s.museEntryRow}
+                          onClick={() => setSelectedEntryId(entry.id)}
+                        >
+                          <span className={s.museEntryTitle}>{entry.title}</span>
+                          <span className={s.museEntryDate}>
+                            {new Date(entry.last_updated * 1000).toLocaleDateString('en-GB', {
+                              day: 'numeric', month: 'short',
+                            })}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
-            )}
+            ))}
           </div>
         )}
       </div>
 
-      {/* ── Right panel ─────────────────────────────────────────────────── */}
-      <div className={`${s.museRightPanel} ${rightOpen ? s.museRightPanelOpen : ''}`}>
+      {/* ── Centre panel — brain graph (permanent) ──────────────────────────── */}
+      <div className={s.musePermCentre}>
+        <button className={s.museBackBtn} onClick={() => router.push('/dashboard')}>← MAIA</button>
+
+        <div className={s.museBrainContainer}>
+          {graphNodes.length === 0 ? (
+            <div className={s.museEmptyState}>
+              <div className={s.museEmptyIcon}>🧠</div>
+              <p className={s.museEmptyTitle}>Your knowledge brain is empty — start adding entries to see it grow</p>
+              <p className={s.museEmptyText}>Use the brain dump panel or say &quot;MUSE, file this:&quot; in Slack</p>
+            </div>
+          ) : (
+            <svg ref={svgRef} className={s.museBrainSvg} />
+          )}
+        </div>
+      </div>
+
+      {/* ── Right panel — approvals + brain dump (permanent) ────────────────── */}
+      <div className={s.musePermRight}>
         <div className={s.musePanelHead}>
           <span className={s.eyebrow}>
             Approvals{pendingCount > 0 ? ` (${pendingCount})` : ''}
           </span>
-          <button className={s.musePanelClose} onClick={() => setRightOpen(false)}>✕</button>
         </div>
 
         {/* Approvals queue */}
         <div className={s.museApprovalsQueue}>
           {pendingItems.length === 0 ? (
-            <p className={s.musePanelEmpty}>No pending items — all clear.</p>
+            <p className={s.musePanelEmpty}>No pending approvals</p>
           ) : (
             pendingItems.map(item => (
               <div key={item.id} className={s.museApprovalItem}>
@@ -449,7 +597,34 @@ export default function MuseWorkspace() {
                   >
                     Discard
                   </button>
+                  <button
+                    className={s.museDiscardBtn}
+                    disabled={confirmLoading === item.id}
+                    onClick={() => toggleRefine(item.id)}
+                  >
+                    {refineOpenId === item.id ? 'Cancel' : 'Edit'}
+                  </button>
                 </div>
+
+                {refineOpenId === item.id && (
+                  <div className={s.museRefineBox}>
+                    <input
+                      className={s.museRefineInput}
+                      placeholder='Edit instruction, e.g. "make the summary shorter"…'
+                      value={refineText}
+                      onChange={e => setRefineText(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') void handleRefineSubmit(item.id) }}
+                      disabled={refineLoading === item.id}
+                    />
+                    <button
+                      className={s.museKeepBtn}
+                      disabled={refineLoading === item.id || !refineText.trim()}
+                      onClick={() => void handleRefineSubmit(item.id)}
+                    >
+                      {refineLoading === item.id ? '…' : 'Send'}
+                    </button>
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -460,18 +635,44 @@ export default function MuseWorkspace() {
           <span className={s.eyebrow} style={{ display: 'block', marginBottom: 8 }}>Brain Dump</span>
           <textarea
             className={s.museBrainDumpInput}
-            placeholder="Paste a thought, insight, article, or anything worth keeping…"
-            rows={5}
+            style={{ height: 80 }}
+            placeholder="Type, paste, or speak anything..."
             value={brainDumpText}
             onChange={e => setBrainDumpText(e.target.value)}
           />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              className={`${s.museBrainDumpMic} ${micActive ? s.active : ''}`}
+              onClick={handleBrainDumpMic}
+              aria-label={micActive ? 'Stop listening' : 'Voice input'}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v3" />
+              </svg>
+            </button>
+            {micActive && <span className={s.museBrainDumpMsg}>Listening…</span>}
+            {voiceError && <span className={s.museBrainDumpMsg} style={{ color: 'var(--alert)' }}>{voiceError}</span>}
+          </div>
+
+          <div
+            className={s.museDropZone}
+            style={dragOver ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)' } : undefined}
+            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={e => void handleFileDrop(e)}
+          >
+            Drop a PDF or file
+          </div>
+
           {brainDumpMsg && <p className={s.museBrainDumpMsg}>{brainDumpMsg}</p>}
           <button
             className={s.museBrainDumpBtn}
+            style={{ alignSelf: 'stretch', textAlign: 'center' }}
             disabled={brainDumpLoading || !brainDumpText.trim()}
             onClick={() => void handleBrainDump()}
           >
-            {brainDumpLoading ? 'Processing…' : 'Send to MUSE'}
+            {brainDumpLoading ? 'Processing…' : 'File to MUSE'}
           </button>
         </div>
       </div>

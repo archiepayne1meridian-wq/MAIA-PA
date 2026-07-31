@@ -920,47 +920,28 @@
 
 /* ── MUSE ─────────────────────────────────────────────────────────────────── */
 
-/* Outer shell — fills the page, brain graph behind everything */
+/* Outer shell — permanent 3-column layout: left 25% / centre 50% / right 25% */
 .museWs {
   position: relative; width: 100%; height: 100vh; overflow: hidden; background: var(--bg);
+  display: flex;
 }
 
-/* Floating back button */
+/* Permanent columns */
+.musePermLeft, .musePermRight {
+  width: 25%; flex-shrink: 0; background: var(--surface);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.musePermLeft { border-right: 1px solid var(--border); }
+.musePermRight { border-left: 1px solid var(--border); }
+.musePermCentre { flex: 1; min-width: 0; position: relative; }
+
+/* Floating back button — sits over the centre column */
 .museBackBtn {
   position: absolute; top: 18px; left: 18px; z-index: 30;
   font-family: var(--mono); font-size: 11px; color: var(--text-dim);
   background: none; border: none; cursor: pointer; padding: 0; transition: color 0.12s;
 }
 .museBackBtn:hover { color: var(--text); }
-
-/* Edge trigger tabs */
-.museLeftTab, .museRightTab {
-  position: absolute; top: 50%; transform: translateY(-50%); z-index: 20;
-  width: 22px; height: 64px; background: var(--surface); border: 1px solid var(--border);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  font-family: var(--mono); font-size: 13px; color: var(--text-dim); cursor: pointer;
-  transition: color 0.12s, border-color 0.12s;
-}
-.museLeftTab { left: 0; border-left: none; border-radius: 0 8px 8px 0; }
-.museRightTab { right: 0; border-right: none; border-radius: 8px 0 0 8px; }
-.museLeftTab:hover, .museRightTab:hover { color: var(--accent); border-color: var(--accent-deep); }
-.museTabOpen { color: var(--accent) !important; border-color: var(--accent-deep) !important; }
-.museTabBadge {
-  font-family: var(--mono); font-size: 9px; font-weight: 600;
-  background: var(--accent); color: #0D1014; border-radius: 100px;
-  padding: 1px 5px; line-height: 1.4;
-}
-
-/* Sliding panels — overlays on the brain */
-.museLeftPanel, .museRightPanel {
-  position: absolute; top: 0; bottom: 0; width: 320px; z-index: 15;
-  background: var(--surface); display: flex; flex-direction: column;
-  transition: transform 300ms ease; overflow: hidden;
-}
-.museLeftPanel { left: 0; border-right: 1px solid var(--border); transform: translateX(-100%); }
-.museRightPanel { right: 0; border-left: 1px solid var(--border); transform: translateX(100%); }
-.museLeftPanelOpen { transform: translateX(0) !important; }
-.museRightPanelOpen { transform: translateX(0) !important; }
 
 /* Panel header */
 .musePanelHead {
@@ -974,8 +955,8 @@
 .musePanelClose:hover { color: var(--text); }
 .musePanelEmpty { font-family: var(--mono); font-size: 11px; color: var(--text-dim); padding: 14px 16px; }
 
-/* Sector list */
-.museSectorList { display: flex; flex-direction: column; padding: 8px 0; flex-shrink: 0; }
+/* Sector list (scrolls as a whole — panel is permanent, no slide/close) */
+.museSectorList { display: flex; flex-direction: column; padding: 8px 0; flex: 1; overflow-y: auto; }
 .museSectorItem {
   display: flex; align-items: center; gap: 10px; padding: 9px 16px;
   background: none; border: none; cursor: pointer; text-align: left; transition: background 0.1s; width: 100%;
@@ -988,17 +969,16 @@
 .museSectorLabel { font-size: 12.5px; color: var(--text); flex: 1; }
 .museLock { font-size: 11px; }
 
-/* Sector entries sub-panel */
-.museSectorEntries { flex: 1; overflow-y: auto; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; }
+/* Global sector search (always at top of left panel) */
 .musePanelSearchWrap { padding: 10px 16px; border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
-.musePanelSearch {
+.museSectorSearch {
   width: 100%; background: var(--raised); border: 1px solid var(--border);
   border-radius: 6px; padding: 7px 10px; font-size: 11.5px; color: var(--text);
   font-family: inherit; outline: none; transition: border-color 0.12s;
 }
-.musePanelSearch:focus { border-color: var(--accent-deep); }
-.musePanelSearch::placeholder { color: var(--text-dim); }
-.museEntryList { display: flex; flex-direction: column; }
+.museSectorSearch:focus { border-color: var(--accent-deep); }
+.museSectorSearch::placeholder { color: var(--text-dim); }
+.museEntryList { display: flex; flex-direction: column; flex: 1; overflow-y: auto; }
 .museEntryRow {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 9px 16px; border-bottom: 1px solid var(--hairline);
@@ -1053,6 +1033,16 @@
 .museDiscardBtn:hover:not(:disabled) { border-color: var(--alert); color: var(--alert); }
 .museDiscardBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Inline edit-instruction box for a pending approval */
+.museRefineBox { display: flex; gap: 6px; margin-top: 4px; }
+.museRefineInput {
+  flex: 1; background: var(--raised); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 9px; font-size: 11.5px; color: var(--text);
+  font-family: inherit; outline: none; transition: border-color 0.12s;
+}
+.museRefineInput:focus { border-color: var(--accent-deep); }
+.museRefineInput::placeholder { color: var(--text-dim); }
+
 /* Right panel: brain dump */
 .museBrainDump {
   flex-shrink: 0; padding: 14px 16px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 8px;
@@ -1065,6 +1055,19 @@
 .museBrainDumpInput:focus { border-color: var(--accent-deep); }
 .museBrainDumpInput::placeholder { color: var(--text-dim); }
 .museBrainDumpMsg { font-family: var(--mono); font-size: 10.5px; color: var(--online); }
+.museBrainDumpMic {
+  width: 32px; height: 32px; border-radius: 50%; background: var(--raised-2);
+  display: grid; place-items: center; transition: 0.18s; flex-shrink: 0; color: var(--text-dim);
+  border: none; cursor: pointer;
+}
+.museBrainDumpMic:hover { background: var(--accent); color: #0D1014; }
+.museBrainDumpMic.active { background: var(--accent); color: #0D1014; box-shadow: 0 0 16px rgba(138,169,240,0.6); }
+.museBrainDumpMic svg { width: 15px; height: 15px; }
+.museDropZone {
+  border: 1px dashed var(--border); border-radius: 6px; padding: 12px;
+  text-align: center; font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  transition: border-color 0.12s, color 0.12s;
+}
 .museBrainDumpBtn {
   align-self: flex-start; font-family: var(--mono); font-size: 11px; padding: 7px 16px;
   background: rgba(138,169,240,0.07); border: 1px solid var(--accent-deep);
@@ -1415,6 +1418,21 @@
 }
 .heraReflBody { font-size: 13px; line-height: 1.6; color: var(--text); }
 
+.heraReflectInput { padding-top: 16px; border-top: 1px solid var(--hairline); margin-top: 8px; }
+.heraReflectMic {
+  width: 34px; height: 34px; border-radius: 50%; background: var(--raised-2);
+  display: grid; place-items: center; transition: 0.18s; flex-shrink: 0; color: var(--text-dim);
+  border: none; cursor: pointer;
+}
+.heraReflectMic:hover:not(:disabled) { background: var(--accent); color: #0D1014; }
+.heraReflectMic.active { background: var(--accent); color: #0D1014; box-shadow: 0 0 16px rgba(138,169,240,0.6); }
+.heraReflectMic:disabled { opacity: 0.35; cursor: not-allowed; }
+.heraReflectMic svg { width: 16px; height: 16px; }
+.heraReflectResponse {
+  background: var(--raised); border-left: 3px solid var(--accent); border-radius: 4px;
+  padding: 12px 14px; font-size: 13px; line-height: 1.7; color: var(--text); margin-bottom: 12px;
+}
+
 /* ── VICTORIA full-page specifics ─────────────────────────────────────────── */
 
 .victoriaTopStrip {
@@ -1428,6 +1446,27 @@
 .victoriaStatVal { font-family: var(--mono); font-size: 28px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
 .victoriaStatTarget { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
 .victoriaNoDataStrip { font-family: var(--mono); font-size: 11px; color: var(--text-dim); padding: 8px 0; }
+
+.victoriaLogBtn {
+  width: 28px; height: 28px; border-radius: 100px; background: var(--raised-2);
+  color: var(--accent); border: none; cursor: pointer; font-size: 15px; line-height: 1;
+  display: grid; place-items: center; flex-shrink: 0; transition: background 0.12s;
+}
+.victoriaLogBtn:hover { background: var(--accent); color: #0D1014; }
+.victoriaVoiceMic {
+  width: 30px; height: 30px; border-radius: 50%; background: var(--raised-2);
+  display: grid; place-items: center; transition: 0.18s; flex-shrink: 0; color: var(--text-dim);
+  border: none; cursor: pointer;
+}
+.victoriaVoiceMic:hover:not(:disabled) { background: var(--accent); color: #0D1014; }
+.victoriaVoiceMic.active { background: var(--accent); color: #0D1014; box-shadow: 0 0 16px rgba(138,169,240,0.6); }
+.victoriaVoiceMic:disabled { opacity: 0.35; cursor: not-allowed; }
+.victoriaVoiceMic svg { width: 14px; height: 14px; }
+.victoriaVoiceConfirm {
+  font-family: var(--mono); font-size: 10.5px; color: var(--online);
+  animation: victoriaConfirmFade 3s ease forwards;
+}
+@keyframes victoriaConfirmFade { 0% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
 
 .victoriaHistCard {
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;

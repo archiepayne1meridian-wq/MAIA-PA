@@ -1,8 +1,37 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import s from '../dashboard.module.css'
+
+// Web Speech API types (not in default TS DOM lib without strictLib config)
+type AnyWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionInstance
+  webkitSpeechRecognition?: new () => SpeechRecognitionInstance
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  lang: string
+  interimResults: boolean
+  maxAlternatives: number
+  start(): void
+  stop(): void
+  abort(): void
+  onresult: ((e: SpeechResultEvent) => void) | null
+  onerror: ((e: SpeechErrorEvent) => void) | null
+  onend: (() => void) | null
+}
+interface SpeechResultEvent {
+  results: { [i: number]: { [j: number]: { transcript: string } } }
+}
+interface SpeechErrorEvent {
+  error: string
+}
+
+function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
+  if (typeof window === 'undefined') return null
+  const win = window as AnyWindow
+  return win.SpeechRecognition ?? win.webkitSpeechRecognition ?? null
+}
 
 interface VictoriaData {
   bars: Record<string, number | string | boolean>[]
@@ -62,15 +91,111 @@ export default function VictoriaWorkspace() {
   const [error, setError] = useState<string | null>(null)
   const [expandedScorecardId, setExpandedScorecardId] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetch('/api/dashboard/victoria')
+  const [localToday, setLocalToday] = useState<Record<string, number>>({})
+  const [flashMetric, setFlashMetric] = useState<string | null>(null)
+  const [micActive, setMicActive] = useState(false)
+  const [voiceUnavailable, setVoiceUnavailable] = useState(false)
+  const [voiceConfirm, setVoiceConfirm] = useState<string | null>(null)
+  const recogRef = useRef<SpeechRecognitionInstance | null>(null)
+
+  function refetchData() {
+    return fetch('/api/dashboard/victoria')
       .then(r => {
         if (!r.ok) throw new Error(`${r.status}`)
         return r.json() as Promise<VictoriaData>
       })
-      .then(setData)
+      .then(d => { setData(d); setLocalToday(d.todayTotals) })
       .catch((e: Error) => setError(e.message))
+  }
+
+  useEffect(() => {
+    void refetchData()
+    setVoiceUnavailable(!getSpeechRecognition())
   }, [])
+
+  async function handleIncrement(metric: string) {
+    const prevVal = localToday[metric] ?? 0
+    setLocalToday(prev => ({ ...prev, [metric]: prevVal + 1 }))
+    try {
+      const res = await fetch('/api/dashboard/victoria/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metric, increment: 1 }),
+      })
+      if (!res.ok) throw new Error('log failed')
+      await refetchData()
+    } catch {
+      setLocalToday(prev => ({ ...prev, [metric]: prevVal }))
+      setFlashMetric(metric)
+      setTimeout(() => setFlashMetric(null), 1200)
+    }
+  }
+
+  function handleVoiceMic() {
+    if (micActive) {
+      recogRef.current?.abort()
+      recogRef.current = null
+      setMicActive(false)
+      return
+    }
+
+    const SR = getSpeechRecognition()
+    if (!SR) {
+      setVoiceUnavailable(true)
+      return
+    }
+
+    setMicActive(true)
+
+    const recog = new SR()
+    recog.lang = 'en-GB'
+    recog.interimResults = false
+    recog.maxAlternatives = 1
+    recogRef.current = recog
+
+    recog.onresult = (e) => {
+      const transcript = e.results[0][0].transcript
+      recogRef.current = null
+      void handleVoiceTranscript(transcript)
+    }
+
+    recog.onerror = (e) => {
+      console.warn('[victoria] speech error', e.error)
+      recogRef.current = null
+      setMicActive(false)
+      if (e.error === 'not-allowed') setVoiceUnavailable(true)
+    }
+
+    recog.onend = () => {
+      recogRef.current = null
+      setMicActive(false)
+    }
+
+    recog.start()
+  }
+
+  async function handleVoiceTranscript(transcript: string) {
+    try {
+      const res = await fetch('/api/dashboard/victoria/voice-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript }),
+      })
+      const body = await res.json() as { logged?: { name: string; count: number }[]; error?: string }
+      if (!res.ok) throw new Error(body.error ?? 'Voice log failed')
+      const logged = body.logged ?? []
+      if (logged.length === 0) {
+        setVoiceConfirm("Didn't catch any numbers — try again")
+      } else {
+        setVoiceConfirm(`Logged: ${logged.map(l => `${l.count} ${(METRIC_LABELS[l.name] ?? l.name).toLowerCase()}`).join(', ')}`)
+        await refetchData()
+      }
+    } catch {
+      setVoiceConfirm('Voice log failed — try again')
+    } finally {
+      setTimeout(() => setVoiceConfirm(null), 3000)
+    }
+  }
 
   if (error) {
     return (
@@ -124,19 +249,44 @@ export default function VictoriaWorkspace() {
       </div>
 
       {/* ── Top strip: Today's KPI Snapshot ─────────────────────────────── */}
-      <div className={s.victoriaTopStrip}>
+      <div className={s.victoriaTopStrip} style={{ flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-dim)' }}>
+            {voiceUnavailable ? 'Use + buttons' : 'Log by voice'}
+          </span>
+          <button
+            className={`${s.victoriaVoiceMic} ${micActive ? s.active : ''}`}
+            onClick={handleVoiceMic}
+            disabled={voiceUnavailable}
+            aria-label={micActive ? 'Stop listening' : 'Log by voice'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+              <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+              <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v3" />
+            </svg>
+          </button>
+          {micActive && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--accent)' }}>Listening...</span>}
+          {voiceConfirm && <span className={s.victoriaVoiceConfirm}>{voiceConfirm}</span>}
+        </div>
+
         <div className={s.victoriaTopStripInner}>
           {activeMetrics.length > 0 ? (
             activeMetrics.map(m => {
-              const val = todayTotals[m] ?? 0
+              const val = localToday[m] ?? todayTotals[m] ?? 0
               const weekVal = thisWeekTotals[m] ?? 0
               const tgt = targets[m]
               return (
                 <div key={m} className={s.victoriaStatBlock}>
                   <span className={s.victoriaStatName}>{METRIC_LABELS[m] ?? m}</span>
-                  <span className={s.victoriaStatVal} style={{ color: statusColor(weekVal, tgt) }}>
-                    {val}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span
+                      className={s.victoriaStatVal}
+                      style={{ color: flashMetric === m ? 'var(--alert)' : statusColor(weekVal, tgt) }}
+                    >
+                      {val}
+                    </span>
+                    <button className={s.victoriaLogBtn} onClick={() => void handleIncrement(m)} aria-label={`Log one ${METRIC_LABELS[m] ?? m}`}>+</button>
+                  </div>
                   <span className={s.victoriaStatTarget}>
                     {tgt != null ? `/ ${tgt} target · ${weekVal} this wk` : `${weekVal} this wk`}
                   </span>

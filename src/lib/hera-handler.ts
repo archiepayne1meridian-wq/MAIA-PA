@@ -125,7 +125,63 @@ const SUPPORTIVE_RESPONSE =
   `someone in your family, or someone else close to you, can really help. ` +
   `I'm always here when you want to reflect.`
 
-// ─── Log a reflection ─────────────────────────────────────────────────────────
+// ─── Log a reflection — shared core ──────────────────────────────────────────
+//
+// Runs the full pipeline (distress check, ack, save, streak note) and returns
+// the response text rather than posting it anywhere. Both the Slack handler
+// and the dashboard reflect route call this so the logic lives in one place.
+
+export interface ProcessedReflection {
+  response: string
+  distressFlagged: boolean
+}
+
+export async function processReflection(
+  text: string,
+  source: 'text' | 'voice' = 'text',
+): Promise<ProcessedReflection> {
+  // ── Step 1: keyword floor (runs always, result cannot be suppressed) ──
+  const keywordCheck = detectDistress(text)
+  const clientMention = detectClientMention(text)
+
+  // ── Step 2: Claude ack + belt-and-braces distress check ──────────────
+  let ackText = `Logged. Thanks for checking in. 🌿`   // fallback if Claude unavailable
+  let modelFlaggedDistress = false
+  try {
+    const result = await acknowledgeReflection(text)
+    ackText = result.ack
+    modelFlaggedDistress = result.modelFlaggedDistress
+  } catch (err) {
+    console.error('[hera] acknowledgeReflection failed (using fallback):', err)
+  }
+
+  // ── Step 3: final flag — keyword OR model; keyword can never be suppressed ──
+  const finalDistressFlagged = keywordCheck.flagged || modelFlaggedDistress
+
+  // ── Step 4: save reflection with final flag ───────────────────────────
+  const sentiment = coarseSentiment(text, finalDistressFlagged)
+  await addReflection({ body: text, source, sentiment, distressFlagged: finalDistressFlagged })
+
+  // ── Step 5: route based on final flag ─────────────────────────────────
+  if (finalDistressFlagged) {
+    // Supportive path — never let a cheerful ack go out on a flagged note.
+    return { response: SUPPORTIVE_RESPONSE, distressFlagged: true }
+  }
+
+  // ── Normal acknowledgement ────────────────────────────────────────────
+  const streak = await getStreak()
+  const streakNote = streak >= 2 ? `  _${streak}-day streak._` : ''
+  const parts: string[] = [ackText + streakNote]
+
+  if (clientMention) {
+    parts.push(
+      `_Just a note: it's worth keeping reflections focused on your own development ` +
+      `rather than specific client details. No worries — this one's saved._`
+    )
+  }
+
+  return { response: parts.join('\n'), distressFlagged: false }
+}
 
 export async function handleLogReflection(
   channel: string,
@@ -135,50 +191,9 @@ export async function handleLogReflection(
   const { rowId, startMs } = await logActivity('log_reflection', text.slice(0, 200))
 
   try {
-    // ── Step 1: keyword floor (runs always, result cannot be suppressed) ──
-    const keywordCheck = detectDistress(text)
-    const clientMention = detectClientMention(text)
-
-    // ── Step 2: Claude ack + belt-and-braces distress check ──────────────
-    let ackText = `Logged. Thanks for checking in. 🌿`   // fallback if Claude unavailable
-    let modelFlaggedDistress = false
-    try {
-      const result = await acknowledgeReflection(text)
-      ackText = result.ack
-      modelFlaggedDistress = result.modelFlaggedDistress
-    } catch (err) {
-      console.error('[hera] acknowledgeReflection failed (using fallback):', err)
-    }
-
-    // ── Step 3: final flag — keyword OR model; keyword can never be suppressed ──
-    const finalDistressFlagged = keywordCheck.flagged || modelFlaggedDistress
-
-    // ── Step 4: save reflection with final flag ───────────────────────────
-    const sentiment = coarseSentiment(text, finalDistressFlagged)
-    await addReflection({ body: text, source, sentiment, distressFlagged: finalDistressFlagged })
-
-    // ── Step 5: route based on final flag ─────────────────────────────────
-    if (finalDistressFlagged) {
-      // Supportive path — never let a cheerful ack go out on a flagged note.
-      await postMessage(channel, SUPPORTIVE_RESPONSE)
-      await succeedActivity(rowId, startMs, 'distress path taken')
-      return
-    }
-
-    // ── Normal acknowledgement ────────────────────────────────────────────
-    const streak = await getStreak()
-    const streakNote = streak >= 2 ? `  _${streak}-day streak._` : ''
-    const parts: string[] = [ackText + streakNote]
-
-    if (clientMention) {
-      parts.push(
-        `_Just a note: it's worth keeping reflections focused on your own development ` +
-        `rather than specific client details. No worries — this one's saved._`
-      )
-    }
-
-    await postMessage(channel, parts.join('\n'))
-    await succeedActivity(rowId, startMs, 'reflection logged')
+    const { response, distressFlagged } = await processReflection(text, source)
+    await postMessage(channel, response)
+    await succeedActivity(rowId, startMs, distressFlagged ? 'distress path taken' : 'reflection logged')
   } catch (err) {
     console.error('[hera] handleLogReflection failed:', err)
     await failActivity(rowId, startMs, err)

@@ -273,3 +273,39 @@ export async function extractLinks(
 ): Promise<string[]> {
   throw new Error('[muse] extractLinks not yet wired — awaiting Step 3')
 }
+
+// ─── refinePending — revise a pending suggestion from a free-text instruction ─
+
+export interface MuseRefinement {
+  title: string
+  summary: string
+  content: string
+}
+
+export async function refinePending(
+  current: { title: string; summary: string; content: string },
+  instruction: string,
+): Promise<MuseRefinement> {
+  const systemPrompt =
+    `You are MUSE, a precise knowledge-management agent for a trainee financial adviser.\n` +
+    `You are given a pending knowledge-base entry and an edit instruction from the user.\n` +
+    `Revise the entry to satisfy the instruction while keeping everything else about it intact.\n\n` +
+    `Respond with valid JSON only — no prose, no markdown fences.\n` +
+    `Format: { "title": string, "summary": string, "content": string }`
+
+  const userText =
+    `Current entry:\n` +
+    `Title: ${current.title}\n` +
+    `Summary: ${current.summary}\n` +
+    `Content: ${current.content}\n\n` +
+    `Edit instruction: ${instruction}`
+
+  const raw = await askWith(systemPrompt, userText, 1200, HAIKU)
+  const result = parseJSON<MuseRefinement>(raw, 'refinePending')
+
+  return {
+    title: typeof result.title === 'string' && result.title.trim() ? result.title : current.title,
+    summary: typeof result.summary === 'string' ? result.summary : current.summary,
+    content: typeof result.content === 'string' && result.content.trim() ? result.content : current.content,
+  }
+}

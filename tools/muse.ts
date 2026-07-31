@@ -257,6 +257,17 @@ export async function getPendingById(id: string): Promise<MusePending | null> {
   return (rows[0] as MusePending) ?? null
 }
 
+export async function updatePendingSuggestion(
+  id: string,
+  fields: { title: string; summary: string; content: string },
+): Promise<void> {
+  await getDb().update(muse_pending).set({
+    suggested_title: fields.title,
+    suggested_summary: fields.summary,
+    suggested_content: fields.content,
+  }).where(eq(muse_pending.id, id))
+}
+
 // ─── Change log ───────────────────────────────────────────────────────────────
 
 export async function saveChangeLog(

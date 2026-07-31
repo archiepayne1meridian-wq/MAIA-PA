@@ -125,6 +125,42 @@ export function parseTally(text: string, metrics: string[]): {
   return { parsed, needsClaude, found }
 }
 
+// ── Voice tally parsing (dashboard mic — dedicated Haiku call) ───────────────
+//
+// Takes a raw spoken transcript and the live configured metric list (from
+// context/victoria.md) and extracts counts. Distinct from parseTallyWithClaude
+// above because the dashboard mic returns a { metrics: [...] } array shape
+// rather than a flat object, and needs the metric names spoken back for the
+// "Logged: 5 calls, 2 appointments" confirmation toast.
+export async function parseVoiceTally(
+  transcript: string,
+  metrics: string[],
+): Promise<{ name: string; count: number }[]> {
+  const systemPrompt =
+    `Extract KPI activity counts from this spoken input. Return JSON only: ` +
+    `{ "metrics": [{ "name": string, "count": number }] }. ` +
+    `Valid metric names: ${metrics.join(', ')}. ` +
+    `If a metric isn't mentioned return 0. ` +
+    `Example input: "I made 5 calls and booked 2 appointments" → ` +
+    `{ "metrics": [{ "name": "calls", "count": 5 }, { "name": "meetings_booked", "count": 2 }] }`
+
+  const raw = await askWith(systemPrompt, transcript, 200, HAIKU)
+
+  try {
+    const jsonMatch = raw.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return []
+    const obj = JSON.parse(jsonMatch[0]) as { metrics?: { name?: string; count?: number }[] }
+    if (!Array.isArray(obj.metrics)) return []
+    return obj.metrics
+      .filter((m): m is { name: string; count: number } =>
+        typeof m.name === 'string' && metrics.includes(m.name) &&
+        typeof m.count === 'number' && Number.isFinite(m.count) && m.count > 0)
+      .map(m => ({ name: m.name, count: Math.round(m.count) }))
+  } catch {
+    return []
+  }
+}
+
 // ── Echo-confirm formatter ────────────────────────────────────────────────────
 
 // Returns the echo-and-confirm message to send back to the user before storing.

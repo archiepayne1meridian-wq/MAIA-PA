@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import s from '../dashboard.module.css'
 
 interface Reflection {
@@ -57,12 +57,53 @@ function extractThemes(reflections: Reflection[]): { word: string; count: number
     .map(([word, count]) => ({ word, count }))
 }
 
+// Web Speech API types (not in default TS DOM lib without strictLib config)
+type AnyWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionInstance
+  webkitSpeechRecognition?: new () => SpeechRecognitionInstance
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  lang: string
+  interimResults: boolean
+  maxAlternatives: number
+  start(): void
+  stop(): void
+  abort(): void
+  onresult: ((e: SpeechResultEvent) => void) | null
+  onerror: ((e: SpeechErrorEvent) => void) | null
+  onend: (() => void) | null
+}
+interface SpeechResultEvent {
+  results: { [i: number]: { [j: number]: { transcript: string } } }
+}
+interface SpeechErrorEvent {
+  error: string
+}
+
+function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
+  if (typeof window === 'undefined') return null
+  const win = window as AnyWindow
+  return win.SpeechRecognition ?? win.webkitSpeechRecognition ?? null
+}
+
 export default function HeraWorkspace() {
   const [data, setData] = useState<HeraData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showPrevWeeks, setShowPrevWeeks] = useState(false)
 
+  const [reflectionText, setReflectionText] = useState('')
+  const [micActive, setMicActive] = useState(false)
+  const [voiceUnavailable, setVoiceUnavailable] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [heraResponse, setHeraResponse] = useState<string | null>(null)
+  const recogRef = useRef<SpeechRecognitionInstance | null>(null)
+
   useEffect(() => {
+    setVoiceUnavailable(!getSpeechRecognition())
+  }, [])
+
+  function refetchData() {
     fetch('/api/dashboard/hera')
       .then(r => {
         if (!r.ok) throw new Error(`${r.status}`)
@@ -70,7 +111,76 @@ export default function HeraWorkspace() {
       })
       .then(setData)
       .catch((e: Error) => setError(e.message))
+  }
+
+  useEffect(() => {
+    refetchData()
   }, [])
+
+  function handleMic() {
+    if (micActive) {
+      recogRef.current?.abort()
+      recogRef.current = null
+      setMicActive(false)
+      return
+    }
+
+    const SR = getSpeechRecognition()
+    if (!SR) {
+      setVoiceUnavailable(true)
+      return
+    }
+
+    setMicActive(true)
+
+    const recog = new SR()
+    recog.lang = 'en-GB'
+    recog.interimResults = false
+    recog.maxAlternatives = 1
+    recogRef.current = recog
+
+    recog.onresult = (e) => {
+      const transcript = e.results[0][0].transcript
+      recogRef.current = null
+      setReflectionText(prev => prev.trim() ? `${prev.trim()} ${transcript}` : transcript)
+    }
+
+    recog.onerror = (e) => {
+      console.warn('[hera] speech error', e.error)
+      recogRef.current = null
+      setMicActive(false)
+      if (e.error === 'not-allowed') setVoiceUnavailable(true)
+    }
+
+    recog.onend = () => {
+      recogRef.current = null
+      setMicActive(false)
+    }
+
+    recog.start()
+  }
+
+  async function handleSubmitReflection() {
+    if (!reflectionText.trim() || submitting) return
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      const res = await fetch('/api/dashboard/hera/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: reflectionText.trim() }),
+      })
+      const body = await res.json() as { response?: string; error?: string }
+      if (!res.ok) throw new Error(body.error ?? 'Something went wrong')
+      setHeraResponse(body.response ?? null)
+      setReflectionText('')
+      refetchData()
+    } catch {
+      setSubmitError('Something went wrong — try again')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   if (error) {
     return (
@@ -251,6 +361,55 @@ export default function HeraWorkspace() {
               ))}
             </div>
           )}
+
+          {/* Add Reflection */}
+          <div className={s.heraReflectInput}>
+            <span className={s.eyebrow} style={{ display: 'block', marginBottom: 8 }}>Add Reflection</span>
+
+            {heraResponse && (
+              <p className={s.heraReflectResponse}>{heraResponse}</p>
+            )}
+
+            <textarea
+              style={{ height: 100 }}
+              className={s.museBrainDumpInput}
+              placeholder="How did today go? Speak or type..."
+              value={reflectionText}
+              onChange={e => setReflectionText(e.target.value)}
+              disabled={submitting}
+            />
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+              <button
+                className={`${s.heraReflectMic} ${micActive ? s.active : ''}`}
+                onClick={handleMic}
+                disabled={voiceUnavailable}
+                aria-label={micActive ? 'Stop listening' : 'Voice input'}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v3" />
+                </svg>
+              </button>
+              {micActive && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-dim)' }}>Listening...</span>}
+              {voiceUnavailable && !micActive && (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-dim)' }}>Voice unavailable — type instead</span>
+              )}
+            </div>
+
+            <button
+              className={s.museBrainDumpBtn}
+              style={{ alignSelf: 'stretch', textAlign: 'center', marginTop: 10, width: '100%' }}
+              disabled={submitting || !reflectionText.trim()}
+              onClick={() => void handleSubmitReflection()}
+            >
+              {submitting ? 'Submitting...' : 'Submit Reflection'}
+            </button>
+
+            {submitError && (
+              <p style={{ fontSize: 11, color: 'var(--alert)', marginTop: 6 }}>{submitError}</p>
+            )}
+          </div>
         </div>
 
       </div>

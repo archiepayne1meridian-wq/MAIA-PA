@@ -83,7 +83,7 @@ export function parseVictoriaConfig(content: string): VictoriaConfig {
   return config
 }
 
-function loadVictoriaConfig(): VictoriaConfig {
+export function loadVictoriaConfig(): VictoriaConfig {
   const p = path.join(process.cwd(), 'context', 'victoria.md')
   try {
     return parseVictoriaConfig(fs.readFileSync(p, 'utf-8'))

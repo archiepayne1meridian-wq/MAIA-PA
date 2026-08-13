@@ -267,3 +267,17 @@ export const maia_config = sqliteTable('maia_config', {
   value: text('value').notNull(),
   updated_at: integer('updated_at').notNull(),
 })
+
+export const apollo_calls = sqliteTable('apollo_calls', {
+  id: text('id').primaryKey(),
+  call_date: text('call_date').notNull(),
+  prospect_name: text('prospect_name'),
+  transcript: text('transcript'),
+  intelligence_json: text('intelligence_json'),
+  advisor_brief: text('advisor_brief'),
+  client_email: text('client_email'),
+  muse_transcript_id: text('muse_transcript_id'),
+  muse_brief_id: text('muse_brief_id'),
+  muse_email_id: text('muse_email_id'),
+  created_at: integer('created_at').notNull(),
+})

@@ -29,4 +29,5 @@ export const env = {
   DATABASE_URL: () => requireEnv('DATABASE_URL'),
   NEXT_PUBLIC_BASE_URL: () => requireEnv('NEXT_PUBLIC_BASE_URL'),
   MAIA_API_KEY: () => process.env.MAIA_API_KEY,
+  OPENAI_API_KEY: () => requireEnv('OPENAI_API_KEY'),
 }

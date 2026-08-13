@@ -243,3 +243,21 @@ Supportive response wording approved.
 - Stubbed: calendar events (D4), greeting/message-bubble text, quick-action chips.
 
 **Regression confirmed:** `/api/health` 200, `/api/demeter/brief` 401 (bearer required), `/api/cassandra/brief` 401, `/api/slack/events` 200 (url_verification handled).
+
+---
+
+## 2026-08-12 — APOLLO build kickoff (compliance check)
+
+**Context:** APOLLO (Call Intelligence Agent) processes real prospect call recordings — audio to OpenAI Whisper, transcript to Claude Opus for personal/financial intelligence extraction (name, location, income, family, concerns, goals), then auto-drafts an advisor brief and client confirmation email. Not yet in the CLAUDE.md agent roster; functionally more sensitive than IRIS/LUNA (both gated behind firm compliance sign-off before real-data use).
+
+**Decision (human, confirmed before build started):** Archie confirmed the deVere compliance conversation for APOLLO has already happened — cleared to build and use with real 8x8 call recordings, no fake-data-only restriction.
+
+**Decision (human, confirmed before build started):** The spec as originally drafted (context/apollo.md, workflows/apollo_workflow.md) auto-commits transcript/advisor-brief/client-email straight to `muse_entries` with `status: active` and no review step ("bypass pending flow — structured outputs from a known source"). Archie chose instead to route all 3 APOLLO outputs through MUSE's normal pending/approval queue (`savePending`, Keep/Discard) rather than auto-committing — one extra review click per call, but no unreviewed prospect PII lands permanently in the knowledge base. This is a deliberate deviation from the written spec; implementation follows this decision, not the spec's auto-commit language.
+
+**Golden Rule note:** Client confirmation email remains draft-only regardless — Archie always sends manually. This was already true in the spec and is unchanged.
+
+---
+
+## 2026-08-13 — APOLLO Step 2 (MUSE auto-commit decision reversed)
+
+**Decision (human):** Archie reversed the 2026-08-12 call on MUSE saves — Step 2 now uses `saveEntry()` directly with `status: 'active'` for all 3 outputs (transcript, advisor brief, client email), auto-committing to `muse_entries` with no Approvals-queue review step. Reasoning given: these are structured outputs from a known source (APOLLO itself), not unvetted external content — matches the exception language already written into `context/apollo.md`. Implementation follows this instruction exactly; the review-queue routing built for the original decision was not shipped.

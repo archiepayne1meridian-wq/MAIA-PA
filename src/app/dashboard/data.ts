@@ -2,7 +2,7 @@ import { getDb } from '@/db'
 import {
   activity, study_cards, study_reviews, research_briefs,
   portfolio_snapshots, holdings, reflections, diana_sessions,
-  kpi_logs, kpi_weekly, approvals, iris_posts,
+  kpi_logs, kpi_weekly, approvals, iris_posts, apollo_calls,
 } from '@/db/schema'
 import { desc, eq, gte, lte, and, count } from 'drizzle-orm'
 import type { Agent, Task } from './types'
@@ -233,6 +233,11 @@ export async function buildDashboardData(): Promise<DashboardData> {
   const [lastIrisPost] = irisPostsThisWeek
   const irisFeed = await agentFeed(db, 'IRIS')
 
+  // ── APOLLO ───────────────────────────────────────────────────────────────────
+  const [apolloResult] = await db.select({ n: count() }).from(apollo_calls)
+  const apolloTotal = apolloResult?.n ?? 0
+  const apolloFeed = await agentFeed(db, 'APOLLO')
+
   // ── Pending approvals ─────────────────────────────────────────────────────────
   const [pendingResult] = await db
     .select({ n: count() }).from(approvals).where(eq(approvals.status, 'pending'))
@@ -434,6 +439,21 @@ export async function buildDashboardData(): Promise<DashboardData> {
         ['Source', 'mercury_drafts', 'saved on approval'],
       ],
       feed: [['—', 'Say "Mercury, draft an email…" in Slack']],
+    },
+    {
+      id: 'APOLLO', role: 'Call Intelligence', badge: 'A',
+      status: apolloTotal > 0 ? 'online' : 'idle',
+      stat: apolloTotal > 0 ? `${apolloTotal} call${apolloTotal !== 1 ? 's' : ''} processed` : 'No calls yet',
+      statusLabel: 'Drop an 8x8 recording in the dashboard to transcribe and brief',
+      prog: 0,
+      progAlert: false,
+      tiles: [
+        ['Calls processed', String(apolloTotal), 'all time'],
+        ['Transcription', 'OpenAI Whisper', 'server-side, deleted after use'],
+        ['Analysis', 'Claude Opus + Haiku', 'intelligence + brief + email'],
+        ['Mode', 'Draft-only', 'MUSE saves go to Approvals queue'],
+      ],
+      feed: apolloFeed,
     },
     ...INACTIVE_AGENTS,
   ]

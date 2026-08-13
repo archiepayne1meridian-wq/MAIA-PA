@@ -1649,3 +1649,80 @@
   color: var(--alert); margin-top: 6px; padding: 0 4px;
   text-align: center;
 }
+
+/* ── APOLLO ───────────────────────────────────────────────────────────────── */
+
+.apolloDropZone {
+  border: 1px dashed var(--border); border-radius: 14px; padding: 28px 16px;
+  text-align: center; cursor: pointer; transition: border-color 0.12s, color 0.12s;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text-mid);
+}
+.apolloDropZone:hover { border-color: var(--accent-deep); }
+.apolloDropZone p { margin: 0; }
+.apolloDropIcon { font-size: 28px; margin-bottom: 4px; opacity: 0.7; }
+.apolloDropHint { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim) !important; }
+
+.apolloProgressBar {
+  width: 100%; height: 4px; background: var(--raised-2); border-radius: 2px;
+  overflow: hidden; margin-top: 6px;
+}
+.apolloProgressFill { height: 100%; background: var(--accent); transition: width 0.15s; }
+
+.apolloSpinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--raised-2); border-top-color: var(--accent);
+  animation: apolloSpin 0.8s linear infinite;
+}
+@keyframes apolloSpin { to { transform: rotate(360deg); } }
+
+.apolloCopyBtn {
+  font-family: var(--mono); font-size: 10.5px; padding: 5px 11px;
+  background: none; border: 1px solid var(--border); border-radius: 100px;
+  color: var(--text-dim); cursor: pointer; transition: border-color 0.12s, color 0.12s;
+}
+.apolloCopyBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
+
+.apolloAnalyseBtn {
+  width: 100%; margin-top: 14px; padding: 10px 16px;
+  background: var(--accent); color: #0D1014; border: none; border-radius: 8px;
+  font-family: var(--display); font-weight: 600; font-size: 13px; cursor: pointer;
+  transition: opacity 0.12s;
+}
+.apolloAnalyseBtn:hover { opacity: 0.88; }
+
+.apolloTranscript {
+  flex: 1; overflow-y: auto; margin: 12px 0 0;
+  font-family: var(--mono); font-size: 12px; line-height: 1.7; color: var(--text-mid);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.apolloOutputCard {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.apolloOutputEmpty { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin: 0; }
+.apolloOutputText {
+  font-size: 13px; line-height: 1.7; color: var(--text); white-space: pre-wrap; word-break: break-word;
+}
+.apolloOutputTextMono {
+  font-family: var(--mono); font-size: 12px; line-height: 1.65; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
+.apolloSavedBadge {
+  align-self: flex-start; font-family: var(--mono); font-size: 9.5px;
+  color: var(--online); border: 1px solid var(--online); border-radius: 100px;
+  padding: 2px 8px;
+}
+.apolloCallRow {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: 12px;
+}
+.apolloCallRow:last-child { border-bottom: none; }
+.apolloCallName { color: var(--text); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.apolloCallDate { font-family: var(--mono); font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
+.apolloCallViewBtn {
+  font-family: var(--mono); font-size: 10px; color: var(--accent);
+  background: none; border: none; cursor: pointer; flex-shrink: 0;
+}
+.apolloCallViewBtn:hover { text-decoration: underline; }

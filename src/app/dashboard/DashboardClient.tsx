@@ -54,7 +54,7 @@ class AudioQueue {
 }
 
 // Agents with a full page at /dashboard/<id>
-const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'DEMETER', 'HERA', 'DIANA', 'VICTORIA', 'MERCURY', 'IRIS', 'MUSE'])
+const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'DEMETER', 'HERA', 'DIANA', 'VICTORIA', 'MERCURY', 'IRIS', 'MUSE', 'APOLLO'])
 
 interface Props {
   agents: Agent[]

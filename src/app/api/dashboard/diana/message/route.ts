@@ -7,7 +7,7 @@ import {
   appendTurn,
   parseTranscript,
 } from '../../../../../../tools/diana-db'
-import { roleplayTurn } from '@/lib/diana'
+import { roleplayTurn, type ProspectProfileKey } from '@/lib/diana'
 
 const WEB_USER = 'web'
 
@@ -37,6 +37,7 @@ export async function POST(req: Request) {
     session.scenario,
     (session.difficulty as 'warm' | 'neutral' | 'tough') || 'neutral',
     mode === 'voice',
+    session.prospect_profile as ProspectProfileKey | null,
   )
 
   await appendTurn(session.id, 'diana', reply)

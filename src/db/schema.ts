@@ -169,6 +169,7 @@ export const diana_sessions = sqliteTable('diana_sessions', {
   slack_user: text('slack_user').notNull(),
   scenario: text('scenario'),                                       // objection label / persona being drilled
   difficulty: text('difficulty').notNull().default('neutral'),      // 'warm' | 'neutral' | 'tough'
+  prospect_profile: text('prospect_profile'),                       // 'drifter' | 'db_believer' | 'second_door' | 'sceptic'
   transcript_json: text('transcript_json').notNull().default('[]'), // DianaTranscriptTurn[]
   status: text('status').notNull().default('active'),               // 'active' | 'ended'
   created_at: integer('created_at').notNull(),

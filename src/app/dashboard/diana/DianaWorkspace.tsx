@@ -8,10 +8,76 @@ type Difficulty = 'warm' | 'neutral' | 'tough'
 type Phase = 'idle' | 'active' | 'ended'
 type VoiceInputMode = 'text' | 'voice'
 type SpeakState = 'idle' | 'speaking' | 'listening'
+type CallStage = 'opener' | 'fact_find' | 'pension' | 'gate' | 'close' | 'qualify'
 
 interface Message {
   role: 'user' | 'diana'
   text: string
+}
+
+interface ProfileInfo {
+  key: string
+  name: string
+  description: string
+}
+
+interface StageScore {
+  stage: string
+  label: string
+  points: number
+  maxPoints: number
+  notes: string
+}
+
+interface Deduction {
+  type: string
+  label: string
+  points: number
+}
+
+interface CallScore {
+  stages: StageScore[]
+  deductions: Deduction[]
+  total: number
+  maxTotal: number
+  summary: string
+}
+
+const STAGE_ORDER: { key: CallStage; label: string }[] = [
+  { key: 'opener', label: 'Opener' },
+  { key: 'fact_find', label: 'Fact Find' },
+  { key: 'pension', label: 'Pension' },
+  { key: 'gate', label: 'Gate' },
+  { key: 'close', label: 'Close' },
+  { key: 'qualify', label: 'Qualify' },
+]
+
+// Simple, deterministic heuristic — keyword + turn-count based. Not a Claude
+// call: this just drives a lightweight progress indicator, updated locally
+// after every turn as `messages` changes.
+function inferCallStage(messages: Message[]): CallStage {
+  const adviserTurns = messages.filter(m => m.role === 'user').length
+  if (adviserTurns === 0) return 'opener'
+
+  const allText = messages.map(m => m.text.toLowerCase()).join(' \n ')
+
+  if (
+    /\b(where are you based|five years|anything else we haven't covered|talk me through them|which is the bigger)\b/.test(allText) &&
+    adviserTurns >= 5
+  ) {
+    return 'qualify'
+  }
+  if (/\b(beginning or end of|morning or afternoon|would .* be easier|when'?s typically best|tuesday at|thursday at)\b/.test(allText)) {
+    return 'close'
+  }
+  if (/\b(sound fair|does that sound right|three things|every one of those|worth a proper look)\b/.test(allText)) {
+    return 'gate'
+  }
+  if (/\b(pension|db\b|dc\b|qrops|transfer|scheme|retire|death benefit)\b/.test(allText)) {
+    return 'pension'
+  }
+  if (adviserTurns <= 1) return 'opener'
+  return 'fact_find'
 }
 
 interface ObjStat {
@@ -98,9 +164,11 @@ export default function DianaWorkspace() {
   const [messages, setMessages] = useState<Message[]>([])
   const [difficulty, setDifficulty] = useState<Difficulty>('neutral')
   const [currentScenario, setCurrentScenario] = useState<string | null>(null)
+  const [profile, setProfile] = useState<ProfileInfo | null>(null)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [feedback, setFeedback] = useState<string | null>(null)
+  const [score, setScore] = useState<CallScore | null>(null)
+  const [scoreNote, setScoreNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -128,7 +196,7 @@ export default function DianaWorkspace() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/dashboard/diana/session').then(r => r.json() as Promise<{ session: { id: string; transcript: Message[]; difficulty: string; scenario?: string } | null }>),
+      fetch('/api/dashboard/diana/session').then(r => r.json() as Promise<{ session: { id: string; transcript: Message[]; difficulty: string; scenario?: string; profile?: ProfileInfo | null } | null }>),
       fetch('/api/dashboard/diana/performance').then(r => r.json() as Promise<{ objectionStats: ObjStat[]; sessions: SessionRecord[] }>),
     ])
       .then(([sessData, perfData]) => {
@@ -137,6 +205,7 @@ export default function DianaWorkspace() {
           setMessages(sessData.session.transcript ?? [])
           setDifficulty((sessData.session.difficulty as Difficulty) || 'neutral')
           setCurrentScenario(sessData.session.scenario ?? null)
+          setProfile(sessData.session.profile ?? null)
         }
         setObjStats(perfData.objectionStats ?? [])
         setSessions(perfData.sessions ?? [])
@@ -229,12 +298,14 @@ export default function DianaWorkspace() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ difficulty, mode: voiceMode }),
     })
-    const data = await res.json() as { session?: { transcript: Message[]; scenario?: string } }
+    const data = await res.json() as { session?: { transcript: Message[]; scenario?: string; profile?: ProfileInfo | null } }
     if (data.session) {
       const transcript = data.session.transcript ?? []
       setMessages(transcript)
       setCurrentScenario(data.session.scenario ?? null)
-      setFeedback(null)
+      setProfile(data.session.profile ?? null)
+      setScore(null)
+      setScoreNote(null)
       setPhase('active')
 
       // Speak the opening line in voice mode
@@ -294,15 +365,16 @@ export default function DianaWorkspace() {
     setError(null)
     try {
       const res = await fetch('/api/dashboard/diana/exit', { method: 'POST' })
-      const data = await res.json() as { feedback?: string; error?: string }
-      if (data.feedback) {
-        setFeedback(data.feedback)
+      const data = await res.json() as { score?: CallScore | null; note?: string; error?: string }
+      if (data.error) {
+        setError(data.error)
+      } else {
+        setScore(data.score ?? null)
+        setScoreNote(data.note ?? null)
         setPhase('ended')
         void fetch('/api/dashboard/diana/performance')
           .then(r => r.json() as Promise<{ objectionStats: ObjStat[]; sessions: SessionRecord[] }>)
           .then(d => { setObjStats(d.objectionStats ?? []); setSessions(d.sessions ?? []) })
-      } else if (data.error) {
-        setError(data.error)
       }
     } catch (e) {
       setError(String(e))
@@ -315,8 +387,10 @@ export default function DianaWorkspace() {
     await fetch('/api/dashboard/diana/session', { method: 'DELETE' })
     setPhase('idle')
     setMessages([])
-    setFeedback(null)
+    setScore(null)
+    setScoreNote(null)
     setCurrentScenario(null)
+    setProfile(null)
     setError(null)
     setMeetingBooked(false)
     setSpeakState('idle')
@@ -327,8 +401,10 @@ export default function DianaWorkspace() {
   function newSession() {
     setPhase('idle')
     setMessages([])
-    setFeedback(null)
+    setScore(null)
+    setScoreNote(null)
     setCurrentScenario(null)
+    setProfile(null)
     setError(null)
     setMeetingBooked(false)
     setSpeakState('idle')
@@ -455,6 +531,27 @@ export default function DianaWorkspace() {
           {/* ACTIVE — chat surface */}
           {phase === 'active' && (
             <div className={s.dianaChatArea}>
+              {profile && (
+                <div className={s.dianaProfileLine}>
+                  <span className={s.dianaProfileName}>Prospect: {profile.name}</span>
+                  <span className={s.dianaProfileDesc}> — {profile.description}</span>
+                </div>
+              )}
+
+              <div className={s.dianaStageBar}>
+                {STAGE_ORDER.map((st, i) => {
+                  const current = inferCallStage(messages)
+                  const currentIdx = STAGE_ORDER.findIndex(s2 => s2.key === current)
+                  const state = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'upcoming'
+                  return (
+                    <span key={st.key} className={`${s.dianaStageStep} ${s[`dianaStage_${state}`]}`}>
+                      {st.label}
+                      {i < STAGE_ORDER.length - 1 && <span className={s.dianaStageArrow}>→</span>}
+                    </span>
+                  )
+                })}
+              </div>
+
               <div className={s.dianaChatSessionHeader}>
                 {currentScenario && (
                   <span className={s.dianaScenarioBadge}>{currentScenario}</span>
@@ -574,10 +671,53 @@ export default function DianaWorkspace() {
                 </div>
               )}
 
-              {feedback && (
+              {scoreNote && !score && (
                 <div className={s.dianaChatFeedback}>
                   <span className={s.eyebrow} style={{ display: 'block', marginBottom: 10 }}>Session feedback</span>
-                  <p className={s.dianaChatFeedbackText}>{feedback}</p>
+                  <p className={s.dianaChatFeedbackText}>{scoreNote}</p>
+                </div>
+              )}
+
+              {score && (
+                <div className={s.dianaChatFeedback}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <span className={s.eyebrow}>Call scorecard</span>
+                    <span className={s.dianaScoreTotal}>{score.total} / {score.maxTotal}</span>
+                  </div>
+
+                  {profile && (
+                    <p className={s.dianaChatFeedbackText} style={{ marginBottom: 12 }}>
+                      Prospect: {profile.name} — {profile.description}
+                    </p>
+                  )}
+
+                  <div className={s.dianaStageScoreList}>
+                    {score.stages.map(st => (
+                      <div key={st.stage} className={s.dianaStageScoreRow}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span className={s.dianaStageScoreLabel}>{st.label}</span>
+                          <span className={s.dianaStageScorePoints}>{st.points} / {st.maxPoints}</span>
+                        </div>
+                        {st.notes && <p className={s.dianaStageScoreNotes}>{st.notes}</p>}
+                      </div>
+                    ))}
+                  </div>
+
+                  {score.deductions.length > 0 && (
+                    <div className={s.dianaDeductionList}>
+                      <span className={s.fpSectionLabel} style={{ display: 'block', marginBottom: 6 }}>Deductions</span>
+                      {score.deductions.map(d => (
+                        <div key={d.type} className={s.dianaDeductionRow}>
+                          <span>{d.label}</span>
+                          <span className={s.dianaDeductionPoints}>{d.points}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {score.summary && (
+                    <p className={s.dianaChatFeedbackText} style={{ marginTop: 12 }}>{score.summary}</p>
+                  )}
                 </div>
               )}
 

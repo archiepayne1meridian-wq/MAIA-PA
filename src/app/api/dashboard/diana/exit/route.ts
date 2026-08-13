@@ -1,4 +1,4 @@
-// Web adapter for ending a DIANA session and generating feedback.
+// Web adapter for ending a DIANA session and generating the 7-stage deVere scorecard.
 
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
@@ -7,8 +7,7 @@ import {
   endSession,
   parseTranscript,
 } from '../../../../../../tools/diana-db'
-import { roleplayFeedback } from '@/lib/diana'
-import { loadDianaConfig } from '@/lib/diana-handler'
+import { scoreCall, type ProspectProfileKey } from '@/lib/diana'
 
 const WEB_USER = 'web'
 
@@ -27,10 +26,15 @@ export async function POST() {
   const transcript = parseTranscript(session.transcript_json)
   const adviserTurns = transcript.filter(t => t.role === 'user').length
 
-  const config = loadDianaConfig()
-  const feedback = adviserTurns === 0
-    ? 'No exchanges to score — start a session and say a few things first.'
-    : await roleplayFeedback(transcript, config.rubric)
+  if (adviserTurns === 0) {
+    return NextResponse.json({
+      score: null,
+      turns: 0,
+      note: 'No exchanges to score — start a session and say a few things first.',
+    })
+  }
 
-  return NextResponse.json({ feedback, turns: adviserTurns })
+  const score = await scoreCall(transcript, session.prospect_profile as ProspectProfileKey | null)
+
+  return NextResponse.json({ score, turns: adviserTurns })
 }

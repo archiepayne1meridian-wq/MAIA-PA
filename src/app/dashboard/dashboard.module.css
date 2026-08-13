@@ -1294,6 +1294,37 @@
 }
 .dianaChatFeedbackText { font-size: 13px; color: var(--text-mid); line-height: 1.75; white-space: pre-wrap; }
 
+/* Prospect profile line */
+.dianaProfileLine { flex-shrink: 0; font-size: 12.5px; }
+.dianaProfileName { color: var(--accent); font-weight: 600; }
+.dianaProfileDesc { color: var(--text-dim); }
+
+/* Stage progress bar */
+.dianaStageBar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex-shrink: 0;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+}
+.dianaStageStep { display: flex; align-items: center; gap: 4px; }
+.dianaStage_upcoming { color: var(--text-dim); opacity: 0.5; }
+.dianaStage_active { color: var(--accent); font-weight: 600; }
+.dianaStage_done { color: var(--online); }
+.dianaStageArrow { color: var(--text-dim); opacity: 0.4; margin-left: 4px; }
+
+/* Post-session scorecard */
+.dianaScoreTotal { font-family: var(--mono); font-size: 18px; font-weight: 600; color: var(--accent); }
+.dianaStageScoreList { display: flex; flex-direction: column; }
+.dianaStageScoreRow { padding: 9px 0; border-bottom: 1px solid var(--hairline); }
+.dianaStageScoreRow:last-child { border-bottom: none; }
+.dianaStageScoreLabel { font-size: 12.5px; color: var(--text); }
+.dianaStageScorePoints { font-family: var(--mono); font-size: 12px; color: var(--text-mid); }
+.dianaStageScoreNotes { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; margin-top: 3px; }
+.dianaDeductionList { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.dianaDeductionRow {
+  display: flex; justify-content: space-between; gap: 8px; padding: 5px 0;
+  font-size: 11.5px; color: var(--alert);
+}
+.dianaDeductionPoints { font-family: var(--mono); flex-shrink: 0; }
+
 /* Performance intelligence column */
 .dianaObjStatList { display: flex; flex-direction: column; }
 .dianaObjStatRow {

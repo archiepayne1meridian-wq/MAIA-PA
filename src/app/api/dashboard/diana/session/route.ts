@@ -14,10 +14,15 @@ import {
   type DianaSession,
 } from '../../../../../../tools/diana-db'
 import { loadDianaConfig } from '@/lib/diana-handler'
+import { PROSPECT_PROFILES, pickRandomProfile, type ProspectProfileKey } from '@/lib/diana'
 
 const WEB_USER = 'web'
-const OPENING_LINE_TEXT = 'Hello?'
-const OPENING_LINE_VOICE = 'Hello?'
+
+function profileInfo(key: string | null) {
+  if (!key || !(key in PROSPECT_PROFILES)) return null
+  const p = PROSPECT_PROFILES[key as ProspectProfileKey]
+  return { key: p.key, name: p.name, description: p.description }
+}
 
 function serialise(s: DianaSession) {
   return {
@@ -27,6 +32,7 @@ function serialise(s: DianaSession) {
     status: s.status,
     slackUser: s.slack_user,
     transcript: parseTranscript(s.transcript_json).map(t => ({ role: t.role, text: t.text })),
+    profile: profileInfo(s.prospect_profile),
   }
 }
 
@@ -60,13 +66,18 @@ export async function POST(req: Request) {
     }
   }
 
+  // Randomly select one of the 4 deVere prospect profiles for this call.
+  const profileKey = pickRandomProfile()
+  const profile = PROSPECT_PROFILES[profileKey]
+
   const session = await startSession({
     slackUser: WEB_USER,
     scenario,
     difficulty: body.difficulty,
+    prospectProfile: profileKey,
   })
 
-  const openingLine = body.mode === 'voice' ? OPENING_LINE_VOICE : OPENING_LINE_TEXT
+  const openingLine = profile.openingLine
   await appendTurn(session.id, 'diana', openingLine)
 
   return NextResponse.json({
@@ -78,6 +89,7 @@ export async function POST(req: Request) {
       slackUser: WEB_USER,
       transcript: [{ role: 'diana', text: openingLine }],
       mode: body.mode ?? 'text',
+      profile: { key: profile.key, name: profile.name, description: profile.description },
     },
   })
 }

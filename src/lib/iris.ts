@@ -30,6 +30,7 @@ function buildSvgFallback(prompt: string): string {
 const HAIKU = 'claude-haiku-4-5-20251001'
 
 export interface IrisDraft {
+  skip?: false
   pillar: 1 | 2 | 3
   topic: string
   copy: string
@@ -40,12 +41,49 @@ export interface IrisDraft {
   search: WebSearchTrace
 }
 
-// System prompt embeds the current year server-side so Claude never has to guess
-// it from (possibly stale) training data when building the search query.
-function buildIrisSystem(): string {
-  const year = new Date().getFullYear()
-  return `You are IRIS, MAIA's LinkedIn content engine for Archie Payne — a 20-something British expat in Malta, training as a financial adviser.
+export interface IrisSkip {
+  skip: true
+  reason: string
+}
 
+// System prompt embeds the current year server-side so Claude never has to guess
+// it from (possibly stale) training data when building the search query. The
+// relevance filter only applies to Pillar 1/2 (finance content) — Pillar 3
+// (sports, culture, personal) is explicitly finance-optional per context/iris.md
+// and must never be forced through a cross-border-relevance test.
+function buildIrisSystem(pillar: 1 | 2 | 3): string {
+  const year = new Date().getFullYear()
+
+  const relevanceFilterBlock = pillar === 3 ? '' : `
+RELEVANCE FILTER — apply before drafting every post:
+Ask: "Would someone living in Switzerland with assets in another country
+think this affects them?"
+
+If YES → draft the post
+If NO → do not draft. Return { skip: true, reason: "Not relevant to target audience" }
+
+Target audience: people living in Switzerland who have money, pensions,
+property, savings or investments in another country. Any nationality.
+They are not stock pickers. They do not care about company earnings or
+sector rotation. They care about what happens to their cross-border money
+when rules change, currencies move, or governments make decisions.
+
+The goal of every post: make someone in that situation think
+"this could affect me — I should find out more."
+
+If the topic fails the filter, output ONLY {"skip": true, "reason": "..."} — a short,
+specific reason — and stop. Do not search, do not draft, do not include any other fields.
+`
+
+  const schemaLine = pillar === 3
+    ? `Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. Search, then output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON) — this is a Pillar 3 sports/culture/personal post, it never needs a finance angle and never gets skipped for relevance:
+{"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}`
+    : `Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. If the topic passes the relevance filter, search, then output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON):
+{"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}
+If the topic fails the relevance filter, output ONLY: {"skip": true, "reason": "..."}`
+
+  return `You are IRIS, MAIA's LinkedIn content engine for Archie Payne — a 20-something British expat in Malta, training as a financial adviser.
+${relevanceFilterBlock}
 Before writing, search the web for the most recent news on the given topic (last 7 days). Build the search query from the topic — expand abbreviations, add context — then always append ${year} for recency.
 Examples:
 - Topic "Fed rate decision" → search "Federal Reserve interest rate decision ${year}"
@@ -57,8 +95,7 @@ Use only current, real information found in search results. Never use training d
 
 Never include citation tags, footnotes, source markers, or inline references of any kind (e.g. <cite>, [1], (Source: ...)) in "copy" — write plain, standalone prose exactly as a person would type it, with no citation apparatus. Use search only to ground the facts, not to annotate them.
 
-Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. After searching, output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON):
-{"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}
+${schemaLine}
 
 POST FORMAT RULES — follow these exactly:
 
@@ -135,7 +172,7 @@ export async function generateDraft(
   topic: string,
   cassandraContext: string | null,
   voicePrefs: VoicePref[],
-): Promise<IrisDraft> {
+): Promise<IrisDraft | IrisSkip> {
   const prefsBlock = voicePrefs.length > 0
     ? '\n\nVoice preferences learned from previous edits:\n' +
       voicePrefs.map(p => `- ${p.preference_type}: ${p.value}`).join('\n')
@@ -153,7 +190,7 @@ export async function generateDraft(
 
   const prompt = `Write a LinkedIn post for Archie.\n\nPillar: ${pillar} — ${pillarGuide[pillar]}\nTopic: ${topic}\nSlot: ${slot} (${slot === 'morning' ? '8–9am' : '4–6pm'} CET)${contextBlock}${prefsBlock}\n\nSearch the web for this topic first, per your instructions, then output ONLY valid JSON, no markdown.`
 
-  const { text: raw, search } = await askWithWebSearch(buildIrisSystem(), prompt, 1536, HAIKU)
+  const { text: raw, search } = await askWithWebSearch(buildIrisSystem(pillar), prompt, 1536, HAIKU)
   const cleaned = extractJson(raw)
 
   let parsed: unknown
@@ -161,6 +198,13 @@ export async function generateDraft(
   catch { throw new Error(`[IRIS] generateDraft returned unparseable JSON: ${raw.slice(0, 200)}`) }
 
   const obj = parsed as Record<string, unknown>
+
+  if (obj.skip === true) {
+    const reason = typeof obj.reason === 'string' && obj.reason.trim() ? obj.reason.trim() : 'Not relevant to target audience'
+    console.log(`[iris] generateDraft(${topic}): skipped — ${reason}`)
+    return { skip: true, reason }
+  }
+
   if (typeof obj.copy !== 'string') throw new Error('[IRIS] generateDraft missing copy field')
 
   const groundedInSearch = typeof obj.groundedInSearch === 'boolean' ? obj.groundedInSearch : search.results.length > 0

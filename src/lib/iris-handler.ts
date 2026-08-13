@@ -9,6 +9,7 @@ import {
   generateImage,
   extractVoicePreferences,
   type IrisDraft,
+  type IrisSkip,
 } from './iris'
 import {
   getRecentTopics,
@@ -73,41 +74,68 @@ async function postSlackImageInThread(
 }
 
 // ─── Topic banks (from context/iris.md) ──────────────────────────────────────
+// Relevance test for every signal and topic below: "Would someone living in
+// Switzerland with assets in another country think this affects them?"
 
 const PILLAR_1_SIGNALS = [
-  'rate decision', 'interest rate', 'basis points', 'bps', 'fed funds',
-  'ecb rate', 'bank of england', 'boe rate', 'inflation', 'cpi', 'rpi',
-  'ipo', 'listing', 'floated', 'debut', 'stock market debut',
-  'earnings', 'quarterly results', 'profit warning', 'revenue miss',
-  'currency', 'exchange rate', 'gbp', 'pound fell', 'pound rose',
-  'crypto', 'bitcoin', 'btc', 'ethereum', 'eth',
-  'oil price', 'commodity', 'gold price',
-  'budget', 'tax announcement', 'recession', 'gdp',
-  'regulation', 'regulatory change', 'mfsa', 'fca ruling',
+  'inheritance tax', 'iht', 'pension death benefit',
+  'non-dom', 'non-domicile',
+  'tax residency', 'residency rules', 'residency status',
+  'double taxation', 'double tax treaty', 'tax treaty',
+  'qrops', 'annual allowance', 'pension access age', 'pension transfer',
+  'state pension', 'frozen abroad', 'triple lock', 'qualifying years',
+  'isa rules', 'isa non-resident',
+  'offshore bond',
+  'gbp/chf', 'gbp/eur', 'eur/chf', 'swiss franc', 'exchange rate',
+  'swiss tax', 'switzerland tax', 'finma',
+  'fatca', 'crs', 'common reporting standard',
+  'budget', 'autumn statement', 'spring statement',
+  'forced heirship', 'succession rules', 'estate planning', 'inheritance rules',
+  'cost of living', 'inflation',
+  'uk property abroad', 'property while abroad',
+]
+
+const PILLAR_1_TOPICS = [
+  'IHT changes — especially pension death benefits from April 2027',
+  'Non-dom rule changes and what they mean for long-term expats',
+  'Tax residency rules — when does it change, what triggers it, what are the consequences',
+  'Double taxation treaties — updates, new agreements, what they mean practically',
+  'Pension changes — QROPS rules, annual allowance, access age (55→57 in 2028)',
+  'State pension — frozen abroad rules, qualifying years, triple lock updates',
+  'ISA rules for non-UK residents — frozen, can\'t contribute, still tax-free',
+  'Offshore bond regulation changes',
+  'Currency moves — GBP/CHF, GBP/EUR, EUR/CHF — when significant enough to matter',
+  'Swiss tax changes affecting residents with foreign assets',
+  'EU/FATCA/CRS reporting changes affecting cross-border money',
+  'Political changes with direct financial implications — budgets, autumn statements, new government policies on tax or pensions',
+  'Inheritance and estate planning — forced heirship, succession rules across borders',
+  'Cost of living/inflation where it hits purchasing power of foreign-held assets',
+  'What happens to your UK property when you live abroad',
+  'The cash pile problem — expats holding too much in cash across multiple currencies',
 ]
 
 const PILLAR_2_TOPICS = [
-  'Tax residency timing and common mistakes for expats',
-  'UK pension traps for expats — QROPS, transfers, and what nobody tells you',
-  'What happens to your ISA when you leave the UK?',
-  'Currency risk and GBP/EUR moves — what expats need to think about',
-  'NHS vs private health abroad — the financial calculation nobody does',
-  'What nobody tells you about managing money abroad in year one',
-  'The Malta move — what I\'ve learned so far about expat finances',
-  'Expat emergency fund sizing — how much is enough when abroad?',
-  'Non-dom vs expat — what\'s the real difference and why does it matter?',
-  'Moving abroad: what do you wish you\'d sorted differently in year one?',
+  'Moving to Switzerland — financial things nobody tells you',
+  'Managing money across multiple currencies',
+  '"I\'ve got a pension back home I haven\'t looked at in years" — who else?',
+  'What does your adviser actually do — and can they follow you if you move again?',
+  'The wrapper problem — your ISA, GIA, pension sitting in the wrong structure',
+  'Estate planning across borders — does your will hold up in Switzerland?',
+  'The IHT tail — leaving the UK doesn\'t mean leaving the UK tax system',
+  'Swiss banking vs offshore — what\'s the difference and does it matter?',
+  'Retiring abroad — what does that actually cost and where does the money come from?',
+  '"What are you waiting for?" — the cash sitting doing nothing for years',
+  'Protection abroad — life cover, health cover, what follows you and what doesn\'t',
+  'Currency risk — earning in CHF, thinking in GBP, retiring somewhere else',
 ]
 
 const PILLAR_3_TOPICS = [
-  'The weekend\'s Premier League results — what stood out?',
-  'F1: the battle at the front and what it means for the championship',
-  'Golf\'s biggest moments — what makes a Sunday at Augusta different?',
-  'The Ryder Cup: why it\'s the most nerve-wracking event in golf',
-  'Favourite sports moments: what\'s your "where were you when" moment?',
-  'Moving to Malta: the things that surprised me most about life here',
-  'What I\'ve been reading, watching, or listening to lately',
-  'What do you do when work pressure peaks? How do you reset?',
+  'Golf — the Masters, Ryder Cup, major tournaments',
+  'Football — World Cup, Champions League, big moments',
+  'F1 — team valuations, big races, business side of sport',
+  'Moving abroad — life observations, cultural differences, things that surprised you',
+  'Personal milestones — settling in Switzerland, things you\'ve learned',
+  'Big cultural moments worth an opinion',
 ]
 
 // ─── Topic selection (deterministic) ─────────────────────────────────────────
@@ -159,7 +187,7 @@ export function selectTopic(
 
   // Step 3 — pick from topic bank for target pillar, avoiding recent
   const bankMap: Record<1 | 2 | 3, string[]> = {
-    1: [],   // Pillar 1 from topic bank — fallback if no CASSANDRA signal
+    1: PILLAR_1_TOPICS,   // fallback if no CASSANDRA signal fires
     2: PILLAR_2_TOPICS,
     3: PILLAR_3_TOPICS,
   }
@@ -204,6 +232,7 @@ export async function buildScheduledDraft(
       getTodaysBrief(),
       getSuggestedTopic(),
     ])
+    const voicePrefs = await getVoicePreferences()
 
     let selected: SelectedTopic
     if (suggestedPost) {
@@ -218,10 +247,41 @@ export async function buildScheduledDraft(
       selected = selectTopic(brief, recentTopics, lastThreePillars)
     }
 
-    const voicePrefs = await getVoicePreferences()
-    const draft: IrisDraft = await generateDraft(
+    // Relevance filter can skip a topic — fall back to the next topic in the
+    // bank, up to a few attempts, rather than force a weak/irrelevant post.
+    const MAX_ATTEMPTS = 4
+    const skipped: { topic: string; reason: string }[] = []
+    const excludedTopics = [...recentTopics]
+    let result: IrisDraft | IrisSkip = await generateDraft(
       slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs,
     )
+
+    while (result.skip && skipped.length < MAX_ATTEMPTS - 1) {
+      skipped.push({ topic: selected.topic, reason: result.reason })
+      console.log(`[iris] topic skipped (${result.reason}): "${selected.topic}" — falling back to next topic in bank`)
+      if (suggestedPost && selected.topic === suggestedPost.topic) {
+        await updatePostStatus(suggestedPost.id, 'skipped')
+      }
+      excludedTopics.push(selected.topic)
+      selected = selectTopic(brief, excludedTopics, lastThreePillars)
+      result = await generateDraft(
+        slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs,
+      )
+    }
+
+    if (result.skip) {
+      skipped.push({ topic: selected.topic, reason: result.reason })
+      const summary = skipped.map(s => `"${s.topic}" (${s.reason})`).join('; ')
+      console.log(`[iris] buildScheduledDraft: all ${skipped.length} attempts skipped by relevance filter — ${summary}`)
+      await getDb()
+        .update(activity)
+        .set({ output: `no relevant topic found — skipped: ${summary}`, status: 'success', duration_ms: Date.now() - startMs })
+        .where(eq(activity.id, rowId))
+      await postMessage(channel, `_IRIS: nothing relevant to post this ${slot} — every topic tried failed the relevance filter. Skipped rather than forcing it._`)
+      return
+    }
+
+    const draft: IrisDraft = result
     const imageUrl = await generateImage(draft.imagePrompt)
 
     const postId = await savePost({
@@ -312,13 +372,25 @@ export async function handleIrisThread(
       `\nUser feedback to apply: ${replyText}`,
     ].join('').trim()
 
-    const newDraft: IrisDraft = await generateDraft(
+    const redraftResult: IrisDraft | IrisSkip = await generateDraft(
       post.slot as 'morning' | 'evening',
       post.pillar as 1 | 2 | 3,
       post.topic,
       feedbackContext,
       voicePrefs,
     )
+
+    if (redraftResult.skip) {
+      console.log(`[iris] handleIrisThread redraft skipped (${redraftResult.reason}): "${post.topic}"`)
+      await postMessage(
+        channel,
+        `_IRIS: this redraft failed the relevance filter (${redraftResult.reason}) — original draft left unchanged._`,
+        post.slack_ts ?? undefined,
+      )
+      return
+    }
+
+    const newDraft: IrisDraft = redraftResult
 
     // Persist updated copy
     await getDb()

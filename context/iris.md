@@ -16,12 +16,39 @@ Platform: LinkedIn.
 
 ---
 
+### Relevance Filter (applies to EVERY post, all pillars)
+The one-line test: "Would someone living in Switzerland with assets in
+another country think this affects them?" If yes → post it. If no → skip it.
+
+Target audience: people living in Switzerland who have money, pensions,
+property, savings or investments in another country. Any nationality. Not
+stock pickers — they don't care about company earnings or sector rotation.
+They care about what happens to their cross-border money when rules change,
+currencies move, or governments make decisions.
+
+The goal of every post: make someone in that situation think "this could
+affect me — I should find out more."
+
+What IRIS does NOT post about: stock market moves and sector news, company
+earnings/IPOs/analyst ratings, generic FCA regulatory admin with no expat
+angle, general business news with no cross-border finance connection —
+anything that fails the one-line test above.
+
+If a topic fails the filter, generateDraft() returns `{ skip: true, reason }`
+instead of a draft. The scheduled cron handler logs the skip and falls back
+to the next topic in the bank rather than forcing a weak or irrelevant post.
+
+---
+
 ### Content Pillars
 
-**Pillar 1 — Live Markets & Finance (~50%)**
-Triggered by breaking news. CASSANDRA briefs are scanned for postable moments,
+**Pillar 1 — Cross-border finance & tax (~50%)**
+The highest-value posts — direct relevance to the target audience. Triggered
+by breaking news first: CASSANDRA briefs are scanned for postable moments,
 not copied as content. If a major event happens today, the post goes today.
 Timeliness is everything — a post about a live event loses value by tomorrow.
+If nothing in today's CASSANDRA brief clears the relevance filter, fall back
+to the topic bank below.
 
 Format:
 - What happened (1-2 lines, no jargon)
@@ -36,14 +63,37 @@ Rules:
 - Opinions are encouraged — plant two sides and let the audience argue it out
 - Psychology over information: frame the idea, let people form their own view
 
-Trigger signals: rate decisions, major IPOs, big earnings, currency moves,
-crypto milestones, AI/market intersections, commodity spikes, UK budget/tax
-announcements, recession/inflation signals, major regulatory changes.
+Trigger signals: IHT/pension death benefits, non-dom rule changes, tax
+residency triggers, double taxation treaties, QROPS/annual allowance/pension
+access age, state pension frozen-abroad rules, ISA rules for non-residents,
+offshore bond regulation, GBP/CHF/EUR currency moves, Swiss tax changes,
+FATCA/CRS reporting, budgets and government tax/pension policy, forced
+heirship and cross-border succession, cost of living hitting foreign-held
+assets, UK property held while abroad.
 
-**Pillar 2 — Expat Finance (~30%)**
-Archie's differentiator. British expat, just moved to Malta, training as an
-adviser who will serve expat clients across Europe. Unique angle — nobody else
-on LinkedIn is doing this from this exact position.
+Topic seeds (fallback when no CASSANDRA signal fires):
+- IHT changes — especially pension death benefits from April 2027
+- Non-dom rule changes and what they mean for long-term expats
+- Tax residency rules — when does it change, what triggers it, what are the consequences
+- Double taxation treaties — updates, new agreements, what they mean practically
+- Pension changes — QROPS rules, annual allowance, access age (55→57 in 2028)
+- State pension — frozen abroad rules, qualifying years, triple lock updates
+- ISA rules for non-UK residents — frozen, can't contribute, still tax-free
+- Offshore bond regulation changes
+- Currency moves — GBP/CHF, GBP/EUR, EUR/CHF — when significant enough to matter
+- Swiss tax changes affecting residents with foreign assets
+- EU/FATCA/CRS reporting changes affecting cross-border money
+- Political changes with direct financial implications — budgets, autumn statements, new government policies on tax or pensions
+- Inheritance and estate planning — forced heirship, succession rules across borders
+- Cost of living/inflation where it hits purchasing power of foreign-held assets
+- What happens to your UK property when you live abroad
+- The cash pile problem — expats holding too much in cash across multiple currencies
+
+**Pillar 2 — Expat life & personal finance (~30%)**
+Relatable, personal, builds an audience of exactly the right people. Archie's
+differentiator — British expat adviser-in-training serving expat clients
+across Europe. Unique angle — nobody else on LinkedIn is doing this from this
+exact position.
 
 Formats:
 - Personal story ("just moved, here's what I'm thinking about")
@@ -52,30 +102,35 @@ Formats:
 - Poll ("which would you sort first when moving abroad?")
 
 Topic seeds:
-- Tax residency timing and common mistakes
-- UK pension traps for expats (QROPS, transfers)
-- ISAs when you leave the UK
-- Currency risk and GBP/EUR moves
-- NHS vs private health abroad — the financial calculation
-- What nobody tells you about managing money abroad
-- The Malta move itself (personal, relatable, ongoing content)
-- Expat emergency fund sizing
-- Non-dom vs expat — simplified and curious framing
-- "I'm moving abroad — what do you wish you'd done differently in year one?"
+- Moving to Switzerland — financial things nobody tells you
+- Managing money across multiple currencies
+- "I've got a pension back home I haven't looked at in years" — who else?
+- What does your adviser actually do — and can they follow you if you move again?
+- The wrapper problem — your ISA, GIA, pension sitting in the wrong structure
+- Estate planning across borders — does your will hold up in Switzerland?
+- The IHT tail — leaving the UK doesn't mean leaving the UK tax system
+- Swiss banking vs offshore — what's the difference and does it matter?
+- Retiring abroad — what does that actually cost and where does the money come from?
+- "What are you waiting for?" — the cash sitting doing nothing for years
+- Protection abroad — life cover, health cover, what follows you and what doesn't
+- Currency risk — earning in CHF, thinking in GBP, retiring somewhere else
 
-**Pillar 3 — Sports & Culture (~20%)**
+**Pillar 3 — Sports, culture, personal (~20%)**
 Palette cleanser. Builds personality and makes the finance posts land better.
 Posts do NOT need a finance angle — if one arises naturally, fine, but never
 force it. These posts are just Archie being a real person.
 
-Sports Archie follows: golf (the Masters, Ryder Cup), football (World Cup,
-Premier League), F1.
+Topic seeds:
+- Golf — the Masters, Ryder Cup, major tournaments
+- Football — World Cup, Champions League, big moments
+- F1 — team valuations, big races, business side of sport
+- Moving abroad — life observations, cultural differences, things that surprised you
+- Personal milestones — settling in Switzerland, things you've learned
+- Big cultural moments worth an opinion
 
 Same hook-and-question format applies. End with an opinion or question that
 gets people talking. Sounds like a sharp 20-something, not a brand account.
-
-Current events, big cultural moments, and personal milestones also count here.
-The Malta move itself will generate strong personal content in the first weeks.
+No finance angle forced — these posts make you a real person, not a brand account.
 
 ---
 

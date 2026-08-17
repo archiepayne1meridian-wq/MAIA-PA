@@ -4,16 +4,19 @@ import { study_cards, study_reviews, quiz_sessions, mcq_attempts } from '@/db/sc
 import { sm2, GRADE_QUALITY } from './sm2'
 
 export type Grade = keyof typeof GRADE_QUALITY
+export type Track = 'qualification' | 'products'
 
 export interface CardInput {
   module: string
   front: string
   back: string
+  track?: Track
 }
 
 export interface QuizSessionInput {
   modules: string[]
   questions: MCQQuestion[]
+  track?: Track
 }
 
 export interface MCQQuestion {
@@ -55,16 +58,17 @@ export async function addCards(cards: CardInput[]): Promise<void> {
       due_at: now,
       suspended: 0,
       created_at: now,
+      track: card.track ?? 'qualification',
     }).run()
   }
 }
 
-export async function getDueCards(limit: number) {
+export async function getDueCards(limit: number, track: Track = 'qualification') {
   const now = Math.floor(Date.now() / 1000)
   return getDb()
     .select()
     .from(study_cards)
-    .where(and(lte(study_cards.due_at, now), eq(study_cards.suspended, 0)))
+    .where(and(lte(study_cards.due_at, now), eq(study_cards.suspended, 0), eq(study_cards.track, track)))
     .orderBy(study_cards.due_at)
     .limit(limit)
 }
@@ -112,19 +116,19 @@ export async function applyReview(cardId: string, grade: Grade): Promise<{ inter
   return { intervalDays: result.intervalDays }
 }
 
-export async function getMaterialForModule(module: string): Promise<string> {
+export async function getMaterialForModule(module: string, track: Track = 'qualification'): Promise<string> {
   const cards = await getDb()
     .select({ front: study_cards.front, back: study_cards.back })
     .from(study_cards)
-    .where(and(eq(study_cards.module, module), eq(study_cards.suspended, 0)))
+    .where(and(eq(study_cards.module, module), eq(study_cards.suspended, 0), eq(study_cards.track, track)))
   return cards.map(c => `Q: ${c.front}\nA: ${c.back}`).join('\n\n')
 }
 
-export async function getModulesWithCards(): Promise<string[]> {
+export async function getModulesWithCards(track: Track = 'qualification'): Promise<string[]> {
   const rows = await getDb()
     .selectDistinct({ module: study_cards.module })
     .from(study_cards)
-    .where(eq(study_cards.suspended, 0))
+    .where(and(eq(study_cards.suspended, 0), eq(study_cards.track, track)))
   return rows.map(r => r.module)
 }
 
@@ -139,6 +143,7 @@ export async function saveQuizSession(input: QuizSessionInput): Promise<string> 
     score: 0,
     total: input.questions.length,
     created_at: now,
+    track: input.track ?? 'qualification',
   })
   return id
 }
@@ -193,12 +198,12 @@ export async function completeQuizSession(sessionId: string): Promise<void> {
     .where(eq(quiz_sessions.id, sessionId))
 }
 
-export async function getProgress(): Promise<ProgressStats> {
+export async function getProgress(track: Track = 'qualification'): Promise<ProgressStats> {
   const db = getDb()
   const now = Math.floor(Date.now() / 1000)
   const mastered21dThreshold = now - 21 * 86400
 
-  const allCards = await db.select({ interval_days: study_cards.interval_days }).from(study_cards).where(eq(study_cards.suspended, 0))
+  const allCards = await db.select({ interval_days: study_cards.interval_days }).from(study_cards).where(and(eq(study_cards.suspended, 0), eq(study_cards.track, track)))
   const totalCards = allCards.length
   const masteredCards = allCards.filter(c => c.interval_days >= 21).length
   const masteryPct = totalCards > 0 ? Math.round((masteredCards / totalCards) * 100) : 0
@@ -206,7 +211,7 @@ export async function getProgress(): Promise<ProgressStats> {
   const dueRows = await db
     .select({ id: study_cards.id })
     .from(study_cards)
-    .where(and(lte(study_cards.due_at, now), eq(study_cards.suspended, 0)))
+    .where(and(lte(study_cards.due_at, now), eq(study_cards.suspended, 0), eq(study_cards.track, track)))
   const dueToday = dueRows.length
 
   // Streak: count consecutive days (UTC) with at least one review, going back from today
@@ -226,7 +231,7 @@ export async function getProgress(): Promise<ProgressStats> {
   const lastSessions = await db
     .select({ score: quiz_sessions.score, total: quiz_sessions.total })
     .from(quiz_sessions)
-    .where(sql`${quiz_sessions.completed_at} IS NOT NULL`)
+    .where(and(sql`${quiz_sessions.completed_at} IS NOT NULL`, eq(quiz_sessions.track, track)))
     .orderBy(sql`${quiz_sessions.completed_at} DESC`)
     .limit(1)
   const lastQuizScore = lastSessions[0] ?? null
@@ -234,11 +239,16 @@ export async function getProgress(): Promise<ProgressStats> {
   return { totalCards, masteredCards, masteryPct, dueToday, streakDays, lastQuizScore }
 }
 
-export async function getWeaknessReport(days: number): Promise<WeaknessEntry[]> {
+export async function getWeaknessReport(days: number, track: Track = 'qualification'): Promise<WeaknessEntry[]> {
   const db = getDb()
   const since = Math.floor(Date.now() / 1000) - days * 86400
 
-  // MCQ accuracy per module
+  const cardModules: Record<string, string> = {}
+  const allCardsForLapse = await db.select({ id: study_cards.id, module: study_cards.module }).from(study_cards).where(eq(study_cards.track, track))
+  for (const c of allCardsForLapse) cardModules[c.id] = c.module
+  const trackModuleNames = new Set(Object.values(cardModules))
+
+  // MCQ accuracy per module — filtered to modules that belong to this track
   const attempts = await db
     .select({
       module: mcq_attempts.module,
@@ -249,6 +259,7 @@ export async function getWeaknessReport(days: number): Promise<WeaknessEntry[]> 
 
   const mcqByModule: Record<string, { correct: number; total: number }> = {}
   for (const a of attempts) {
+    if (!trackModuleNames.has(a.module)) continue
     if (!mcqByModule[a.module]) mcqByModule[a.module] = { correct: 0, total: 0 }
     mcqByModule[a.module].total++
     if (a.correct) mcqByModule[a.module].correct++
@@ -262,10 +273,6 @@ export async function getWeaknessReport(days: number): Promise<WeaknessEntry[]> 
     })
     .from(study_reviews)
     .where(gte(study_reviews.reviewed_at, since))
-
-  const cardModules: Record<string, string> = {}
-  const allCardsForLapse = await db.select({ id: study_cards.id, module: study_cards.module }).from(study_cards)
-  for (const c of allCardsForLapse) cardModules[c.id] = c.module
 
   const lapseByModule: Record<string, { lapses: number; total: number }> = {}
   for (const r of recentReviews) {

@@ -2,7 +2,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
-import { saveQuizSession, getModulesWithCards, getMaterialForModule } from '../../../../../../../tools/study-db'
+import { saveQuizSession, getModulesWithCards, getMaterialForModule, type Track } from '../../../../../../../tools/study-db'
 import { generateMCQs } from '@/lib/athena'
 
 export async function POST(req: Request) {
@@ -10,8 +10,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json().catch(() => ({})) as { modules?: string[]; size?: number }
-  const availableModules = await getModulesWithCards()
+  const body = await req.json().catch(() => ({})) as { modules?: string[]; size?: number; track?: Track }
+  const track: Track = body.track ?? 'qualification'
+  const availableModules = await getModulesWithCards(track)
   const modules = body.modules?.length ? body.modules.filter(m => availableModules.includes(m)) : availableModules
   const size = body.size ?? 20
 
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
 
   const materialByModule: Record<string, string> = {}
   for (const m of modules) {
-    materialByModule[m] = await getMaterialForModule(m)
+    materialByModule[m] = await getMaterialForModule(m, track)
   }
 
   let questions: Awaited<ReturnType<typeof generateMCQs>>['questions']
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'No questions generated — material may be too thin' }, { status: 422 })
   }
 
-  const sessionId = await saveQuizSession({ modules, questions })
+  const sessionId = await saveQuizSession({ modules, questions, track })
 
   return NextResponse.json({
     sessionId,

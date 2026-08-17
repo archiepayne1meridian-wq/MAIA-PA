@@ -37,6 +37,7 @@ export const study_cards = sqliteTable('study_cards', {
   suspended: integer('suspended').notNull().default(0),
   created_at: integer('created_at').notNull(),
   last_reviewed_at: integer('last_reviewed_at'),
+  track: text('track').notNull().default('qualification'),   // 'qualification' | 'products'
 })
 
 export const study_reviews = sqliteTable('study_reviews', {
@@ -57,6 +58,7 @@ export const quiz_sessions = sqliteTable('quiz_sessions', {
   total: integer('total').notNull(),
   created_at: integer('created_at').notNull(),
   completed_at: integer('completed_at'),
+  track: text('track').notNull().default('qualification'),   // 'qualification' | 'products'
 })
 
 export const mcq_attempts = sqliteTable('mcq_attempts', {

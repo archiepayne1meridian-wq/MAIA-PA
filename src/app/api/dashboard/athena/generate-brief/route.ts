@@ -13,6 +13,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({})) as {
     module?: string
     content?: string
+    track?: 'qualification' | 'products'
   }
 
   if (!body.content?.trim()) {
@@ -20,15 +21,24 @@ export async function POST(req: Request) {
   }
 
   const module_ = body.module ?? 'General'
-  const systemPrompt = `You are ATHENA, a CISI exam study coach. The user provides raw notes or content from a CISI module. Your job is to synthesise a concise, structured study brief that the student can paste into Google NotebookLM or their flashcard app.
+  const isProducts = body.track === 'products'
+  const roleLine = isProducts
+    ? 'You are ATHENA, deVere\'s BDA product-training coach. The user provides raw notes or content from deVere product training material. Your job is to synthesise a concise, structured study brief that the trainee can paste into Google NotebookLM or their flashcard app.'
+    : 'You are ATHENA, a CISI exam study coach. The user provides raw notes or content from a CISI module. Your job is to synthesise a concise, structured study brief that the student can paste into Google NotebookLM or their flashcard app.'
+  const trapLine = isProducts
+    ? 'Emphasise definitions, key figures, and the exact BDA red lines (what never to say to a prospect)'
+    : 'Emphasise definitions, key figures, regulatory distinctions, and exam traps'
+  const tipLabel = isProducts ? 'Call tip' : 'Exam tip'
+
+  const systemPrompt = `${roleLine}
 
 Format:
 - Start with a clear heading: "## ${module_} — Key Concepts"
 - Use short bullet points grouped under sub-headings
-- Emphasise definitions, key figures, regulatory distinctions, and exam traps
+- ${trapLine}
 - Maximum 400 words
 - Plain text only (no markdown code blocks, no asterisks for bold — use UPPERCASE for emphasis if needed)
-- End with a 2-sentence "Exam tip:" reminder
+- End with a 2-sentence "${tipLabel}:" reminder
 
 Do not add preamble. Output the brief directly.`
 

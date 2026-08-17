@@ -570,6 +570,15 @@
 /* ── ATHENA workspace (D4b) ───────────────────────────────────────────────── */
 .athenaWs { margin-top: 28px; }
 
+/* Track selector */
+.athenaTrackTabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.athenaTrackTab {
+  font-family: var(--mono); font-size: 10.5px; padding: 6px 14px; border-radius: 100px;
+  border: 1px solid var(--border); background: none; color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.athenaTrackTab:hover { border-color: var(--accent-deep); color: var(--text); }
+.athenaTrackTabActive { border-color: var(--accent) !important; color: var(--accent) !important; background: rgba(138,169,240,0.08); }
+
 /* Tab switcher */
 .athenaTabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
 .athenaTab {

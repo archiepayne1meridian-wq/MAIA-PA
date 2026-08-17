@@ -127,6 +127,13 @@
       "when": 1786631411872,
       "tag": "0017_pretty_black_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1786946744876,
+      "tag": "0018_premium_steve_rogers",
+      "breakpoints": true
     }
   ]
 }

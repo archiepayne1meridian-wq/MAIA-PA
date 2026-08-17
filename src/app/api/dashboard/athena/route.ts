@@ -3,26 +3,29 @@ import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { getDb } from '@/db'
 import { study_cards, study_reviews, quiz_sessions, mcq_attempts } from '@/db/schema'
 import { desc, gte, lte, and, eq, count } from 'drizzle-orm'
+import type { Track } from '../../../../../tools/study-db'
 
 function todayStartSecs() {
   const d = new Date(); d.setHours(0, 0, 0, 0)
   return Math.floor(d.getTime() / 1000)
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const track = (new URL(req.url).searchParams.get('track') as Track | null) ?? 'qualification'
   const db = getDb()
   const tStart = todayStartSecs()
   const endOfToday = tStart + 86400
   const thirtyAgo = tStart - 30 * 86400
 
-  // All cards by module
+  // All cards by module, scoped to this track
   const allCards = await db
     .select({ module: study_cards.module, due_at: study_cards.due_at, suspended: study_cards.suspended })
     .from(study_cards)
+    .where(eq(study_cards.track, track))
 
   const moduleMap = new Map<string, { total: number; due: number }>()
   for (const c of allCards) {
@@ -38,18 +41,21 @@ export async function GET() {
     .from(study_reviews)
     .where(gte(study_reviews.reviewed_at, thirtyAgo))
 
-  // Map card_id → module
+  // Map card_id → module, scoped to this track (study_reviews has no track column,
+  // so a review only counts here if its card belongs to the requested track)
   const cardModuleRows = await db
     .select({ id: study_cards.id, module: study_cards.module })
     .from(study_cards)
+    .where(eq(study_cards.track, track))
   const cardModule = new Map(cardModuleRows.map(r => [r.id, r.module]))
 
   const moduleMastery = new Map<string, { total: number; good: number }>()
   let totalReviews = 0
   let goodReviews = 0
   for (const r of recentReviews) {
+    const mod = cardModule.get(r.card_id)
+    if (!mod) continue
     totalReviews++
-    const mod = cardModule.get(r.card_id) ?? 'Unknown'
     const entry = moduleMastery.get(mod) ?? { total: 0, good: 0 }
     entry.total++
     if (r.quality >= 4) { entry.good++; goodReviews++ }
@@ -58,10 +64,12 @@ export async function GET() {
 
   const masteryPct = totalReviews > 0 ? Math.round(goodReviews / totalReviews * 100) : 0
 
-  // Reviews today
-  const [todayRevResult] = await db
-    .select({ n: count() }).from(study_reviews).where(gte(study_reviews.reviewed_at, tStart))
-  const reviewedToday = todayRevResult?.n ?? 0
+  // Reviews today, scoped to this track the same way
+  const todayReviewRows = await db
+    .select({ card_id: study_reviews.card_id })
+    .from(study_reviews)
+    .where(gte(study_reviews.reviewed_at, tStart))
+  const reviewedToday = todayReviewRows.filter(r => cardModule.has(r.card_id)).length
 
   // Build modules array
   const modules = Array.from(moduleMap.entries()).map(([name, { total, due }]) => {
@@ -85,7 +93,7 @@ export async function GET() {
       created_at: quiz_sessions.created_at,
     })
     .from(quiz_sessions)
-    .where(lte(quiz_sessions.completed_at, endOfToday))
+    .where(and(lte(quiz_sessions.completed_at, endOfToday), eq(quiz_sessions.track, track)))
     .orderBy(desc(quiz_sessions.completed_at))
     .limit(5)
 

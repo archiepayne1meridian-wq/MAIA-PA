@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { getDb } from '@/db'
 import { quiz_sessions } from '@/db/schema'
-import { desc, isNotNull } from 'drizzle-orm'
+import { desc, isNotNull, and, eq } from 'drizzle-orm'
+import type { Track } from '../../../../../../tools/study-db'
 
-export async function GET() {
+export async function GET(req: Request) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const track = (new URL(req.url).searchParams.get('track') as Track | null) ?? 'qualification'
   const db = getDb()
   const rows = await db
     .select({
@@ -19,7 +21,7 @@ export async function GET() {
       completed_at: quiz_sessions.completed_at,
     })
     .from(quiz_sessions)
-    .where(isNotNull(quiz_sessions.completed_at))
+    .where(and(isNotNull(quiz_sessions.completed_at), eq(quiz_sessions.track, track)))
     .orderBy(desc(quiz_sessions.completed_at))
     .limit(20)
 

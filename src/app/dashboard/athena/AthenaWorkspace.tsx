@@ -57,12 +57,21 @@ interface SessionPoint {
 type Mode = 'flashcard' | 'mcq'
 type CardPhase = 'loading' | 'front' | 'back' | 'done'
 type QuizPhase = 'loading_modules' | 'idle' | 'starting' | 'question' | 'answered' | 'complete'
+type Track = 'qualification' | 'products'
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const
+
+const TRACKS: { key: Track; label: string }[] = [
+  { key: 'qualification', label: 'Qualification' },
+  { key: 'products', label: 'deVere Products' },
+]
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AthenaWorkspace() {
+  // ── Track state ────────────────────────────────────────────────────────────
+  const [track, setTrack] = useState<Track>('qualification')
+
   // ── Study column state (preserved exactly) ────────────────────────────────
   const [mode, setMode] = useState<Mode>('flashcard')
   const [error, setError] = useState<string | null>(null)
@@ -101,22 +110,38 @@ export default function AthenaWorkspace() {
   const [progressSessions, setProgressSessions] = useState<SessionPoint[]>([])
   const [modSortKey, setModSortKey] = useState<'mastery' | 'due' | 'name'>('mastery')
 
-  // ── Bootstrap ─────────────────────────────────────────────────────────────
+  // ── Bootstrap / track switch ─────────────────────────────────────────────
   useEffect(() => {
-    void loadDueCard()
-    void loadModules()
-    void fetch('/api/dashboard/athena').then(r => r.json()).then(d => setProgressData(d as ProgressData))
-    void fetch('/api/dashboard/athena/progress').then(r => r.json()).then(d => {
+    void loadDueCard(track)
+    void loadModules(track)
+    void loadProgress(track)
+  }, [track])
+
+  function loadProgress(t: Track) {
+    setProgressData(null)
+    void fetch(`/api/dashboard/athena?track=${t}`).then(r => r.json()).then(d => setProgressData(d as ProgressData))
+    void fetch(`/api/dashboard/athena/progress?track=${t}`).then(r => r.json()).then(d => {
       setProgressSessions((d as { sessions: SessionPoint[] }).sessions ?? [])
     })
-  }, [])
+  }
 
-  async function loadDueCard() {
+  function switchTrack(t: Track) {
+    if (t === track) return
+    setTrack(t)
+    // Reset all per-track UI state — the effect above reloads due card / modules / progress for the new track.
+    setMode('flashcard')
+    resetQuiz()
+    setBriefModule(null)
+    setBrief(null)
+    setBriefMsg(null)
+  }
+
+  async function loadDueCard(t: Track = track) {
     setCardPhase('loading')
     setScheduledDays(null)
     setError(null)
     try {
-      const data = await fetch('/api/dashboard/athena/cards/due').then(r => r.json()) as { card: StudyCard | null }
+      const data = await fetch(`/api/dashboard/athena/cards/due?track=${t}`).then(r => r.json()) as { card: StudyCard | null }
       setCard(data.card)
       setCardPhase(data.card ? 'front' : 'done')
     } catch (e) {
@@ -125,9 +150,9 @@ export default function AthenaWorkspace() {
     }
   }
 
-  async function loadModules() {
+  async function loadModules(t: Track = track) {
     try {
-      const data = await fetch('/api/dashboard/athena/modules').then(r => r.json()) as { modules: string[] }
+      const data = await fetch(`/api/dashboard/athena/modules?track=${t}`).then(r => r.json()) as { modules: string[] }
       setModules(data.modules)
       setSelectedModules(data.modules)
       setQuizPhase('idle')
@@ -148,7 +173,7 @@ export default function AthenaWorkspace() {
       const data = await fetch('/api/dashboard/athena/grade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cardId: card.id, grade }),
+        body: JSON.stringify({ cardId: card.id, grade, track }),
       }).then(r => r.json()) as { intervalDays: number; nextCard: StudyCard | null }
       setScheduledDays(data.intervalDays)
       setTimeout(() => {
@@ -175,7 +200,7 @@ export default function AthenaWorkspace() {
       const data = await fetch('/api/dashboard/athena/quiz/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modules: selectedModules }),
+        body: JSON.stringify({ modules: selectedModules, track }),
       }).then(r => r.json()) as { sessionId: string; question: MCQQuestion; qIndex: number; total: number }
       setSessionId(data.sessionId)
       setCurrentQ(data.question)
@@ -258,7 +283,7 @@ export default function AthenaWorkspace() {
       const data = await fetch('/api/dashboard/athena/generate-brief', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ module: briefModule ?? 'General', content: briefContent }),
+        body: JSON.stringify({ module: briefModule ?? 'General', content: briefContent, track }),
       }).then(r => r.json()) as { title?: string; body?: string; error?: string }
       if (data.body) {
         setBrief({ title: data.title ?? 'Study Brief', body: data.body })
@@ -325,7 +350,11 @@ export default function AthenaWorkspace() {
             <span className={s.fpSectionLabel}>Your notes</span>
             <textarea
               className={s.athenaTextInput}
-              placeholder="Paste notes, chapter text, or key points here…"
+              placeholder={
+                track === 'products'
+                  ? 'Paste deVere product notes or training material — ATHENA will generate a study brief and flashcard seeds'
+                  : 'Paste notes, chapter text, or key points here…'
+              }
               value={briefContent}
               onChange={e => setBriefContent(e.target.value)}
             />
@@ -369,7 +398,7 @@ export default function AthenaWorkspace() {
                     setTimeout(() => setBriefAdded(false), 2000)
                   }}
                 >
-                  {briefAdded ? '✓ Added' : 'Add to ATHENA Deck'}
+                  {briefAdded ? '✓ Added' : track === 'products' ? 'Add to deVere Products Deck' : 'Add to ATHENA Deck'}
                 </button>
               </div>
               {briefAdded && <span className={s.athenaBriefGenMsg}>Brief saved to deck.</span>}
@@ -383,6 +412,19 @@ export default function AthenaWorkspace() {
 
             <div className={s.fpColHead}>
               <div className={s.fpColTitle}>Interactive Study</div>
+            </div>
+
+            {/* Track selector */}
+            <div className={s.athenaTrackTabs}>
+              {TRACKS.map(t => (
+                <button
+                  key={t.key}
+                  className={`${s.athenaTrackTab} ${track === t.key ? s.athenaTrackTabActive : ''}`}
+                  onClick={() => switchTrack(t.key)}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
 
             {/* Tab switcher */}

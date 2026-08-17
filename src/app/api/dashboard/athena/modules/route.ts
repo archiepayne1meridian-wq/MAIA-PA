@@ -2,13 +2,14 @@
 
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
-import { getModulesWithCards } from '../../../../../../tools/study-db'
+import { getModulesWithCards, type Track } from '../../../../../../tools/study-db'
 
-export async function GET() {
+export async function GET(req: Request) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const modules = await getModulesWithCards()
+  const track = (new URL(req.url).searchParams.get('track') as Track | null) ?? 'qualification'
+  const modules = await getModulesWithCards(track)
   return NextResponse.json({ modules })
 }

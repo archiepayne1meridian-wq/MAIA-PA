@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
+import { sql } from 'drizzle-orm'
 
 export const approvals = sqliteTable('approvals', {
   id: text('id').primaryKey(),
@@ -223,6 +224,16 @@ export const muse_pending = sqliteTable('muse_pending', {
   status: text('status').notNull().default('awaiting'),  // awaiting/approved/discarded
   slack_ts: text('slack_ts'),                             // thread anchor for confirm/discard flow
   created_at: integer('created_at').notNull(),
+})
+
+export const mercury_templates = sqliteTable('mercury_templates', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  category: text('category').notNull(),   // 'booking' | 'reminder' | 'follow_up' | 'thank_you' | 'general'
+  medium: text('medium').notNull(),       // 'email' | 'whatsapp' | 'imessage'
+  description: text('description').notNull(),
+  system_prompt_addition: text('system_prompt_addition').notNull(),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
 })
 
 export const mercury_drafts = sqliteTable('mercury_drafts', {

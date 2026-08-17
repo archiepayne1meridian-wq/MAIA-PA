@@ -134,6 +134,13 @@
       "when": 1786946744876,
       "tag": "0018_premium_steve_rogers",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1786975922049,
+      "tag": "0019_early_captain_america",
+      "breakpoints": true
     }
   ]
 }

@@ -8,10 +8,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { medium, context, incomingMessage } = await req.json().catch(() => ({})) as {
+  const { medium, context, incomingMessage, templateAddition } = await req.json().catch(() => ({})) as {
     medium?: string
     context?: string
     incomingMessage?: string
+    templateAddition?: string
   }
 
   if (!medium || !context) {
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await generateDraft(medium as MercuryMedium, context, incomingMessage)
+    const result = await generateDraft(medium as MercuryMedium, context, incomingMessage, undefined, templateAddition)
     const id = await saveDraft(medium, context, result.body, incomingMessage)
     return NextResponse.json({ id, subject: result.subject, body: result.body, medium, status: 'draft' })
   } catch (err) {

@@ -2,7 +2,22 @@
 
 import { desc, gte, eq } from 'drizzle-orm'
 import { getDb } from '@/db'
-import { mercury_drafts } from '@/db/schema'
+import { mercury_drafts, mercury_templates } from '@/db/schema'
+
+export interface MercuryTemplate {
+  id: string
+  name: string
+  category: string
+  medium: string
+  description: string
+  system_prompt_addition: string
+  created_at: number
+}
+
+export async function getAllTemplates(): Promise<MercuryTemplate[]> {
+  const rows = await getDb().select().from(mercury_templates).orderBy(mercury_templates.created_at)
+  return rows as MercuryTemplate[]
+}
 
 export interface MercuryDraft {
   id: string

@@ -23,6 +23,7 @@ export async function generateDraft(
   context: string,
   incoming?: string,
   feedback?: string,
+  templateAddition?: string,
 ): Promise<MercuryDraftResult> {
   const prefs = await getVoicePreferences()
 
@@ -30,6 +31,8 @@ export async function generateDraft(
     ? '\nVoice preferences from past refinements (apply these):\n' +
       prefs.map(p => `- ${p.preference_type}: ${p.value}`).join('\n')
     : ''
+
+  const templateLines = templateAddition ? `\n${templateAddition}` : ''
 
   const system = `You are MERCURY, a professional message drafting assistant for Archie Payne — a trainee financial adviser at deVere Group, relocating to Malta, serving expat clients across Europe.
 
@@ -43,7 +46,7 @@ Voice rules:
 - Warm but professional regardless of medium
 - Concise — says what needs to be said, no padding
 - Never invents anything not given in the context
-- Replies go to: prospects, colleagues, clients, seminar attendees, referrals — all professional${prefLines}`
+- Replies go to: prospects, colleagues, clients, seminar attendees, referrals — all professional${prefLines}${templateLines}`
 
   const lines: string[] = [`Medium: ${medium}`, `Context: ${context}`]
   if (incoming) lines.push(`Incoming message to reply to:\n${incoming}`)

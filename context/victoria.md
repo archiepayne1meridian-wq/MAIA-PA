@@ -5,23 +5,23 @@
 > never client names or personal data.
 
 ## Metrics to track (the end-of-day tally)
-- calls            # dials made
-- connects         # actual conversations reached
-- meetings_booked  # appointments set
-- meetings_held    # appointments that happened
-- follow_ups       # follow-up actions done
-- new_prospects    # new leads added to the pipeline
-- active_clients   # how many clients you're currently working with (a count, not names)
+- prospects_sourced   # new prospects sourced into the pipeline
+- green_prospects     # of those, confirmed contactable (a working number) — "green"
+- calls               # dials made
+- connects            # calls that connect / get answered
+- meetings_booked     # appointments set
+- meetings_sat        # appointments that actually happened ("sat" with the prospect)
 
-## Weekly targets (optional — leave blank to skip target tracking)
-# Set a number to have VICTORIA flag "below target" / "on track" in the scorecard.
-- calls: 
-- connects: 
-- meetings_booked: 
-- meetings_held: 
-- follow_ups: 
-- new_prospects: 
-- active_clients: 
+## Targets
+# Format: "- metric: DAILY / WEEKLY" — leave either side blank if it isn't tracked at that period.
+# VICTORIA computes connect rate, booking rate, sit rate, and green rate herself from these —
+# never enter a ratio directly.
+- prospects_sourced: / 100
+- green_prospects: /              # no fixed target — maximise the % of sourced prospects that are green
+- calls: 100 /
+- connects: 50 /
+- meetings_booked: 2 / 10
+- meetings_sat: / 5
 
 ## Timing
 - nudge_time: 18:00 Europe/London   # end-of-day tally prompt, weekdays

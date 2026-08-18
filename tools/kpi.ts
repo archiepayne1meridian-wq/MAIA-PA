@@ -27,6 +27,14 @@ export interface TargetItem {
 
 export type TrendDirection = 'up' | 'down' | 'flat'
 
+export interface RatioItem {
+  key: string
+  label: string
+  numerator: number
+  denominator: number
+  value: number | null  // percentage, one decimal place; null when denominator is 0 (never divide by zero)
+}
+
 // Sum all metrics across a set of daily log entries.
 // Missing keys in a log are treated as 0 — partial tallies are fine.
 export function weeklyTotals(logs: DailyMetrics[]): WeeklyTotals {
@@ -111,4 +119,26 @@ export function trend(
   if (changePct > thresholdPct) return 'up'
   if (changePct < -thresholdPct) return 'down'
   return 'flat'
+}
+
+// Derived funnel ratios — connect rate, booking rate, sit rate, green rate.
+// Always calculated here from raw totals; never a value a user enters directly.
+// Missing metrics are treated as 0. A zero denominator yields value=null (not 0%, not Infinity).
+export function computeRatios(totals: WeeklyTotals): RatioItem[] {
+  const pct = (numerator: number, denominator: number): number | null =>
+    denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : null
+
+  const calls = totals.calls ?? 0
+  const connects = totals.connects ?? 0
+  const meetingsBooked = totals.meetings_booked ?? 0
+  const meetingsSat = totals.meetings_sat ?? 0
+  const prospectsSourced = totals.prospects_sourced ?? 0
+  const greenProspects = totals.green_prospects ?? 0
+
+  return [
+    { key: 'connect_rate', label: 'Connect rate', numerator: connects, denominator: calls, value: pct(connects, calls) },
+    { key: 'booking_rate', label: 'Booking rate', numerator: meetingsBooked, denominator: connects, value: pct(meetingsBooked, connects) },
+    { key: 'sit_rate', label: 'Sit rate', numerator: meetingsSat, denominator: meetingsBooked, value: pct(meetingsSat, meetingsBooked) },
+    { key: 'green_rate', label: 'Green rate', numerator: greenProspects, denominator: prospectsSourced, value: pct(greenProspects, prospectsSourced) },
+  ]
 }

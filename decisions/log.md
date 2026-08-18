@@ -261,3 +261,15 @@ Supportive response wording approved.
 ## 2026-08-13 — APOLLO Step 2 (MUSE auto-commit decision reversed)
 
 **Decision (human):** Archie reversed the 2026-08-12 call on MUSE saves — Step 2 now uses `saveEntry()` directly with `status: 'active'` for all 3 outputs (transcript, advisor brief, client email), auto-committing to `muse_entries` with no Approvals-queue review step. Reasoning given: these are structured outputs from a known source (APOLLO itself), not unvetted external content — matches the exception language already written into `context/apollo.md`. Implementation follows this instruction exactly; the review-queue routing built for the original decision was not shipped.
+
+---
+
+## 2026-08-17 — VICTORIA funnel model replaced
+
+**Context:** VICTORIA previously tracked a generic 7-metric activity list (calls, connects, meetings_booked, meetings_held, follow_ups, new_prospects, active_clients) with a single flat weekly target per metric. Archie specified the exact deVere BDA funnel to wire in its place: prospects_sourced (100/wk), green_prospects (contactable — maximise %, no fixed target), calls (100/day), connects (~50/day), meetings_booked (2/day, 10/wk), meetings_sat (5/wk) — plus three derived ratios (connect rate, booking rate, sit rate) that must always be calculated server-side, never entered manually.
+
+**Decision:** Replaced the metric set outright rather than adding alongside the old one — "wire exactly these metrics" read as the definitive funnel, not an addition. Checked `kpi_logs`/`kpi_weekly` first: only one trivial test tally existed (`calls:7, meetings_booked:2`, no weekly scorecards), so nothing real was at risk. `follow_ups`/`new_prospects`/`active_clients` and the `meetings_held` key are no longer tracked going forward; any historical rows under those keys are untouched in the DB but no longer surfaced.
+
+**Architecture change:** the existing config format only supported one weekly target per metric. Since the funnel mixes daily-only (calls, connects), weekly-only (prospects_sourced, meetings_sat), and both (meetings_booked) targets, `VictoriaConfig.targets` changed from `Record<string, number|null>` to `Record<string, {daily, weekly}>`, parsed from a new `context/victoria.md` format (`- metric: DAILY / WEEKLY`). `tools/kpi.ts` gained `computeRatios()` (pure, unit-tested) for the four derived percentages — green_rate was added alongside the three named ratios since "maximise %" implies it should also be visible, not just uncapped.
+
+**Golden Rule / Tier note:** no change — VICTORIA remains Tier 1, counts-only, no client data. This is a metrics-model change, not a scope change.

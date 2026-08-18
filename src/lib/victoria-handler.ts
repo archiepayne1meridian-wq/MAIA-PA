@@ -13,6 +13,7 @@ import {
   formatScorecard,
   scorecardNarrative,
   type VictoriaConfig,
+  type MetricTarget,
   type ScorecardData,
 } from './victoria'
 import {
@@ -20,6 +21,7 @@ import {
   compareToPrevious,
   vsTargets,
   trend,
+  computeRatios,
 } from '../../tools/kpi'
 import {
   logTally,
@@ -34,16 +36,25 @@ import {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+// The canonical funnel. If context/victoria.md is missing/unreadable, this is exactly what loads —
+// the metric set and targets are guaranteed correct even without the config file present.
 const DEFAULT_CONFIG: VictoriaConfig = {
-  metrics: ['calls', 'connects', 'meetings_booked', 'meetings_held', 'follow_ups', 'new_prospects', 'active_clients'],
-  targets: {},
+  metrics: ['prospects_sourced', 'green_prospects', 'calls', 'connects', 'meetings_booked', 'meetings_sat'],
+  targets: {
+    prospects_sourced: { daily: null, weekly: 100 },
+    green_prospects: { daily: null, weekly: null },
+    calls: { daily: 100, weekly: null },
+    connects: { daily: 50, weekly: null },
+    meetings_booked: { daily: 2, weekly: 10 },
+    meetings_sat: { daily: null, weekly: 5 },
+  },
   nudgeTime: '18:00',
   scorecardDay: 'Friday',
 }
 
 export function parseVictoriaConfig(content: string): VictoriaConfig {
   const lines = content.split('\n')
-  const config = { ...DEFAULT_CONFIG, targets: {} as Record<string, number | null>, metrics: [] as string[] }
+  const config = { ...DEFAULT_CONFIG, targets: {} as Record<string, MetricTarget>, metrics: [] as string[] }
   let section: 'none' | 'metrics' | 'targets' | 'timing' = 'none'
 
   for (const raw of lines) {
@@ -53,7 +64,7 @@ export function parseVictoriaConfig(content: string): VictoriaConfig {
 
     // Section headers
     if (/^##\s+metrics/i.test(trimmed)) { section = 'metrics'; continue }
-    if (/^##\s+weekly\s+targets/i.test(trimmed)) { section = 'targets'; continue }
+    if (/^##\s+targets/i.test(trimmed)) { section = 'targets'; continue }
     if (/^##\s+timing/i.test(trimmed)) { section = 'timing'; continue }
     if (/^##/.test(trimmed)) { section = 'none'; continue }
 
@@ -63,11 +74,15 @@ export function parseVictoriaConfig(content: string): VictoriaConfig {
     }
 
     if (section === 'targets') {
-      // "- calls: 40" or "- calls:" (blank = no target)
-      const m = line.match(/^\s*-\s+([a-z_]+):\s*(\d+)?/)
+      // "- calls: 100 /" (daily only), "- prospects_sourced: / 100" (weekly only),
+      // "- meetings_booked: 2 / 10" (both), "- green_prospects: /" (neither)
+      const m = line.match(/^\s*-\s+([a-z_]+):\s*(\d+)?\s*\/\s*(\d+)?/)
       if (m && m[1]) {
         const key = m[1].trim()
-        config.targets[key] = m[2] ? parseInt(m[2], 10) : null
+        config.targets[key] = {
+          daily: m[2] ? parseInt(m[2], 10) : null,
+          weekly: m[3] ? parseInt(m[3], 10) : null,
+        }
       }
     }
 
@@ -80,6 +95,7 @@ export function parseVictoriaConfig(content: string): VictoriaConfig {
   }
 
   if (config.metrics.length === 0) config.metrics = DEFAULT_CONFIG.metrics
+  if (Object.keys(config.targets).length === 0) config.targets = DEFAULT_CONFIG.targets
   return config
 }
 
@@ -296,13 +312,37 @@ export async function buildScorecard(channel: string, userId?: string): Promise<
     return
   }
 
-  const thisTotals = weeklyTotals(thisWeekLogs.map(l => l.metrics))
+  // Zero-fill every tracked metric so a fixed 6-metric funnel always renders a complete
+  // row/target check — a metric nobody logged today/this-week is a real "0", not an omission.
+  const zeroFill = (totals: import('../../tools/kpi').WeeklyTotals) => {
+    const filled = { ...totals }
+    for (const m of config.metrics) if (!(m in filled)) filled[m] = 0
+    return filled
+  }
+
+  const thisTotals = zeroFill(weeklyTotals(thisWeekLogs.map(l => l.metrics)))
   const prevTotals = prevWeekLogs.length > 0
-    ? weeklyTotals(prevWeekLogs.map(l => l.metrics))
+    ? zeroFill(weeklyTotals(prevWeekLogs.map(l => l.metrics)))
     : null
 
   const comparison = compareToPrevious(thisTotals, prevTotals)
-  const targetList = vsTargets(thisTotals, config.targets)
+
+  // Weekly target: the explicit weekly figure if set, else a daily target scaled by the
+  // days actually logged this week (e.g. calls: 100/day x 4 days logged = 400 expected).
+  const weeklyTargetMap: Record<string, number | null> = {}
+  const dailyTargetMap: Record<string, number | null> = {}
+  for (const metric of config.metrics) {
+    const t: MetricTarget = config.targets[metric] ?? { daily: null, weekly: null }
+    weeklyTargetMap[metric] = t.weekly ?? (t.daily != null ? t.daily * thisWeekLogs.length : null)
+    dailyTargetMap[metric] = t.daily
+  }
+  const weeklyTargetList = vsTargets(thisTotals, weeklyTargetMap)
+
+  const todayLog = await getDay()
+  const todayTotals = zeroFill(todayLog?.metrics ?? {})
+  const dailyTargetList = vsTargets(todayTotals, dailyTargetMap)
+
+  const ratios = computeRatios(thisTotals)
 
   // Trend: use the 4 most recent completed weekly totals (oldest first)
   const historicalTotals = [...recentWeeklies].reverse().map(w => w.totals)
@@ -316,8 +356,11 @@ export async function buildScorecard(channel: string, userId?: string): Promise<
   const data: ScorecardData = {
     weekStart: new Date(toWeekStart() * 1000),
     totals: thisTotals,
+    todayTotals,
     comparison,
-    targets: targetList,
+    weeklyTargets: weeklyTargetList,
+    dailyTargets: dailyTargetList,
+    ratios,
     trends,
     daysCounted: thisWeekLogs.length,
     isFirstWeek,

@@ -4,15 +4,24 @@
 // scorecardNarrative: one honest sentence of Haiku context (skipped on baseline week).
 
 import { askWith } from './claude'
-import type { DailyMetrics, WeeklyTotals, ComparisonItem, TargetItem, TrendDirection } from '../../tools/kpi'
+import type { DailyMetrics, WeeklyTotals, ComparisonItem, TargetItem, TrendDirection, RatioItem } from '../../tools/kpi'
 
 const HAIKU = 'claude-haiku-4-5-20251001'
 
 // ── Config types (parsed from context/victoria.md at runtime) ─────────────────
 
+// A metric can carry a daily target, a weekly target, both, or neither (null = not tracked
+// at that period). calls/connects are daily-only; prospects_sourced/meetings_sat are weekly-only;
+// meetings_booked carries both; green_prospects carries neither (tracked as a % instead — see
+// computeRatios in tools/kpi.ts).
+export interface MetricTarget {
+  daily: number | null
+  weekly: number | null
+}
+
 export interface VictoriaConfig {
   metrics: string[]
-  targets: Record<string, number | null>
+  targets: Record<string, MetricTarget>
   nudgeTime: string    // e.g. "18:00"
   scorecardDay: string // e.g. "Friday"
 }
@@ -24,16 +33,16 @@ export interface VictoriaConfig {
 // Returns only the metrics it found — partial tallies are fine.
 
 const METRIC_ALIASES: Record<string, string[]> = {
-  calls:           ['call', 'calls', 'dial', 'dials', 'ring', 'rings', 'phoned', 'phone'],
-  connects:        ['connect', 'connects', 'connection', 'connections', 'spoke', 'reached', 'got through', 'answered'],
-  meetings_booked: ['meeting booked', 'meetings booked', 'booked', 'appointment booked',
-                    'appointments booked', 'set', 'meeting set', 'scheduled'],
-  meetings_held:   ['meeting held', 'meetings held', 'meeting happened', 'had a meeting', 'met with',
-                    'meeting done', 'meetings done', 'completed meeting'],
-  follow_ups:      ['follow up', 'follow ups', 'follow-up', 'follow-ups', 'followed up', 'chased'],
-  new_prospects:   ['new prospect', 'new prospects', 'lead', 'leads', 'new lead', 'new leads',
-                    'prospect added', 'prospects added'],
-  active_clients:  ['active client', 'active clients', 'client', 'clients'],
+  prospects_sourced: ['prospects sourced', 'prospect sourced', 'sourced', 'new prospect', 'new prospects',
+                      'prospect added', 'prospects added', 'lead', 'leads'],
+  green_prospects:   ['green prospects', 'green prospect', 'contactable prospects', 'contactable prospect',
+                      'contactable'],
+  calls:             ['call', 'calls', 'dial', 'dials', 'ring', 'rings', 'phoned', 'phone'],
+  connects:          ['connect', 'connects', 'connection', 'connections', 'spoke', 'reached', 'got through', 'answered'],
+  meetings_booked:   ['meeting booked', 'meetings booked', 'booked', 'appointment booked',
+                      'appointments booked', 'set', 'meeting set', 'scheduled'],
+  meetings_sat:      ['meetings sat', 'meeting sat', 'sat with', 'sittings', 'sitting',
+                      'meeting held', 'meetings held'],
 }
 
 // Sort aliases longest-first to match greedily (e.g. "meetings booked" before "meetings")
@@ -185,9 +194,12 @@ export function formatEchoConfirm(
 
 export interface ScorecardData {
   weekStart: Date
-  totals: WeeklyTotals
+  totals: WeeklyTotals        // this week's totals
+  todayTotals: WeeklyTotals   // today's totals — used only for daily-target display
   comparison: ComparisonItem[]
-  targets: TargetItem[]
+  weeklyTargets: TargetItem[] // status of this week's totals vs each metric's weekly target
+  dailyTargets: TargetItem[]  // status of today's totals vs each metric's daily target
+  ratios: RatioItem[]         // connect/booking/sit/green rate — always calculated, never entered
   trends: Record<string, TrendDirection>
   daysCounted: number
   isFirstWeek: boolean  // no prior week to compare — skip trend language in narrative
@@ -200,7 +212,7 @@ function metricLabel(metric: string): string {
 }
 
 export function formatScorecard(data: ScorecardData): string {
-  const { weekStart, totals, comparison, targets, trends, daysCounted } = data
+  const { weekStart, totals, todayTotals, comparison, weeklyTargets, dailyTargets, ratios, trends, daysCounted } = data
   const weekLabel = weekStart.toLocaleDateString('en-GB', {
     weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC',
   })
@@ -226,14 +238,32 @@ export function formatScorecard(data: ScorecardData): string {
       changeStr = ` · ${sign}${comp.delta}${pctStr}`
     }
 
-    const targetItem = targets.find(t => t.metric === metric)
+    const weeklyTargetItem = weeklyTargets.find(t => t.metric === metric)
     let targetStr = ''
-    if (targetItem && targetItem.status !== 'no_target' && targetItem.target !== null) {
-      const icon = targetItem.status === 'on_track' ? '✓' : '·'
-      targetStr = `  ${icon} target ${targetItem.target}`
+    if (weeklyTargetItem && weeklyTargetItem.status !== 'no_target' && weeklyTargetItem.target !== null) {
+      const icon = weeklyTargetItem.status === 'on_track' ? '✓' : '·'
+      targetStr = `  ${icon} wk target ${weeklyTargetItem.target}`
     }
 
-    lines.push(`${arrow} *${label}:* ${total}${changeStr}${targetStr}`)
+    const dailyTargetItem = dailyTargets.find(t => t.metric === metric)
+    let dailyStr = ''
+    if (dailyTargetItem && dailyTargetItem.status !== 'no_target' && dailyTargetItem.target !== null) {
+      const todayVal = todayTotals[metric] ?? 0
+      const icon = dailyTargetItem.status === 'on_track' ? '✓' : '·'
+      dailyStr = `  ${icon} today ${todayVal}/${dailyTargetItem.target}`
+    }
+
+    lines.push(`${arrow} *${label}:* ${total}${changeStr}${targetStr}${dailyStr}`)
+  }
+
+  // Derived funnel ratios — always calculated here, never entered by the user.
+  const knownRatios = ratios.filter(r => r.value !== null)
+  if (knownRatios.length > 0) {
+    lines.push('')
+    lines.push('*Funnel ratios:*')
+    for (const r of ratios) {
+      lines.push(`  ${r.label}: ${r.value !== null ? `${r.value}%` : '—'}`)
+    }
   }
 
   lines.push('')

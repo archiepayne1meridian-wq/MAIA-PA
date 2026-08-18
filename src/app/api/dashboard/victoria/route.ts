@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
+import { loadVictoriaConfig } from '@/lib/victoria-handler'
 import { getDb } from '@/db'
 import { kpi_weekly, kpi_logs } from '@/db/schema'
 import { desc, gte } from 'drizzle-orm'
+import { computeRatios } from '../../../../../tools/kpi'
 
 // Matches victoria-db.ts toWeekStart — Monday midnight UTC
 function toWeekStartUtc(nowMs = Date.now()): number {
@@ -33,8 +35,6 @@ function weekLabel(weekStartSecs: number, isCurrent: boolean): string {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
-const KNOWN_METRICS = ['calls', 'connects', 'meetings_booked', 'meetings_held', 'follow_ups', 'new_prospects', 'active_clients']
-
 function parseMetrics(json: string): Record<string, number> {
   try { return JSON.parse(json) as Record<string, number> } catch { return {} }
 }
@@ -43,6 +43,9 @@ export async function GET() {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const config = loadVictoriaConfig()
+  const trackedMetrics = config.metrics
 
   const db = getDb()
   const currentWeekStart = toWeekStartUtc()
@@ -112,7 +115,7 @@ export async function GET() {
   const dailyBars = Array.from(dailyMap.entries()).map(([date, totals]) => ({
     label: new Date(date * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
     date,
-    ...Object.fromEntries(KNOWN_METRICS.map(k => [k, totals[k] ?? 0])),
+    ...Object.fromEntries(trackedMetrics.map(k => [k, totals[k] ?? 0])),
   }))
 
   // Build weekly bars
@@ -126,32 +129,33 @@ export async function GET() {
       label: weekLabel(w.weekStart, false),
       weekStart: w.weekStart,
       isCurrent: false,
-      ...Object.fromEntries(KNOWN_METRICS.map(k => [k, w.totals[k] ?? 0])),
+      ...Object.fromEntries(trackedMetrics.map(k => [k, w.totals[k] ?? 0])),
     })),
     {
       label: weekLabel(currentWeekStart, true),
       weekStart: currentWeekStart,
       isCurrent: true,
-      ...Object.fromEntries(KNOWN_METRICS.map(k => [k, currentWeekTotals[k] ?? 0])),
+      ...Object.fromEntries(trackedMetrics.map(k => [k, currentWeekTotals[k] ?? 0])),
     },
   ]
 
-  const allTotals = [...historicalBars.map(w => w.totals), currentWeekTotals]
-  const activeMetrics = KNOWN_METRICS.filter(m => allTotals.some(t => (t[m] ?? 0) > 0))
-  const noDataMetrics = KNOWN_METRICS.filter(m => !activeMetrics.includes(m))
+  // Exactly this funnel is always shown — a fixed model, not an open-ended list filtered by
+  // whether data happens to exist yet.
+  const activeMetrics = trackedMetrics
+  const noDataMetrics: string[] = []
 
-  const targets: Record<string, number | null> = { calls: 15 }
-  for (const m of KNOWN_METRICS) {
-    if (!(m in targets)) targets[m] = null
-  }
+  const weekRatios = computeRatios(currentWeekTotals)
+  const todayRatios = computeRatios(todayTotals)
 
   return NextResponse.json({
     bars,
     activeMetrics,
     noDataMetrics,
-    targets,
+    targets: config.targets,
     thisWeekTotals: currentWeekTotals,
     todayTotals,
+    weekRatios,
+    todayRatios,
     weeklyScorecardsHistory,
     dailyBars,
   })

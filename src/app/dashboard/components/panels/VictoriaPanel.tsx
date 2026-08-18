@@ -12,33 +12,30 @@ interface BarRow {
   label: string
   weekStart: number
   isCurrent: boolean
-  calls: number
-  connects: number
-  meetings_booked: number
-  meetings_held: number
-  follow_ups: number
-  new_prospects: number
-  active_clients: number
   [key: string]: string | number | boolean
+}
+
+interface MetricTarget {
+  daily: number | null
+  weekly: number | null
 }
 
 interface VictoriaPanelData {
   bars: BarRow[]
   activeMetrics: string[]
   noDataMetrics: string[]
-  targets: Record<string, number | null>
+  targets: Record<string, MetricTarget>
   thisWeekTotals: Record<string, number>
 }
 
-// Display names and colors — order matches KNOWN_METRICS
+// Display names and colors — order matches the funnel in context/victoria.md
 const METRIC_META: Record<string, { label: string; color: string }> = {
-  calls:            { label: 'Calls',          color: '#8AA9F0' },
-  connects:         { label: 'Connects',        color: '#5BC08A' },
-  meetings_booked:  { label: 'Meetings booked', color: '#E0B341' },
-  meetings_held:    { label: 'Meetings held',   color: '#B07EE0' },
-  follow_ups:       { label: 'Follow-ups',      color: '#5BC0C0' },
-  new_prospects:    { label: 'New prospects',   color: '#E07A5F' },
-  active_clients:   { label: 'Active clients',  color: '#C0C05B' },
+  prospects_sourced: { label: 'Prospects sourced', color: '#E07A5F' },
+  green_prospects:   { label: 'Green prospects',    color: '#C0C05B' },
+  calls:             { label: 'Calls',              color: '#8AA9F0' },
+  connects:          { label: 'Connects',           color: '#5BC08A' },
+  meetings_booked:   { label: 'Meetings booked',    color: '#E0B341' },
+  meetings_sat:      { label: 'Meetings sat',       color: '#B07EE0' },
 }
 
 export default function VictoriaPanel() {
@@ -69,7 +66,8 @@ export default function VictoriaPanel() {
         {activeMetrics.map(m => {
           const meta = METRIC_META[m] ?? { label: m, color: '#8AA9F0' }
           const val = thisWeekTotals[m] ?? 0
-          const target = targets[m]
+          // This-week summary row shows weekly totals — only a weekly target is comparable here.
+          const target = targets[m]?.weekly ?? null
           const isOnTrack = target != null && val >= target
           const isBelow = target != null && val < target
           return (
@@ -135,15 +133,16 @@ export default function VictoriaPanel() {
                     />
                   )
                 })}
-                {/* Target reference line — only for calls */}
-                {targets.calls != null && activeMetrics.includes('calls') && (
+                {/* Target reference line — meetings_booked is the funnel's headline weekly target
+                    (calls/connects are daily-only targets and have no weekly line to draw here) */}
+                {targets.meetings_booked?.weekly != null && activeMetrics.includes('meetings_booked') && (
                   <ReferenceLine
-                    y={targets.calls}
+                    y={targets.meetings_booked.weekly}
                     stroke="#E07A5F"
                     strokeDasharray="4 3"
                     strokeWidth={1.5}
                     label={{
-                      value: `Target ${targets.calls}`,
+                      value: `Target ${targets.meetings_booked.weekly}`,
                       position: 'insideTopRight',
                       fontFamily: 'var(--mono)',
                       fontSize: 9,

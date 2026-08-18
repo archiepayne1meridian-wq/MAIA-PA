@@ -4,6 +4,7 @@ import {
   compareToPrevious,
   vsTargets,
   trend,
+  computeRatios,
   type DailyMetrics,
   type WeeklyTotals,
 } from './kpi'
@@ -219,5 +220,52 @@ describe('trend', () => {
     expect(trend(weeks, 'calls', 20)).toBe('flat')
     // Same data but default 10% threshold → up
     expect(trend(weeks, 'calls', 10)).toBe('up')
+  })
+})
+
+// ── computeRatios ─────────────────────────────────────────────────────────────
+
+describe('computeRatios', () => {
+  it('computes all four funnel ratios correctly', () => {
+    const totals: WeeklyTotals = {
+      calls: 200, connects: 100, meetings_booked: 20, meetings_sat: 10,
+      prospects_sourced: 100, green_prospects: 40,
+    }
+    const ratios = computeRatios(totals)
+    const byKey = Object.fromEntries(ratios.map(r => [r.key, r.value]))
+    expect(byKey.connect_rate).toBe(50)   // 100/200
+    expect(byKey.booking_rate).toBe(20)   // 20/100
+    expect(byKey.sit_rate).toBe(50)       // 10/20
+    expect(byKey.green_rate).toBe(40)     // 40/100
+  })
+
+  it('rounds to one decimal place', () => {
+    const ratios = computeRatios({ calls: 3, connects: 1 })
+    // 1/3 = 33.333... -> 33.3
+    expect(ratios.find(r => r.key === 'connect_rate')?.value).toBe(33.3)
+  })
+
+  it('returns null (never 0% or Infinity) when the denominator is zero', () => {
+    const ratios = computeRatios({})
+    for (const r of ratios) {
+      expect(r.value).toBeNull()
+      expect(r.numerator).toBe(0)
+      expect(r.denominator).toBe(0)
+    }
+  })
+
+  it('treats missing metrics as 0, not undefined/NaN', () => {
+    const ratios = computeRatios({ calls: 10 })
+    const connectRate = ratios.find(r => r.key === 'connect_rate')
+    expect(connectRate?.numerator).toBe(0)
+    expect(connectRate?.denominator).toBe(10)
+    expect(connectRate?.value).toBe(0)
+  })
+
+  it('always returns exactly the four known ratio keys', () => {
+    const ratios = computeRatios({ calls: 5 })
+    expect(ratios.map(r => r.key).sort()).toEqual(
+      ['booking_rate', 'connect_rate', 'green_rate', 'sit_rate'].sort()
+    )
   })
 })

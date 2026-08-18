@@ -36,8 +36,11 @@ ATHENA tracks what you *know*; HERA tracks how you're *developing*; VICTORIA tra
 ## Required Inputs
 
 **From `context/victoria.md`** (human-editable; create from template if absent):
-- `metrics[]` — what to track (default: calls, connects, meetings_booked, meetings_held, follow_ups, new_prospects, active_clients)
-- `targets` — optional weekly target per metric (blank = no target tracking for that metric)
+- `metrics[]` — the deVere BDA funnel (default: prospects_sourced, green_prospects, calls, connects,
+  meetings_booked, meetings_sat)
+- `targets` — optional daily AND/OR weekly target per metric (`- metric: DAILY / WEEKLY`, either side
+  blank = not tracked at that period). Derived ratios (connect/booking/sit/green rate) are always
+  calculated from raw totals — never entered directly (see `tools/kpi.ts` `computeRatios`).
 - `nudge_time` — end-of-day tally prompt (default 18:00 Europe/London, weekdays)
 - `scorecard_day` — weekly scorecard day (default Friday)
 

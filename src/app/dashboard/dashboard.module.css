@@ -1586,6 +1586,17 @@
 .victoriaHighlightItem { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; }
 .victoriaHighlightKey { color: var(--text-dim); min-width: 80px; }
 
+.victoriaRatioList { display: flex; flex-direction: column; margin-top: 8px; }
+.victoriaRatioRow {
+  display: grid; grid-template-columns: 1fr auto auto;
+  gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--hairline);
+  font-family: var(--mono); font-size: 11px;
+}
+.victoriaRatioRow:last-child { border-bottom: none; }
+.victoriaRatioLabel { color: var(--text-mid); }
+.victoriaRatioVal { color: var(--accent); font-weight: 600; text-align: right; }
+.victoriaRatioFraction { color: var(--text-dim); font-size: 9.5px; text-align: right; }
+
 /* ── IRIS additions (Task 7) ──────────────────────────────────────────────── */
 
 .irisRefineArea { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hairline); }

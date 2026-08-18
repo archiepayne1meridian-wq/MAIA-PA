@@ -33,13 +33,28 @@ function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
   return win.SpeechRecognition ?? win.webkitSpeechRecognition ?? null
 }
 
+interface MetricTarget {
+  daily: number | null
+  weekly: number | null
+}
+
+interface RatioItem {
+  key: string
+  label: string
+  numerator: number
+  denominator: number
+  value: number | null
+}
+
 interface VictoriaData {
   bars: Record<string, number | string | boolean>[]
   activeMetrics: string[]
   noDataMetrics: string[]
-  targets: Record<string, number | null>
+  targets: Record<string, MetricTarget>
   thisWeekTotals: Record<string, number>
   todayTotals: Record<string, number>
+  weekRatios: RatioItem[]
+  todayRatios: RatioItem[]
   weeklyScorecardsHistory: {
     id: string
     weekStart: number
@@ -51,13 +66,22 @@ interface VictoriaData {
 }
 
 const METRIC_LABELS: Record<string, string> = {
+  prospects_sourced: 'Prospects Sourced',
+  green_prospects: 'Green Prospects',
   calls: 'Calls',
   connects: 'Connects',
   meetings_booked: 'Meetings Booked',
-  meetings_held: 'Meetings Held',
-  follow_ups: 'Follow-ups',
-  new_prospects: 'New Prospects',
-  active_clients: 'Active Clients',
+  meetings_sat: 'Meetings Sat',
+}
+
+// The "primary" target for a metric — daily if it has one (calls/connects/meetings_booked),
+// else weekly (prospects_sourced/meetings_sat/meetings_booked), else none (green_prospects).
+// Drives the top-strip colour and the Best/Needs-work ranking.
+function primaryTarget(t: MetricTarget | undefined): { period: 'daily' | 'weekly' | null; value: number | null } {
+  if (!t) return { period: null, value: null }
+  if (t.daily != null) return { period: 'daily', value: t.daily }
+  if (t.weekly != null) return { period: 'weekly', value: t.weekly }
+  return { period: null, value: null }
 }
 
 function statusColor(val: number, target: number | null): string {
@@ -74,9 +98,11 @@ function statusDot(val: number, target: number | null): string {
   return '●'
 }
 
-function scorecardStatus(totals: Record<string, number>, targets: Record<string, number | null>): 'on-track' | 'mixed' | 'off-track' {
-  const checks = Object.entries(targets).filter(([, t]) => t != null).map(([k, t]) => ({
-    val: totals[k] ?? 0, target: t!
+// Scorecard-history cards show a whole week's totals, so only weekly targets apply here
+// (a daily-only target like calls/connects can't be judged from a single weekly sum).
+function scorecardStatus(totals: Record<string, number>, targets: Record<string, MetricTarget>): 'on-track' | 'mixed' | 'off-track' {
+  const checks = Object.entries(targets).filter(([, t]) => t?.weekly != null).map(([k, t]) => ({
+    val: totals[k] ?? 0, target: t!.weekly!,
   }))
   if (checks.length === 0) return 'mixed'
   const onTrack = checks.filter(c => c.val >= c.target).length
@@ -221,12 +247,20 @@ export default function VictoriaWorkspace() {
     )
   }
 
-  const { activeMetrics, targets, todayTotals, thisWeekTotals, weeklyScorecardsHistory, dailyBars } = data
+  const { activeMetrics, targets, todayTotals, thisWeekTotals, weekRatios, weeklyScorecardsHistory, dailyBars } = data
 
-  // Best and worst metrics this week
+  // Best and worst metrics this week — ranked against each metric's weekly target where one
+  // exists, else its daily target scaled across the week so far (green_prospects has neither
+  // and is tracked as a % instead, so it's excluded from this ranking).
+  const daysThisWeek = Math.max(1, Object.values(dailyBars).length > 0 ? new Set(dailyBars.map(b => b.date)).size : 1)
   const metricRatios = activeMetrics
-    .filter(m => targets[m] != null)
-    .map(m => ({ m, ratio: (thisWeekTotals[m] ?? 0) / (targets[m] ?? 1) }))
+    .map(m => {
+      const t = targets[m]
+      const weeklyEquivalent = t?.weekly ?? (t?.daily != null ? t.daily * daysThisWeek : null)
+      return { m, weeklyEquivalent }
+    })
+    .filter((x): x is { m: string; weeklyEquivalent: number } => x.weeklyEquivalent != null && x.weeklyEquivalent > 0)
+    .map(({ m, weeklyEquivalent }) => ({ m, ratio: (thisWeekTotals[m] ?? 0) / weeklyEquivalent }))
     .sort((a, b) => b.ratio - a.ratio)
   const bestMetric = metricRatios[0]
   const worstMetric = metricRatios[metricRatios.length - 1]
@@ -275,21 +309,25 @@ export default function VictoriaWorkspace() {
               const val = localToday[m] ?? todayTotals[m] ?? 0
               const weekVal = thisWeekTotals[m] ?? 0
               const tgt = targets[m]
+              const primary = primaryTarget(tgt)
+              const primaryVal = primary.period === 'daily' ? val : weekVal
+              const subLabelParts: string[] = []
+              if (tgt?.daily != null) subLabelParts.push(`${val}/${tgt.daily} today`)
+              if (tgt?.weekly != null) subLabelParts.push(`${weekVal}/${tgt.weekly} wk`)
+              const subLabel = subLabelParts.length > 0 ? subLabelParts.join(' · ') : `${weekVal} this wk`
               return (
                 <div key={m} className={s.victoriaStatBlock}>
                   <span className={s.victoriaStatName}>{METRIC_LABELS[m] ?? m}</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span
                       className={s.victoriaStatVal}
-                      style={{ color: flashMetric === m ? 'var(--alert)' : statusColor(weekVal, tgt) }}
+                      style={{ color: flashMetric === m ? 'var(--alert)' : statusColor(primaryVal, primary.value) }}
                     >
                       {val}
                     </span>
                     <button className={s.victoriaLogBtn} onClick={() => void handleIncrement(m)} aria-label={`Log one ${METRIC_LABELS[m] ?? m}`}>+</button>
                   </div>
-                  <span className={s.victoriaStatTarget}>
-                    {tgt != null ? `/ ${tgt} target · ${weekVal} this wk` : `${weekVal} this wk`}
-                  </span>
+                  <span className={s.victoriaStatTarget}>{subLabel}</span>
                 </div>
               )
             })
@@ -340,7 +378,8 @@ export default function VictoriaWorkspace() {
                     </div>
                     {activeMetrics.map(m => {
                       const val = card.totals[m] ?? 0
-                      const tgt = targets[m]
+                      // A scorecard card is a whole week's totals — only the weekly target applies here.
+                      const tgt = targets[m]?.weekly ?? null
                       return (
                         <div key={m} className={s.victoriaHistMetricRow}>
                           <span className={s.victoriaHistMetricName}>{METRIC_LABELS[m] ?? m}</span>
@@ -369,7 +408,8 @@ export default function VictoriaWorkspace() {
           )}
 
           {activeMetrics.map(m => {
-            const tgt = targets[m]
+            // This is a per-day chart, so only a daily target draws a reference line here.
+            const dailyTgt = targets[m]?.daily ?? null
             return (
               <div key={m} className={s.victoriaTrendSection}>
                 <div className={s.victoriaTrendLabel}>{METRIC_LABELS[m] ?? m}</div>
@@ -382,8 +422,8 @@ export default function VictoriaWorkspace() {
                         contentStyle={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }}
                         formatter={(v) => [Number(v), METRIC_LABELS[m] ?? m]}
                       />
-                      {tgt != null && (
-                        <ReferenceLine y={tgt} stroke="var(--idle)" strokeDasharray="4 4" strokeWidth={1} />
+                      {dailyTgt != null && (
+                        <ReferenceLine y={dailyTgt} stroke="var(--idle)" strokeDasharray="4 4" strokeWidth={1} />
                       )}
                       <Line
                         type="monotone"
@@ -445,6 +485,22 @@ export default function VictoriaWorkspace() {
                 </span>
               </div>
             )}
+          </div>
+
+          {/* Funnel ratios — calculated here from raw totals, never entered manually */}
+          <div style={{ marginTop: 20 }}>
+            <span className={s.fpSectionLabel}>Funnel ratios (this wk)</span>
+            <div className={s.victoriaRatioList}>
+              {weekRatios.map(r => (
+                <div key={r.key} className={s.victoriaRatioRow}>
+                  <span className={s.victoriaRatioLabel}>{r.label}</span>
+                  <span className={s.victoriaRatioVal}>
+                    {r.value !== null ? `${r.value}%` : '—'}
+                  </span>
+                  <span className={s.victoriaRatioFraction}>{r.numerator}/{r.denominator}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
           {data.noDataMetrics.length > 0 && (

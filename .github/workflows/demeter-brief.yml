@@ -1,12 +1,16 @@
 name: DEMETER Morning Brief
 
+# DISABLED — DEMETER was removed from the dashboard (nav rail, routing, home panel) on
+# 2026-08-18. Code, routes, and DB tables are preserved; this cron is just switched off
+# so it stops firing. Re-enable by restoring the `schedule:` block below if DEMETER comes
+# back.
 on:
-  schedule:
-    # 06:30 UTC = 07:30 BST (British Summer Time, UTC+1, May–Oct)
-    # Note: this fires at 07:30 BST in summer; in winter (GMT, UTC+0) it fires at 06:30 local.
-    # Adjust to 07:30 UTC for winter if needed; two cron lines would cover both offsets year-round.
-    - cron: '30 6 * * 1-5'
-  workflow_dispatch: # manual trigger for testing and deployment verification
+  # schedule:
+  #   # 06:30 UTC = 07:30 BST (British Summer Time, UTC+1, May–Oct)
+  #   # Note: this fires at 07:30 BST in summer; in winter (GMT, UTC+0) it fires at 06:30 local.
+  #   # Adjust to 07:30 UTC for winter if needed; two cron lines would cover both offsets year-round.
+  #   - cron: '30 6 * * 1-5'
+  workflow_dispatch: # manual trigger for testing and deployment verification — still available
 
 jobs:
   brief:

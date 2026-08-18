@@ -1,7 +1,7 @@
 import { getDb } from '@/db'
 import {
   activity, study_cards, study_reviews, research_briefs,
-  portfolio_snapshots, holdings, reflections, diana_sessions,
+  reflections, diana_sessions,
   kpi_logs, kpi_weekly, approvals, iris_posts, apollo_calls,
 } from '@/db/schema'
 import { desc, eq, gte, lte, and, count } from 'drizzle-orm'
@@ -136,29 +136,6 @@ export async function buildDashboardData(): Promise<DashboardData> {
 
   const cassandraFeed = await agentFeed(db, 'CASSANDRA')
 
-  // ── DEMETER — reads portfolio_snapshots only, no live price fetch ─────────────
-  const [snapRow] = await db
-    .select({
-      total_value: portfolio_snapshots.total_value,
-      day_change: portfolio_snapshots.day_change,
-      taken_at: portfolio_snapshots.taken_at,
-    })
-    .from(portfolio_snapshots).orderBy(desc(portfolio_snapshots.taken_at)).limit(1)
-
-  const [holdingCountResult] = await db.select({ n: count() }).from(holdings)
-  const holdingCount = holdingCountResult?.n ?? 0
-
-  let dayChangePct: string | null = null
-  if (snapRow) {
-    const prevValue = snapRow.total_value - snapRow.day_change
-    if (prevValue > 0) {
-      const sign = snapRow.day_change >= 0 ? '+' : ''
-      dayChangePct = `${sign}${((snapRow.day_change / prevValue) * 100).toFixed(1)}%`
-    }
-  }
-  const snapshotToday = (snapRow?.taken_at ?? 0) >= tStart
-  const demeterFeed = await agentFeed(db, 'DEMETER')
-
   // ── HERA ─────────────────────────────────────────────────────────────────────
   const [lastRefRow] = await db
     .select({ created_at: reflections.created_at })
@@ -267,7 +244,6 @@ export async function buildDashboardData(): Promise<DashboardData> {
     maiaCount > 0,
     dueCount > 0 || reviewedToday > 0,
     briefSentToday,
-    snapshotToday,
     refToday,
     sessionCount > 0,
     kpiLoggedToday,
@@ -322,25 +298,6 @@ export async function buildDashboardData(): Promise<DashboardData> {
         ['Source', 'Twelve Data', '+ RSS feeds'],
       ],
       feed: cassandraFeed,
-    },
-    {
-      id: 'DEMETER', role: 'Portfolio tracker', badge: 'D',
-      status: snapshotToday ? 'online' : 'idle',
-      stat: snapRow
-        ? `${holdingCount} holdings${dayChangePct ? ' · ' + dayChangePct : ''}`
-        : 'No snapshot — send "portfolio" in Slack',
-      statusLabel: snapRow
-        ? `Portfolio last updated ${relTime(snapRow.taken_at)}`
-        : 'No snapshot in DB yet — trigger a brief in Slack',
-      prog: snapshotToday ? 100 : 0,
-      progAlert: !snapshotToday && snapRow !== undefined,
-      tiles: [
-        ['Holdings', String(holdingCount), 'positions'],
-        ['Day change', dayChangePct ?? 'N/A', 'from last close (snapshot)'],
-        ['Last snapshot', snapRow ? relTime(snapRow.taken_at) : 'None', 'no live fetch on page load'],
-        ['Mode', 'Info only', 'no trading signals'],
-      ],
-      feed: demeterFeed,
     },
     {
       id: 'HERA', role: 'Reflection & coaching', badge: 'H',

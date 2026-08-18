@@ -4,6 +4,9 @@ import { getDb } from '@/db'
 import { research_briefs } from '@/db/schema'
 import { desc } from 'drizzle-orm'
 
+type ImpactLevel = 'direct' | 'watch' | 'awareness'
+const VALID_IMPACT: ImpactLevel[] = ['direct', 'watch', 'awareness']
+
 interface HeadlineRecord {
   summary: string
   angle: string | null
@@ -11,6 +14,7 @@ interface HeadlineRecord {
   url: string | null
   section: string
   sectionLabel: string
+  impact: ImpactLevel | null  // Regulatory / Tax & Legislation items only
 }
 
 const OLD_SECTION_LABELS: Record<string, string> = { regulatory: 'Regulatory', headlines: 'Headlines' }
@@ -25,7 +29,7 @@ function normalizeHeadlineItem(raw: Record<string, unknown>): HeadlineRecord | n
   const source = typeof raw.source === 'string' ? raw.source : null
   if (!source) return null
 
-  // Shape 3 (current): summary/angle/url/section/sectionLabel.
+  // Shape 3 (current): summary/angle/url/section/sectionLabel(/impact).
   if (typeof raw.summary === 'string') {
     return {
       summary: raw.summary,
@@ -34,10 +38,13 @@ function normalizeHeadlineItem(raw: Record<string, unknown>): HeadlineRecord | n
       url: typeof raw.url === 'string' ? raw.url : null,
       section: typeof raw.section === 'string' ? raw.section : 'general',
       sectionLabel: typeof raw.sectionLabel === 'string' ? raw.sectionLabel : 'Brief',
+      impact: typeof raw.impact === 'string' && VALID_IMPACT.includes(raw.impact as ImpactLevel)
+        ? (raw.impact as ImpactLevel) : null,
     }
   }
 
-  // Shapes 1/2: title/digest/link/source/section ('regulatory'|'headlines').
+  // Shapes 1/2: title/digest/link/source/section ('regulatory'|'headlines'). Predate the
+  // impact field entirely — always null here.
   if (typeof raw.title === 'string') {
     const section = typeof raw.section === 'string' ? raw.section : 'regulatory'
     return {
@@ -47,6 +54,7 @@ function normalizeHeadlineItem(raw: Record<string, unknown>): HeadlineRecord | n
       url: typeof raw.link === 'string' ? raw.link : null,
       section,
       sectionLabel: OLD_SECTION_LABELS[section] ?? section,
+      impact: null,
     }
   }
 

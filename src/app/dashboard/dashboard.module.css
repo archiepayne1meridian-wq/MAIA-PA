@@ -1434,6 +1434,14 @@
 .cassandraStructItem:last-child { margin-bottom: 0; }
 .cassandraStructSummary { font-size: 13px; color: var(--text); line-height: 1.55; }
 .cassandraStructAngle { font-size: 12px; color: var(--text-mid); font-style: italic; line-height: 1.45; margin-top: 3px; }
+.cassandraStructNum { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-right: 4px; }
+
+.cassandraImpactChip {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em;
+  padding: 1px 7px; border-radius: 100px; border: 1px solid; margin-right: 6px;
+  white-space: nowrap; vertical-align: middle;
+}
 .cassandraNavRow { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
 .cassandraNavBtn {
   font-family: var(--mono); font-size: 11px; color: var(--accent); background: none;

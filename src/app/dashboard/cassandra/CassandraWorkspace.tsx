@@ -17,6 +17,8 @@ interface FxQuote {
   dayChangePct: number
 }
 
+type ImpactLevel = 'direct' | 'watch' | 'awareness'
+
 interface HeadlineItem {
   summary: string
   angle: string | null
@@ -24,6 +26,21 @@ interface HeadlineItem {
   url: string | null
   section: string       // e.g. 'pensions' — matches SECTION_COLOR below
   sectionLabel: string  // e.g. 'Pensions & Retirement'
+  impact: ImpactLevel | null  // Regulatory / Tax & Legislation items only
+}
+
+// Two primary pairs get the larger, prominent display — GBP/USD and GBP/CHF are
+// both headline pairs for a Malta/Switzerland-based adviser's client base.
+const PRIMARY_FX_PAIRS = new Set(['GBP/USD', 'GBP/CHF'])
+
+const IMPACT_META: Record<ImpactLevel, { emoji: string; label: string; color: string }> = {
+  direct:    { emoji: '🔴', label: 'Direct',    color: 'var(--alert)' },
+  watch:     { emoji: '🟡', label: 'Watch',     color: 'var(--idle)' },
+  awareness: { emoji: '⚪', label: 'Awareness', color: 'var(--text-dim)' },
+}
+
+function showsImpact(section: string): boolean {
+  return section === 'regulatory' || section === 'tax'
 }
 
 interface BriefData {
@@ -192,10 +209,10 @@ export default function CassandraWorkspace() {
           {brief && brief.fx.length > 0 && (
             <div className={s.fpSection}>
               <span className={s.fpSectionLabel}>FX Rates</span>
-              {brief.fx.map((q, i) => (
+              {brief.fx.map(q => (
                 <div key={q.pair} className={s.cassandraFxEntry}>
                   <span className={s.cassandraFxPairLabel}>{q.pair}</span>
-                  <span className={i === 0 ? `${s.cassandraFxBig} ${s.cassandraFxBigPrimary}` : s.cassandraFxBig}>
+                  <span className={PRIMARY_FX_PAIRS.has(q.pair) ? `${s.cassandraFxBig} ${s.cassandraFxBigPrimary}` : s.cassandraFxBig}>
                     {fmt(q.rate)}
                   </span>
                   <span className={s.cassandraFxChange} style={{ color: pctColor(q.dayChangePct) }}>
@@ -250,7 +267,24 @@ export default function CassandraWorkspace() {
                     <div className={s.cassandraStructLabel}>{sec.sectionLabel}</div>
                     {sec.items.map((item, i) => (
                       <div key={i} className={s.cassandraStructItem}>
-                        <p className={s.cassandraStructSummary}>{item.summary}</p>
+                        <p className={s.cassandraStructSummary}>
+                          {showsImpact(sec.section) && (
+                            <>
+                              <span className={s.cassandraStructNum}>{i + 1}.</span>
+                              {item.impact && (
+                                <span
+                                  className={s.cassandraImpactChip}
+                                  style={{ color: IMPACT_META[item.impact].color, borderColor: IMPACT_META[item.impact].color }}
+                                  title={IMPACT_META[item.impact].label}
+                                >
+                                  {IMPACT_META[item.impact].emoji} {IMPACT_META[item.impact].label}
+                                </span>
+                              )}
+                              {' '}
+                            </>
+                          )}
+                          {item.summary}
+                        </p>
                         {item.angle && <p className={s.cassandraStructAngle}>{item.angle}</p>}
                       </div>
                     ))}
@@ -309,6 +343,15 @@ export default function CassandraWorkspace() {
                   <span className={s.cassandraHeadChip} style={{ color: sectionColor(item.section) }}>
                     {item.sectionLabel.toUpperCase()}
                   </span>
+                  {showsImpact(item.section) && item.impact && (
+                    <span
+                      className={s.cassandraImpactChip}
+                      style={{ color: IMPACT_META[item.impact].color, borderColor: IMPACT_META[item.impact].color }}
+                      title={IMPACT_META[item.impact].label}
+                    >
+                      {IMPACT_META[item.impact].emoji} {IMPACT_META[item.impact].label}
+                    </span>
+                  )}
                   <span className={s.cassandraHeadSource}>{item.source}</span>
                 </div>
                 <p className={s.cassandraHeadDigest}>{item.summary}</p>

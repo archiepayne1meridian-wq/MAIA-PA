@@ -21,11 +21,16 @@ indices:
   - ISF.L:FTSE 100
 
 ## FX pairs (Twelve Data format: BASE/QUOTE)
+# GBP/CHF and EUR/CHF added for Switzerland-based clients holding UK/EU assets —
+# the two most important pairs for that target market. GBP/CHF is a primary pair
+# (same prominence as GBP/USD in the dashboard FX panel).
 
 fx_pairs:
   - GBP/USD
   - EUR/USD
   - EUR/GBP
+  - GBP/CHF
+  - EUR/CHF
 
 ## Regulatory feeds
 # FCA (both feeds) and Bank of England confirmed live (200) with real items.
@@ -61,6 +66,14 @@ regulatory_feeds:
 # contributes zero items) but this is very likely the wrong URL entirely —
 # worth finding the actual intended source rather than treating it as merely
 # "currently dead" like the others.
+# Swiss National Bank: confirmed 404 (real server response, not a network
+# blip — curl'd directly, tried an alternate path too). Kept configured
+# exactly as specified; degrades gracefully via fetchAllFeeds' skipped list
+# and contributes zero items today. isRelevantToDeVere's Swiss keywords
+# still work off web-search findings regardless — SNB news items will still
+# surface via the primary search-based sections, just not via this RSS feed.
+# Worth finding the SNB's actual RSS/Atom path (or an alternative — e.g. a
+# press-release page that isn't feed-based) rather than treating this as fixed.
 
 news_feeds:
   - url: https://www.pensionsage.com/rss.xml
@@ -71,6 +84,8 @@ news_feeds:
     name: Bank of England
   - url: https://feeds.bbci.co.uk/news/business/rss.xml
     name: BBC Business
+  - url: https://www.snb.ch/en/news/rss
+    name: Swiss National Bank
 
 ---
 

@@ -536,6 +536,8 @@ const STUB_FX_QUOTES: FxQuote[] = [
   { pair: 'GBP/USD', rate: 1.272, prevClose: 1.274, dayChangePct: -0.16 },
   { pair: 'EUR/USD', rate: 1.084, prevClose: 1.083, dayChangePct:  0.09 },
   { pair: 'EUR/GBP', rate: 0.852, prevClose: 0.850, dayChangePct:  0.24 },
+  { pair: 'GBP/CHF', rate: 1.132, prevClose: 1.129, dayChangePct:  0.27 },
+  { pair: 'EUR/CHF', rate: 0.939, prevClose: 0.937, dayChangePct:  0.21 },
 ]
 
 function calcDayChangePct(level: number, prevClose: number): number {

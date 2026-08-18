@@ -76,6 +76,9 @@ const DEVERE_KEYWORDS = [
   // Regulatory
   'fca', 'fsa', 'mfsa', 'compliance', 'regulation', 'financial conduct',
   'consumer duty', 'financial advice', 'adviser',
+  // Switzerland
+  'swiss national bank', 'snb', 'swiss franc', 'chf', 'switzerland',
+  'swiss', 'helvetia', 'finma',
 ]
 
 export function isRelevantToDeVere(item: FeedItem): boolean {
@@ -219,6 +222,25 @@ Rules:
   If a specific article URL is available, use it. If not, use the publication's
   homepage URL (e.g. https://www.fca.org.uk for FCA items).
   Never return null for url — always provide something linkable.
+- For every item in the Regulatory and Tax & Legislation sections only, add an
+  "impact" field with one of three values:
+
+  "direct" — this changes something Archie needs to do or say, or directly
+  affects a deVere product or how clients should structure their money.
+  Examples: IHT on pension death benefits April 2027, QROPS rule change,
+  pension access age change, non-dom rule update.
+
+  "watch" — this could develop into something significant for the target
+  client base. Monitor but no immediate action needed.
+  Examples: proposed legislation not yet passed, consultation papers,
+  regulatory reviews in progress.
+
+  "awareness" — good to know, relevant to financial services generally,
+  but no immediate impact on expat clients or deVere products.
+  Examples: FCA post-trade reporting changes, generic conduct rules,
+  unrelated regulatory admin.
+
+  Do not add "impact" to items in any other section.
 
 Return this exact JSON shape:
 {
@@ -233,9 +255,24 @@ Return this exact JSON shape:
           "url": "the article URL, or the publication's homepage if no specific article URL is available"
         }
       ]
+    },
+    {
+      "label": "Regulatory",
+      "items": [
+        {
+          "summary": "one sentence what happened",
+          "angle": "one sentence why this matters to a deVere adviser",
+          "source": "publication name",
+          "url": "the article URL, or the publication's homepage if no specific article URL is available",
+          "impact": "direct | watch | awareness"
+        }
+      ]
     }
   ]
 }
+
+("impact" appears only on items inside "Regulatory" and "Tax & Legislation" —
+omit it entirely from items in every other section.)
 
 Sections to include (only if content exists):
 Sector Snapshot, Pensions & Retirement, Tax & Legislation,
@@ -255,11 +292,14 @@ function extractJson(raw: string): string {
   return raw.trim()
 }
 
+export type ImpactLevel = 'direct' | 'watch' | 'awareness'
+
 export interface StructuredBriefItem {
   summary: string
   angle: string
   source: string
   url: string | null
+  impact?: ImpactLevel  // Regulatory and Tax & Legislation items only
 }
 
 export interface StructuredBriefSection {
@@ -314,22 +354,38 @@ export async function generateStructuredBrief(rssRelevant: FeedItem[], rssPerSec
       continue
     }
 
+    // Impact is assessed only for Regulatory and Tax & Legislation items.
+    const needsImpact = matched.key === 'regulatory' || matched.key === 'tax'
+    const VALID_IMPACT: ImpactLevel[] = ['direct', 'watch', 'awareness']
+
     const guardedItems: StructuredBriefItem[] = []
     for (const rawItem of items as unknown[]) {
       if (!rawItem || typeof rawItem !== 'object') continue
-      const { summary, angle, source, url } = rawItem as Record<string, unknown>
+      const { summary, angle, source, url, impact } = rawItem as Record<string, unknown>
       if (typeof summary !== 'string' || typeof angle !== 'string' || typeof source !== 'string') continue
 
       const guardedSummary = guardField(summary, matched.label, 'summary')
       const guardedAngle = guardedSummary ? guardField(angle, matched.label, 'angle') : null
       if (!guardedSummary || !guardedAngle) continue  // drop the offending item entirely, keep the rest
 
-      guardedItems.push({
+      const item: StructuredBriefItem = {
         summary: guardedSummary,
         angle: guardedAngle,
         source,
         url: typeof url === 'string' ? url : null,
-      })
+      }
+
+      if (needsImpact) {
+        // Model omitted or returned something outside the three known values — default to
+        // the least-alarming level rather than drop the item or leave it unflagged.
+        const valid = typeof impact === 'string' && VALID_IMPACT.includes(impact as ImpactLevel)
+        if (!valid) {
+          console.error(`[cassandra] generateStructuredBrief: missing/invalid impact "${String(impact)}" for "${matched.label}" item — defaulting to "awareness".`)
+        }
+        item.impact = valid ? (impact as ImpactLevel) : 'awareness'
+      }
+
+      guardedItems.push(item)
     }
 
     if (guardedItems.length > 0) sections.push({ key: matched.key, label: matched.label, items: guardedItems })

@@ -4,7 +4,8 @@ import { askWith } from '@/lib/claude'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
 import { getCall, updateCall } from '../../../../../../tools/apollo'
-import { saveEntry } from '../../../../../../tools/muse'
+import { saveEntry, searchEntries } from '../../../../../../tools/muse'
+import { findCase, createCase, updateCase, addCaseEvent, linkCaseToMuse } from '../../../../../../tools/muse-cases'
 import type { ApolloIntelligence } from '../analyse/route'
 
 const HAIKU = 'claude-haiku-4-5-20251001'
@@ -125,22 +126,16 @@ export async function POST(req: Request) {
     // Auto-save to MUSE — fire and forget, never blocks the response.
     // Structured outputs from a known source (APOLLO) — auto-commit, no
     // Approvals-queue review (Archie's explicit call, 2026-08-13).
+    //
+    // The prospect is filed as one case (find-or-create + an event), not three flat
+    // documents — intelligence is already anonymised to "First L." + company by the
+    // extraction prompt. The transcript itself is no longer copied into MUSE (it stays
+    // in apollo_calls only); the advisor brief and client email remain separate
+    // muse_entries under Sales & Prospecting since they're documents, not case data.
     void (async () => {
       try {
         const now = Math.floor(Date.now() / 1000)
-
-        const transcriptEntryId = await saveEntry({
-          sector: 'Sales & Prospecting',
-          title: `Call Transcript — ${prospectName} ${dateStr}`,
-          summary: `Call transcript from ${dateStr}`,
-          content: transcript,
-          brief_depth: 'detailed',
-          source: 'apollo',
-          source_agent: 'APOLLO',
-          status: 'active',
-          date_filed: now,
-          last_updated: now,
-        })
+        const company = intelligence.company
 
         const briefEntryId = await saveEntry({
           sector: 'Sales & Prospecting',
@@ -168,10 +163,70 @@ export async function POST(req: Request) {
           last_updated: now,
         })
 
+        // Find-or-create the case for this prospect (matched on anonymised name + company).
+        const existing = await findCase(prospectName, company)
+        const caseId = existing
+          ? existing.id
+          : await createCase({
+              display_name: prospectName,
+              company,
+              location: intelligence.prospect_location,
+              occupation: intelligence.occupation,
+              financial_profile: intelligence.financial_situation,
+            })
+
+        if (existing) {
+          // Refresh with the latest known state — a later call usually has more
+          // complete information than an earlier one.
+          await updateCase(caseId, {
+            location: intelligence.prospect_location ?? existing.location,
+            occupation: intelligence.occupation ?? existing.occupation,
+            financial_profile: intelligence.financial_situation ?? existing.financial_profile,
+          })
+        }
+
+        const callSummary = [intelligence.financial_concerns, intelligence.future_goals]
+          .filter(Boolean)
+          .join(' ') || `Call on ${dateStr}.`
+
+        await addCaseEvent(caseId, {
+          event_type: 'call',
+          date: dateStr,
+          summary: callSummary,
+          what_suggested: intelligence.suggested_approach,
+          adviser_recommendation: null,
+          worked: 'pending',
+          apollo_call_id: callId,
+        })
+
+        // Link the case to relevant existing knowledge (regulations, products, training).
+        // searchEntries does a single substring LIKE match, so a whole sentence never
+        // matches anything — extract short distinctive keywords and search per-keyword.
+        const keywordSource = [intelligence.financial_concerns, intelligence.occupation, intelligence.objections_raised]
+          .filter(Boolean)
+          .join(' ')
+        const stopwords = new Set(['their', 'about', 'which', 'never', 'reviewed', 'sitting', 'working', 'holdings'])
+        const keywords = Array.from(new Set(
+          keywordSource
+            .toLowerCase()
+            .split(/[^a-z]+/)
+            .filter(w => w.length >= 5 && !stopwords.has(w)),
+        )).slice(0, 5)
+
+        if (keywords.length > 0) {
+          const perKeyword = await Promise.all(keywords.map(k => searchEntries(k)))
+          const excludeIds = new Set([briefEntryId, emailEntryId])
+          const seen = new Map<string, { id: string }>()
+          for (const results of perKeyword) {
+            for (const r of results) if (!excludeIds.has(r.id) && !seen.has(r.id)) seen.set(r.id, r)
+          }
+          await Promise.all(Array.from(seen.values()).slice(0, 3).map(r => linkCaseToMuse(caseId, r.id)))
+        }
+
         await updateCall(callId, {
-          muse_transcript_id: transcriptEntryId,
           muse_brief_id: briefEntryId,
           muse_email_id: emailEntryId,
+          muse_case_id: caseId,
         })
       } catch (err) {
         console.error('[apollo] MUSE auto-save failed:', err)

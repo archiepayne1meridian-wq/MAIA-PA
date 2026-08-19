@@ -32,6 +32,35 @@ type MuseIntent =
   | { type: 'confirm'; pendingId: string; decision: 'keep' | 'discard' }
   | { type: 'status' }
 
+// Maps a spoken/typed sector word to the exact string stored in muse_entries.sector —
+// the DB filter is a case-sensitive exact match, so "training" alone would otherwise
+// never match the stored "Training".
+const SECTOR_ALIASES: Record<string, string> = {
+  training: 'Training',
+  products: 'Products',
+  regulations: 'Regulations',
+  sales: 'Sales & Prospecting',
+  'sales prospecting': 'Sales & Prospecting',
+  'sales & prospecting': 'Sales & Prospecting',
+  'sales and prospecting': 'Sales & Prospecting',
+  expat: 'Expat Knowledge',
+  'expat knowledge': 'Expat Knowledge',
+  funds: 'Funds & Macro',
+  macro: 'Funds & Macro',
+  'funds macro': 'Funds & Macro',
+  'funds & macro': 'Funds & Macro',
+  'funds and macro': 'Funds & Macro',
+  psychology: 'Client Psychology & Profiles',
+  'client psychology': 'Client Psychology & Profiles',
+  'client psychology profiles': 'Client Psychology & Profiles',
+  'client psychology & profiles': 'Client Psychology & Profiles',
+}
+
+function canonicalSector(raw: string): string {
+  const key = raw.toLowerCase().replace(/\s+/g, ' ').trim()
+  return SECTOR_ALIASES[key] ?? raw
+}
+
 export function detectMuseIntent(text: string): MuseIntent | null {
   const t = text.trim()
   if (!/^muse[,.]?\s+/i.test(t)) return null
@@ -45,10 +74,10 @@ export function detectMuseIntent(text: string): MuseIntent | null {
 
   // Sector search: "search [sector] for [query]"
   const sectorSearch = body.match(
-    /^search\s+(training|markets|products|regulations|sales[\s&]+prospecting|sales|expat\s+knowledge|expat|performance)\s+for\s+(.+)$/i,
+    /^search\s+(training|funds\s*(?:&|and)?\s*macro|funds|macro|products|regulations|sales[\s&]+prospecting|sales|expat\s+knowledge|expat|client\s+psychology(?:\s*&\s*profiles)?|psychology)\s+for\s+(.+)$/i,
   )
   if (sectorSearch) {
-    return { type: 'search_sector', sector: sectorSearch[1]!.trim(), query: sectorSearch[2]!.trim() }
+    return { type: 'search_sector', sector: canonicalSector(sectorSearch[1]!.trim()), query: sectorSearch[2]!.trim() }
   }
 
   // Search all
@@ -454,10 +483,10 @@ async function runCassandraHarvest(data: Record<string, unknown>): Promise<void>
   if (!briefText) return
 
   const SECTOR_MAP: Record<string, string> = {
-    'IPO': 'Markets',
-    'Rate decision': 'Markets',
-    'Earnings': 'Markets',
-    'Crypto': 'Markets',
+    'IPO': 'Funds & Macro',
+    'Rate decision': 'Funds & Macro',
+    'Earnings': 'Funds & Macro',
+    'Crypto': 'Funds & Macro',
     'Regulatory change': 'Regulations',
   }
 
@@ -475,7 +504,7 @@ async function runCassandraHarvest(data: Record<string, unknown>): Promise<void>
       .replace(/\n/g, ' ')
       .trim()
 
-    const sector = SECTOR_MAP[signal.label] ?? 'Markets'
+    const sector = SECTOR_MAP[signal.label] ?? 'Funds & Macro'
     const content = `${signal.label} signal from today's CASSANDRA market brief: ${snippet}`
 
     const { pendingIds, assessment } = await processInput(content, 'brain_dump', sector)
@@ -552,7 +581,7 @@ export async function handleMuseMorningInsight(): Promise<void> {
 // ─── Step 6 helpers ───────────────────────────────────────────────────────────
 
 async function maybeQueueForIris(title: string, sector: string): Promise<boolean> {
-  if (sector !== 'Markets' && sector !== 'Regulations') return false
+  if (sector !== 'Funds & Macro' && sector !== 'Regulations') return false
 
   const recentPosts = await getRecentPosts(7)
   const titleWords = title

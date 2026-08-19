@@ -102,6 +102,44 @@ export async function updateEntry(
     .where(eq(muse_entries.id, id))
 }
 
+// Partial edit from the dashboard entry overlay — any of content/title/sector.
+// Archives the pre-edit content to muse_change_log (the field that actually carries
+// history) and notes which fields changed. Returns changed=false if nothing differed.
+export async function updateEntryFields(
+  id: string,
+  fields: { content?: string; title?: string; sector?: string },
+): Promise<{ changed: boolean }> {
+  const rows = await getDb().select().from(muse_entries).where(eq(muse_entries.id, id)).limit(1)
+  const existing = rows[0]
+  if (!existing) throw new Error(`Entry not found: ${id}`)
+
+  const changed: string[] = []
+  const updates: { content?: string; title?: string; sector?: string; last_updated?: number } = {}
+
+  if (fields.content !== undefined && fields.content !== existing.content) {
+    updates.content = fields.content
+    changed.push('content')
+  }
+  if (fields.title !== undefined && fields.title !== existing.title) {
+    updates.title = fields.title
+    changed.push('title')
+  }
+  if (fields.sector !== undefined && fields.sector !== existing.sector) {
+    updates.sector = fields.sector
+    changed.push('sector')
+  }
+
+  if (changed.length === 0) return { changed: false }
+
+  await saveChangeLog(id, `Edited: ${changed.join(', ')}`, existing.content)
+
+  const now = Math.floor(Date.now() / 1000)
+  updates.last_updated = now
+  await getDb().update(muse_entries).set(updates).where(eq(muse_entries.id, id))
+
+  return { changed: true }
+}
+
 export async function getEntries(sector?: string): Promise<MuseEntry[]> {
   const db = getDb()
   if (sector) {

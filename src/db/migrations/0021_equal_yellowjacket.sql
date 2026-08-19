@@ -1,0 +1,1 @@
+ALTER TABLE `apollo_calls` ADD `muse_case_id` text;

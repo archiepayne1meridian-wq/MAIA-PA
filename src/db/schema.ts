@@ -226,6 +226,32 @@ export const muse_pending = sqliteTable('muse_pending', {
   created_at: integer('created_at').notNull(),
 })
 
+export const muse_cases = sqliteTable('muse_cases', {
+  id: text('id').primaryKey(),
+  display_name: text('display_name').notNull(),    // "John S." — first name + last initial only, never full surname
+  company: text('company'),
+  location: text('location'),
+  occupation: text('occupation'),
+  financial_profile: text('financial_profile'),     // anonymised financial situation, general terms
+  status: text('status').notNull().default('active'),  // active/meeting_booked/meeting_sat/closed
+  outcome: text('outcome'),                          // what happened, adviser recommendation
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
+})
+
+export const muse_case_events = sqliteTable('muse_case_events', {
+  id: text('id').primaryKey(),
+  case_id: text('case_id').notNull(),
+  event_type: text('event_type').notNull(),   // call/meeting_booked/meeting_sat/adviser_note/outcome/follow_up
+  date: text('date').notNull(),               // YYYY-MM-DD
+  summary: text('summary').notNull(),
+  what_suggested: text('what_suggested'),
+  adviser_recommendation: text('adviser_recommendation'),
+  worked: text('worked'),                     // yes/no/pending
+  apollo_call_id: text('apollo_call_id'),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
 export const mercury_templates = sqliteTable('mercury_templates', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -290,8 +316,9 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   intelligence_json: text('intelligence_json'),
   advisor_brief: text('advisor_brief'),
   client_email: text('client_email'),
-  muse_transcript_id: text('muse_transcript_id'),
+  muse_transcript_id: text('muse_transcript_id'),   // legacy — no longer written; case events replace this
   muse_brief_id: text('muse_brief_id'),
   muse_email_id: text('muse_email_id'),
+  muse_case_id: text('muse_case_id'),               // muse_cases.id this call was filed against
   created_at: integer('created_at').notNull(),
 })

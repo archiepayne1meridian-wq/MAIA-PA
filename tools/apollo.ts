@@ -15,6 +15,7 @@ export interface ApolloCall {
   muse_transcript_id: string | null
   muse_brief_id: string | null
   muse_email_id: string | null
+  muse_case_id: string | null
   created_at: number
 }
 

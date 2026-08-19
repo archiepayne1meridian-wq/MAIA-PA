@@ -25,7 +25,8 @@ export async function GET(
       intelligence: call.intelligence_json ? JSON.parse(call.intelligence_json) : null,
       advisorBrief: call.advisor_brief,
       clientEmail: call.client_email,
-      museSaved: Boolean(call.muse_transcript_id && call.muse_brief_id && call.muse_email_id),
+      museCaseId: call.muse_case_id,
+      museSaved: Boolean(call.muse_case_id && call.muse_brief_id && call.muse_email_id),
     },
   })
 }

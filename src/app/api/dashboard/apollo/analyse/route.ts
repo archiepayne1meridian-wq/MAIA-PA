@@ -15,14 +15,24 @@ Return JSON only — no prose outside the JSON. Extract every detail mentioned,
 infer carefully where appropriate, never invent. If something isn't mentioned,
 return null for that field.
 
+PRIVACY RULES — apply to all extracted fields:
+- Names: first name + last initial only. "John Smith" → "John S."
+- Never store: full surname, phone, email, home address, children's details
+  (a general mention that they have children is fine — never names or ages)
+- Keep: company, location, occupation, financial situation (general terms)
+- Financial amounts: keep if relevant to the case (e.g. "pension not reviewed
+  since 2017", "significant cash holdings across two currencies") — never
+  store specific account numbers or precise balances unless essential
+
 Return this exact shape:
 {
-  "prospect_name": string | null,
-  "prospect_location": string | null,
+  "prospect_name": string | null,   // "John S." format — see PRIVACY RULES
+  "prospect_location": string | null,   // city + country
+  "company": string | null,   // employer name
   "age_range": string | null,
   "occupation": string | null,
-  "family_situation": string | null,
-  "financial_situation": string | null,
+  "family_situation": string | null,   // general terms only — never children's names/ages
+  "financial_situation": string | null,   // general terms — see PRIVACY RULES on amounts
   "income_indicators": string | null,
   "financial_concerns": string | null,
   "future_goals": string | null,
@@ -39,6 +49,7 @@ Return this exact shape:
 export interface ApolloIntelligence {
   prospect_name: string | null
   prospect_location: string | null
+  company: string | null
   age_range: string | null
   occupation: string | null
   family_situation: string | null

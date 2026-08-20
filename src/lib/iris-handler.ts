@@ -22,6 +22,7 @@ import {
   getTodaysBrief,
   getSuggestedTopic,
   type IrisPost,
+  type VoicePref,
 } from '../../tools/iris'
 import { getDb } from '@/db'
 import { activity, iris_posts } from '@/db/schema'
@@ -129,14 +130,11 @@ const PILLAR_2_TOPICS = [
   'Currency risk — earning in CHF, thinking in GBP, retiring somewhere else',
 ]
 
-const PILLAR_3_TOPICS = [
-  'Golf — the Masters, Ryder Cup, major tournaments',
-  'Football — World Cup, Champions League, big moments',
-  'F1 — team valuations, big races, business side of sport',
-  'Moving abroad — life observations, cultural differences, things that surprised you',
-  'Personal milestones — settling in Switzerland, things you\'ve learned',
-  'Big cultural moments worth an opinion',
-]
+// Pillar 3 is opportunistic, not a fixed topic bank — this is the search
+// guidance handed to generateDraft() once per run to see if anything's worth
+// posting today. Claude reports back its own specific story label (or skips).
+const PILLAR_3_SEARCH_TOPIC = (dateStr: string): string =>
+  `sports news finance money lifestyle today ${dateStr} golf football F1 tennis`
 
 // ─── Topic selection (deterministic) ─────────────────────────────────────────
 
@@ -146,14 +144,25 @@ export interface SelectedTopic {
   cassandraSignal: string | null
 }
 
-export function selectTopic(
+// Pillar 3 requires an actual web search to know if it's even in play today, so
+// selection is async and — when Pillar 3 fires — already carries the fully
+// generated draft (generateDraft() both searches and judges "is this worth
+// posting" in one call; there's no cheaper way to pre-check it).
+export interface PickedTopic extends SelectedTopic {
+  pregeneratedDraft?: IrisDraft
+}
+
+export async function selectTopic(
   brief: string | null,
   recentTopics: string[],
   lastThreePillars: number[],
-): SelectedTopic {
+  slot: 'morning' | 'evening',
+  voicePrefs: VoicePref[],
+  attemptPillar3 = true,
+): Promise<PickedTopic> {
   const recentLower = new Set(recentTopics.map(t => t.toLowerCase()))
 
-  // Pillar balance override: if last 3 posts all Pillar 1, force 2 or 3
+  // Pillar balance override: if last 3 posts all Pillar 1, force 2
   const last3AllP1 = lastThreePillars.length >= 3 && lastThreePillars.every(p => p === 1)
 
   // Step 1 — CASSANDRA scan for Pillar 1 signals (unless pillar balance override)
@@ -169,41 +178,39 @@ export function selectTopic(
     }
   }
 
-  // Step 2 — pillar balance: compute target pillar
-  const p1count = lastThreePillars.filter(p => p === 1).length
-  const p2count = lastThreePillars.filter(p => p === 2).length
-  const p3count = lastThreePillars.filter(p => p === 3).length
-
-  let targetPillar: 1 | 2 | 3
-  if (last3AllP1 || p1count >= 2) {
-    // Alternate between 2 and 3
-    targetPillar = p2count <= p3count ? 2 : 3
-  } else if (p2count >= 2) {
-    targetPillar = p3count <= p1count ? 3 : 1
-  } else {
-    // Default: prefer 1, then 2, then 3 per 50/30/20 target
-    targetPillar = 1
+  // Step 2 — Pillar 3, opportunistic only: try once per run (not on retries).
+  // No fixed rotation slot, no forced post — only fires if today's sports/
+  // lifestyle search turns up something with a genuine finance angle.
+  if (attemptPillar3) {
+    const dateStr = new Date().toISOString().slice(0, 10)
+    const pillar3Result = await generateDraft(slot, 3, PILLAR_3_SEARCH_TOPIC(dateStr), null, voicePrefs)
+    if (!pillar3Result.skip) {
+      return {
+        pillar: 3,
+        topic: pillar3Result.topic,
+        cassandraSignal: null,
+        pregeneratedDraft: pillar3Result,
+      }
+    }
+    console.log('[iris] Pillar 3 skipped — no strong sports angle today')
   }
 
-  // Step 3 — pick from topic bank for target pillar, avoiding recent
-  const bankMap: Record<1 | 2 | 3, string[]> = {
+  // Step 3 — pillar balance between 1 and 2 only
+  const p1count = lastThreePillars.filter(p => p === 1).length
+
+  const targetPillar: 1 | 2 = (last3AllP1 || p1count >= 2) ? 2 : 1
+
+  // Step 4 — pick from topic bank for target pillar, avoiding recent
+  const bankMap: Record<1 | 2, string[]> = {
     1: PILLAR_1_TOPICS,   // fallback if no CASSANDRA signal fires
     2: PILLAR_2_TOPICS,
-    3: PILLAR_3_TOPICS,
   }
 
   const bank = bankMap[targetPillar]
-  if (bank.length > 0) {
-    const fresh = bank.filter(t => !recentLower.has(t.toLowerCase()))
-    const pool = fresh.length > 0 ? fresh : bank  // reset if all recently used
-    // Cycle: pick first in pool (deterministic — same run = same pick)
-    return { pillar: targetPillar, topic: pool[0]!, cassandraSignal: null }
-  }
-
-  // Final fallback: Pillar 2 first available
-  const p2fresh = PILLAR_2_TOPICS.filter(t => !recentLower.has(t.toLowerCase()))
-  const p2topic = (p2fresh.length > 0 ? p2fresh : PILLAR_2_TOPICS)[0]!
-  return { pillar: 2, topic: p2topic, cassandraSignal: null }
+  const fresh = bank.filter(t => !recentLower.has(t.toLowerCase()))
+  const pool = fresh.length > 0 ? fresh : bank  // reset if all recently used
+  // Cycle: pick first in pool (deterministic — same run = same pick)
+  return { pillar: targetPillar, topic: pool[0]!, cassandraSignal: null }
 }
 
 // ─── Scheduled draft builder (called by POST /api/cron/iris) ─────────────────
@@ -234,7 +241,7 @@ export async function buildScheduledDraft(
     ])
     const voicePrefs = await getVoicePreferences()
 
-    let selected: SelectedTopic
+    let selected: PickedTopic
     if (suggestedPost) {
       // Consume the CASSANDRA-flagged topic: mark it selected, use it for this draft.
       await updatePostStatus(suggestedPost.id, 'selected')
@@ -244,17 +251,18 @@ export async function buildScheduledDraft(
         cassandraSignal: null,
       }
     } else {
-      selected = selectTopic(brief, recentTopics, lastThreePillars)
+      selected = await selectTopic(brief, recentTopics, lastThreePillars, slot, voicePrefs)
     }
 
     // Relevance filter can skip a topic — fall back to the next topic in the
     // bank, up to a few attempts, rather than force a weak/irrelevant post.
+    // A Pillar 3 pick already ran its search+draft inside selectTopic() — reuse
+    // that result instead of searching a second time via generateDraft.
     const MAX_ATTEMPTS = 4
     const skipped: { topic: string; reason: string }[] = []
     const excludedTopics = [...recentTopics]
-    let result: IrisDraft | IrisSkip = await generateDraft(
-      slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs,
-    )
+    let result: IrisDraft | IrisSkip = selected.pregeneratedDraft
+      ?? await generateDraft(slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs)
 
     while (result.skip && skipped.length < MAX_ATTEMPTS - 1) {
       skipped.push({ topic: selected.topic, reason: result.reason })
@@ -263,10 +271,10 @@ export async function buildScheduledDraft(
         await updatePostStatus(suggestedPost.id, 'skipped')
       }
       excludedTopics.push(selected.topic)
-      selected = selectTopic(brief, excludedTopics, lastThreePillars)
-      result = await generateDraft(
-        slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs,
-      )
+      // Pillar 3 already had its one shot this run — don't re-search on retries.
+      selected = await selectTopic(brief, excludedTopics, lastThreePillars, slot, voicePrefs, false)
+      result = selected.pregeneratedDraft
+        ?? await generateDraft(slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs)
     }
 
     if (result.skip) {

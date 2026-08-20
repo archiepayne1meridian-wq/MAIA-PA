@@ -48,9 +48,10 @@ export interface IrisSkip {
 
 // System prompt embeds the current year server-side so Claude never has to guess
 // it from (possibly stale) training data when building the search query. The
-// relevance filter only applies to Pillar 1/2 (finance content) — Pillar 3
-// (sports, culture, personal) is explicitly finance-optional per context/iris.md
-// and must never be forced through a cross-border-relevance test.
+// audience relevance filter only applies to Pillar 1/2 (finance content) — Pillar 3
+// (sports & lifestyle) is opportunistic instead: it has its own skip clause below
+// that fires when the day's search doesn't turn up a story with a natural finance
+// angle, rather than being tested against the cross-border-relevance question.
 function buildIrisSystem(pillar: 1 | 2 | 3): string {
   const year = new Date().getFullYear()
 
@@ -76,8 +77,8 @@ specific reason — and stop. Do not search, do not draft, do not include any ot
 `
 
   const schemaLine = pillar === 3
-    ? `Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. Search, then output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON) — this is a Pillar 3 sports/culture/personal post, it never needs a finance angle and never gets skipped for relevance:
-{"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}`
+    ? `Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. Search for today's sports/lifestyle news first, per the PILLAR 3 rules below. If nothing stands out, output ONLY: {"skip": true, "reason": "..."}. If you find a genuinely good story with a natural finance angle, output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON):
+{"topic": "short label for the specific story, e.g. \\"Ryder Cup prize money\\"", "copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}`
     : `Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. If the topic passes the relevance filter, search, then output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON):
 {"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}
 If the topic fails the relevance filter, output ONLY: {"skip": true, "reason": "..."}`
@@ -115,12 +116,32 @@ FINANCE & MARKET POSTS (Pillar 1 and 2):
   young finance professional who knows their stuff
 - Show you're up to date: reference the specific current event found in search
 
-CULTURE & SPORTS POSTS (Pillar 3):
-- Shorter: 3-5 lines max
-- Same hook discipline — first line must earn the read
-- More personal, lighter tone
-- End with a question or your opinion
-- No finance angle forced
+PILLAR 3 — SPORTS & LIFESTYLE WITH FINANCE TWIST
+
+Only draft a Pillar 3 post if today's search found something genuinely
+worth posting about. If nothing stands out, return { skip: true }.
+
+When you do draft a Pillar 3 post:
+- Lead with the sports/lifestyle hook — that's what earns the click
+- Find a natural finance, retirement, or lifestyle planning angle
+  that emerges from the topic — never force it
+- The finance twist should feel like a genuine observation,
+  not a pivot
+
+Good examples of natural twists:
+- Padel cost in UK vs Spain → cost of living → where you want to retire
+- Big transfer fee → present value of money → compounding
+- F1 team valuation surge → alternative assets → what drives value
+- World Cup host spending → government debt → expat financial planning
+- A player retiring young → pension planning → what income do you need?
+
+If the finance angle doesn't emerge naturally from the topic — don't
+post it. A pure sports post with no relevant angle adds no value to
+the target audience (people in Switzerland with assets abroad).
+
+Always end with a question that connects sport to the financial theme.
+
+Length: 3-5 lines max, same hook discipline as Pillar 1/2 posts.
 
 UNIVERSAL RULES:
 - Never sound AI-generated
@@ -181,7 +202,7 @@ export async function generateDraft(
   const pillarGuide: Record<number, string> = {
     1: 'MARKETS post — FINANCE & MARKET format rules apply.',
     2: 'EXPAT FINANCE post — FINANCE & MARKET format rules apply. Archie moved to Malta; personal expat angle where relevant.',
-    3: 'SPORTS & CULTURE post — CULTURE & SPORTS format rules apply. Archie follows golf, football (PL/World Cup), F1.',
+    3: 'SPORTS & LIFESTYLE post — PILLAR 3 format rules apply. Archie follows golf, football (PL/World Cup), F1. Only draft if a natural finance, retirement, or lifestyle-planning angle emerges from today\'s search — otherwise return skip.',
   }
 
   const contextBlock = cassandraContext
@@ -211,9 +232,15 @@ export async function generateDraft(
 
   console.log(`[iris] generateDraft(${topic}): search query="${search.query ?? 'none'}" results=${search.results.length} groundedInSearch=${groundedInSearch}`)
 
+  // Pillar 3 doesn't know its story in advance — the topic bank passes a generic
+  // search-guidance string, so prefer the specific label Claude found on the day.
+  const resolvedTopic = pillar === 3 && typeof obj.topic === 'string' && obj.topic.trim()
+    ? obj.topic.trim()
+    : topic
+
   return {
     pillar,
-    topic,
+    topic: resolvedTopic,
     copy: (obj.copy as string).trim(),
     imagePrompt: typeof obj.imagePrompt === 'string' ? obj.imagePrompt : `Professional LinkedIn image for: ${topic}`,
     format: typeof obj.format === 'string' ? obj.format : 'text with image',

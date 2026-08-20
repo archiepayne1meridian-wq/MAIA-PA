@@ -88,6 +88,17 @@ export async function updatePostSlackTs(id: string, slack_ts: string): Promise<v
   await getDb().update(iris_posts).set({ slack_ts }).where(eq(iris_posts.id, id))
 }
 
+export async function getPostById(id: string): Promise<IrisPost | null> {
+  const rows = await getDb()
+    .select()
+    .from(iris_posts)
+    .where(eq(iris_posts.id, id))
+    .limit(1)
+  const row = rows[0]
+  if (!row) return null
+  return row as IrisPost
+}
+
 export async function getActiveIrisDraft(slack_ts: string): Promise<IrisPost | null> {
   const rows = await getDb()
     .select()

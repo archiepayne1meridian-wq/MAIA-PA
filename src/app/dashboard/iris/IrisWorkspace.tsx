@@ -127,6 +127,36 @@ export default function IrisWorkspace() {
     }
   }
 
+  async function downloadImage(post: IrisPost) {
+    if (!post.image_url) return
+    const dateStr = new Date(post.created_at * 1000).toISOString().slice(0, 10)
+    try {
+      if (post.image_url.startsWith('data:')) {
+        const mime = post.image_url.match(/^data:([^;]+);base64,/)?.[1]
+        const ext = mime === 'image/svg+xml' ? 'svg' : 'png'
+        const res = await fetch(post.image_url)
+        const blob = await res.blob()
+        const blobUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = `iris-post-${dateStr}.${ext}`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
+      } else {
+        const a = document.createElement('a')
+        a.href = `/api/dashboard/iris/download-image?postId=${post.id}`
+        a.download = `iris-post-${dateStr}.png`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+      }
+    } catch (e) {
+      console.error('[iris] image download failed:', e)
+    }
+  }
+
   async function savePerformance(postId: string) {
     const vals = perfValues[postId]
     if (!vals) return
@@ -190,12 +220,20 @@ export default function IrisWorkspace() {
             <div className={s.irisDraftTopic}>{draft.topic}</div>
 
             {draft.image_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={draft.image_url}
-                alt="IRIS generated image"
-                className={s.irisDraftImage}
-              />
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={draft.image_url}
+                  alt="IRIS generated image"
+                  className={s.irisDraftImage}
+                />
+                <button
+                  className={s.irisImageDownloadBtn}
+                  onClick={() => void downloadImage(draft)}
+                >
+                  Download Image
+                </button>
+              </>
             )}
 
             <pre className={s.irisCopy}>{draft.copy}</pre>

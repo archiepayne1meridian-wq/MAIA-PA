@@ -155,6 +155,13 @@
       "when": 1787148509917,
       "tag": "0021_equal_yellowjacket",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1787237469674,
+      "tag": "0022_green_the_hand",
+      "breakpoints": true
     }
   ]
 }

@@ -7,7 +7,7 @@ import {
   appendTurn,
   parseTranscript,
 } from '../../../../../../tools/diana-db'
-import { roleplayTurn, type ProspectProfileKey } from '@/lib/diana'
+import { roleplayTurn, getProfileOpeningLine, type ProspectProfileKey } from '@/lib/diana'
 
 const WEB_USER = 'web'
 
@@ -31,14 +31,24 @@ export async function POST(req: Request) {
   const _existingTranscript = parseTranscript(session.transcript_json)
   await appendTurn(session.id, 'user', text.trim())
 
-  const reply = await roleplayTurn(
-    _existingTranscript,
-    text.trim(),
-    session.scenario,
-    (session.difficulty as 'warm' | 'neutral' | 'tough') || 'neutral',
-    mode === 'voice',
-    session.prospect_profile as ProspectProfileKey | null,
-  )
+  // DIANA never speaks first. Archie's very first line of the call gets the
+  // profile's exact scripted opening line — deterministic, no Claude call —
+  // exactly like the legacy Slack roleplay's deterministic "Hello?" opener.
+  // Every turn after that is a real Claude reply.
+  let reply: string
+  if (_existingTranscript.length === 0 && session.prospect_profile) {
+    reply = getProfileOpeningLine(session.prospect_profile as ProspectProfileKey)
+  } else {
+    reply = await roleplayTurn(
+      _existingTranscript,
+      text.trim(),
+      session.scenario,
+      (session.difficulty as 'warm' | 'neutral' | 'tough') || 'neutral',
+      mode === 'voice',
+      session.prospect_profile as ProspectProfileKey | null,
+      session.prospect_name,
+    )
+  }
 
   await appendTurn(session.id, 'diana', reply)
   return NextResponse.json({ reply })

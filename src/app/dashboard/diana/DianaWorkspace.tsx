@@ -8,7 +8,7 @@ type Difficulty = 'warm' | 'neutral' | 'tough'
 type Phase = 'idle' | 'active' | 'ended'
 type VoiceInputMode = 'text' | 'voice'
 type SpeakState = 'idle' | 'speaking' | 'listening'
-type CallStage = 'opener' | 'fact_find' | 'pension' | 'gate' | 'close' | 'qualify'
+type CallStage = 'introduction' | 'factFind' | 'enlarge' | 'disturb' | 'close' | 'softLanding'
 
 interface Message {
   role: 'user' | 'diana'
@@ -35,49 +35,54 @@ interface Deduction {
   points: number
 }
 
+interface KnowledgeEvent {
+  type: 'correct' | 'wrong'
+  topic: string
+  points: number
+}
+
 interface CallScore {
   stages: StageScore[]
   deductions: Deduction[]
+  knowledgeEvents: KnowledgeEvent[]
   total: number
   maxTotal: number
   summary: string
 }
 
 const STAGE_ORDER: { key: CallStage; label: string }[] = [
-  { key: 'opener', label: 'Opener' },
-  { key: 'fact_find', label: 'Fact Find' },
-  { key: 'pension', label: 'Pension' },
-  { key: 'gate', label: 'Gate' },
+  { key: 'introduction', label: 'Introduction' },
+  { key: 'factFind', label: 'Fact Find' },
+  { key: 'enlarge', label: 'Enlarge' },
+  { key: 'disturb', label: 'Disturb' },
   { key: 'close', label: 'Close' },
-  { key: 'qualify', label: 'Qualify' },
+  { key: 'softLanding', label: 'Soft Landing' },
 ]
 
 // Simple, deterministic heuristic — keyword + turn-count based. Not a Claude
 // call: this just drives a lightweight progress indicator, updated locally
-// after every turn as `messages` changes.
+// after every turn as `messages` changes. Checked most-advanced-stage-first so
+// a later signal always wins once the call has moved on.
 function inferCallStage(messages: Message[]): CallStage {
   const adviserTurns = messages.filter(m => m.role === 'user').length
-  if (adviserTurns === 0) return 'opener'
+  if (adviserTurns === 0) return 'introduction'
 
   const allText = messages.map(m => m.text.toLowerCase()).join(' \n ')
 
-  if (
-    /\b(where are you based|five years|anything else we haven't covered|talk me through them|which is the bigger)\b/.test(allText) &&
-    adviserTurns >= 5
-  ) {
-    return 'qualify'
+  if (/\b(before we wrap up|finalise a few details|precise information|as valuable as possible)\b/.test(allText)) {
+    return 'softLanding'
   }
-  if (/\b(beginning or end of|morning or afternoon|would .* be easier|when'?s typically best|tuesday at|thursday at)\b/.test(allText)) {
+  if (/\b(stephen smith|senior consultant|this week or next week|wednesday or friday|when works best|looking at his calendar|beginning or end of|morning or afternoon)\b/.test(allText)) {
     return 'close'
   }
-  if (/\b(sound fair|does that sound right|three things|every one of those|worth a proper look)\b/.test(allText)) {
-    return 'gate'
+  if (/\b(is it safe to say|two most important things|hard to maintain|maintain your current lifestyle|underperforming)\b/.test(allText)) {
+    return 'disturb'
   }
-  if (/\b(pension|db\b|dc\b|qrops|transfer|scheme|retire|death benefit)\b/.test(allText)) {
-    return 'pension'
+  if (/\b(last time your (pension )?provider|risk level|tax implications|scale of 1|1-10|1 to 10|kept you with|manage.{0,10}yourself|platform or structure|regular savings account|interest rate|inflation rate)\b/.test(allText)) {
+    return 'enlarge'
   }
-  if (adviserTurns <= 1) return 'opener'
-  return 'fact_find'
+  if (adviserTurns <= 1) return 'introduction'
+  return 'factFind'
 }
 
 interface ObjStat {
@@ -102,11 +107,13 @@ const DIFF_COLORS: Record<Difficulty, string> = {
   tough: 'var(--alert)',
 }
 
+// Best-effort heuristic on DIANA's (the prospect's) own reply — just drives the
+// "Meeting Booked ✓" banner, nothing auto-ends the call on a match any more (the
+// call continues into Soft Landing after a yes; Archie ends it manually).
 const MEETING_BOOKED_PHRASES = [
-  'put that in the diary',
-  'book you in',
-  'confirm that appointment',
-  'get that scheduled',
+  'works for me', 'wednesday works', 'friday works', 'that works',
+  'sounds good', 'ok, book', 'okay, book', 'yeah, let\'s do', 'let\'s do that',
+  'i\'ll do wednesday', 'i\'ll do friday', 'put me down', 'that\'s fine, book',
 ]
 
 function detectMeetingBooked(text: string): boolean {
@@ -185,7 +192,6 @@ export default function DianaWorkspace() {
   const [voiceUnavailable, setVoiceUnavailable] = useState(false)
   const [meetingBooked, setMeetingBooked] = useState(false)
   const audioQueueRef = useRef<AudioQueue | null>(null)
-  const pendingMeetingEndRef = useRef(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -292,7 +298,6 @@ export default function DianaWorkspace() {
   async function startSession() {
     setError(null)
     setMeetingBooked(false)
-    pendingMeetingEndRef.current = false
     const res = await fetch('/api/dashboard/diana/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -300,21 +305,17 @@ export default function DianaWorkspace() {
     })
     const data = await res.json() as { session?: { transcript: Message[]; scenario?: string; profile?: ProfileInfo | null } }
     if (data.session) {
-      const transcript = data.session.transcript ?? []
-      setMessages(transcript)
+      // DIANA never speaks first — transcript starts empty. Archie opens the call.
+      setMessages(data.session.transcript ?? [])
       setCurrentScenario(data.session.scenario ?? null)
       setProfile(data.session.profile ?? null)
       setScore(null)
       setScoreNote(null)
       setPhase('active')
 
-      // Speak the opening line in voice mode
-      if (voiceMode === 'voice') {
-        const opening = transcript[transcript.length - 1]
-        if (opening?.role === 'diana') {
-          speakText(opening.text, startMic)
-        }
-      }
+      // In voice mode there's nothing for DIANA to say yet — go straight to
+      // listening so Archie can open the call by speaking.
+      if (voiceMode === 'voice') startMic()
     }
   }
 
@@ -334,21 +335,12 @@ export default function DianaWorkspace() {
       const data = await res.json() as { reply?: string; error?: string }
       if (data.reply) {
         setMessages(prev => [...prev, { role: 'diana', text: data.reply! }])
-        const bookedNow = detectMeetingBooked(data.reply)
+        // Just a milestone banner now — the call continues into Soft Landing
+        // after a yes, Archie ends it manually with "End Call — get feedback".
+        if (detectMeetingBooked(data.reply)) setMeetingBooked(true)
 
         if (voiceMode === 'voice') {
-          if (bookedNow) {
-            pendingMeetingEndRef.current = true
-            speakText(data.reply, () => {
-              setMeetingBooked(true)
-              void exitSession()
-            })
-          } else {
-            speakText(data.reply, startMic)
-          }
-        } else if (bookedNow) {
-          setMeetingBooked(true)
-          setTimeout(() => void exitSession(), 800)
+          speakText(data.reply, startMic)
         }
       } else if (data.error) {
         setError(data.error)
@@ -395,7 +387,6 @@ export default function DianaWorkspace() {
     setMeetingBooked(false)
     setSpeakState('idle')
     setListenStatus(null)
-    pendingMeetingEndRef.current = false
   }
 
   function newSession() {
@@ -409,7 +400,6 @@ export default function DianaWorkspace() {
     setMeetingBooked(false)
     setSpeakState('idle')
     setListenStatus(null)
-    pendingMeetingEndRef.current = false
   }
 
   // ── Chart data: session count per day (last 10 days) ─────────────────────
@@ -523,7 +513,7 @@ export default function DianaWorkspace() {
                 Start Session
               </button>
               <p className={s.dianaAutonomousNote}>
-                DIANA will select an objection autonomously — you focus on your response.
+                You'll be matched with one of four random prospects — pick up the phone and open the call.
               </p>
             </div>
           )}
@@ -586,6 +576,11 @@ export default function DianaWorkspace() {
               )}
 
               <div className={s.dianaChatMessages}>
+                {messages.length === 0 && !sending && (
+                  <p style={{ fontSize: 11.5, color: 'var(--text-dim)', fontStyle: 'italic' }}>
+                    The prospect has picked up — you open the call.
+                  </p>
+                )}
                 {messages.map((msg, i) => (
                   <div key={i} className={msg.role === 'user' ? s.dianaMsgUser : s.dianaMsgDiana}>
                     <span className={s.dianaMsgLabel}>{msg.role === 'diana' ? 'PROSPECT' : 'YOU'}</span>
@@ -710,6 +705,23 @@ export default function DianaWorkspace() {
                         <div key={d.type} className={s.dianaDeductionRow}>
                           <span>{d.label}</span>
                           <span className={s.dianaDeductionPoints}>{d.points}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {score.knowledgeEvents.length > 0 && (
+                    <div className={s.dianaKnowledgeList}>
+                      <span className={s.fpSectionLabel} style={{ display: 'block', marginBottom: 6 }}>Knowledge accuracy</span>
+                      {score.knowledgeEvents.map((k, i) => (
+                        <div key={i} className={s.dianaKnowledgeRow}>
+                          <span>{k.type === 'correct' ? 'Correct claim' : 'Wrong claim'} — {k.topic}</span>
+                          <span
+                            className={s.dianaKnowledgePoints}
+                            style={{ color: k.points > 0 ? 'var(--online)' : 'var(--alert)' }}
+                          >
+                            {k.points > 0 ? `+${k.points}` : k.points}
+                          </span>
                         </div>
                       ))}
                     </div>

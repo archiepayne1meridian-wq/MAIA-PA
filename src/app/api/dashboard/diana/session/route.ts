@@ -7,21 +7,23 @@ import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import {
   startSession,
-  appendTurn,
   getActiveSession,
   endSession,
   parseTranscript,
   type DianaSession,
 } from '../../../../../../tools/diana-db'
-import { loadDianaConfig } from '@/lib/diana-handler'
-import { PROSPECT_PROFILES, pickRandomProfile, type ProspectProfileKey } from '@/lib/diana'
+import {
+  pickRandomProfile,
+  generateProspectName,
+  getProfileDisplay,
+  type ProspectProfileKey,
+} from '@/lib/diana'
 
 const WEB_USER = 'web'
 
-function profileInfo(key: string | null) {
-  if (!key || !(key in PROSPECT_PROFILES)) return null
-  const p = PROSPECT_PROFILES[key as ProspectProfileKey]
-  return { key: p.key, name: p.name, description: p.description }
+function profileInfo(key: string | null, name: string | null) {
+  if (!key || !name) return null
+  return getProfileDisplay(key as ProspectProfileKey, name)
 }
 
 function serialise(s: DianaSession) {
@@ -32,7 +34,7 @@ function serialise(s: DianaSession) {
     status: s.status,
     slackUser: s.slack_user,
     transcript: parseTranscript(s.transcript_json).map(t => ({ role: t.role, text: t.text })),
-    profile: profileInfo(s.prospect_profile),
+    profile: profileInfo(s.prospect_profile, s.prospect_name),
   }
 }
 
@@ -51,35 +53,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const body = await req.json().catch(() => ({})) as {
-    scenario?: string
     difficulty?: 'warm' | 'neutral' | 'tough'
     mode?: 'text' | 'voice'
   }
 
-  // Autonomous selection: pick a random objection when no scenario is provided
-  let scenario = body.scenario
-  if (!scenario) {
-    const config = loadDianaConfig()
-    if (config.objections.length > 0) {
-      const pick = config.objections[Math.floor(Math.random() * config.objections.length)]
-      scenario = pick.label
-    }
-  }
-
-  // Randomly select one of the 4 deVere prospect profiles for this call.
+  // Randomly select one of the 4 deVere prospect profiles for this call, plus a
+  // fresh random name — both stored on the session so every turn stays consistent.
   const profileKey = pickRandomProfile()
-  const profile = PROSPECT_PROFILES[profileKey]
+  const prospectName = generateProspectName()
 
   const session = await startSession({
     slackUser: WEB_USER,
-    scenario,
     difficulty: body.difficulty,
     prospectProfile: profileKey,
+    prospectName,
   })
 
-  const openingLine = profile.openingLine
-  await appendTurn(session.id, 'diana', openingLine)
-
+  // DIANA never speaks first — the transcript starts empty. Archie opens the
+  // call; her opening line (the profile's exact scripted line) is returned by
+  // /message on the first adviser turn, not generated here.
   return NextResponse.json({
     session: {
       id: session.id,
@@ -87,9 +79,9 @@ export async function POST(req: Request) {
       difficulty: session.difficulty,
       status: 'active',
       slackUser: WEB_USER,
-      transcript: [{ role: 'diana', text: openingLine }],
+      transcript: [],
       mode: body.mode ?? 'text',
-      profile: { key: profile.key, name: profile.name, description: profile.description },
+      profile: getProfileDisplay(profileKey, prospectName),
     },
   })
 }

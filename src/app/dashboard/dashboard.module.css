@@ -1485,6 +1485,12 @@
   font-size: 11.5px; color: var(--alert);
 }
 .dianaDeductionPoints { font-family: var(--mono); flex-shrink: 0; }
+.dianaKnowledgeList { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.dianaKnowledgeRow {
+  display: flex; justify-content: space-between; gap: 8px; padding: 5px 0;
+  font-size: 11.5px; color: var(--text-mid);
+}
+.dianaKnowledgePoints { font-family: var(--mono); flex-shrink: 0; }
 
 /* Performance intelligence column */
 .dianaObjStatList { display: flex; flex-direction: column; }

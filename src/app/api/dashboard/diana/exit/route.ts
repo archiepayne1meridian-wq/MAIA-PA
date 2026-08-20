@@ -34,7 +34,11 @@ export async function POST() {
     })
   }
 
-  const score = await scoreCall(transcript, session.prospect_profile as ProspectProfileKey | null)
+  const score = await scoreCall(
+    transcript,
+    session.prospect_profile as ProspectProfileKey | null,
+    session.prospect_name,
+  )
 
   return NextResponse.json({ score, turns: adviserTurns })
 }

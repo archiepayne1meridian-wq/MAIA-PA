@@ -17,6 +17,7 @@ export interface DianaSession {
   scenario: string | null
   difficulty: string
   prospect_profile: string | null
+  prospect_name: string | null
   transcript_json: string
   status: string
   created_at: number
@@ -63,6 +64,7 @@ export async function startSession(opts: {
   scenario?: string
   difficulty?: 'warm' | 'neutral' | 'tough'
   prospectProfile?: string
+  prospectName?: string
 }): Promise<DianaSession> {
   // End any existing active session for this user before starting a new one.
   const existing = await getActiveSession(opts.slackUser)
@@ -76,6 +78,7 @@ export async function startSession(opts: {
     scenario: opts.scenario ?? null,
     difficulty: opts.difficulty ?? 'neutral',
     prospect_profile: opts.prospectProfile ?? null,
+    prospect_name: opts.prospectName ?? null,
     transcript_json: '[]',
     status: 'active',
     created_at: now,

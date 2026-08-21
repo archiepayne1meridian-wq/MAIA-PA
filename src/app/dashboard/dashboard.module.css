@@ -1456,7 +1456,7 @@
 .dianaChatFeedbackText { font-size: 13px; color: var(--text-mid); line-height: 1.75; white-space: pre-wrap; }
 
 /* Prospect profile line */
-.dianaProfileLine { flex-shrink: 0; font-size: 12.5px; }
+.dianaProfileLine { flex-shrink: 0; font-size: 12.5px; display: flex; flex-direction: column; gap: 2px; }
 .dianaProfileName { color: var(--accent); font-weight: 600; }
 .dianaProfileDesc { color: var(--text-dim); }
 

@@ -18,7 +18,9 @@ interface Message {
 interface ProfileInfo {
   key: string
   name: string
-  description: string
+  company: string
+  location: string
+  background: string  // work history only — no assets, no target product
 }
 
 interface StageScore {
@@ -523,8 +525,11 @@ export default function DianaWorkspace() {
             <div className={s.dianaChatArea}>
               {profile && (
                 <div className={s.dianaProfileLine}>
-                  <span className={s.dianaProfileName}>Prospect: {profile.name}</span>
-                  <span className={s.dianaProfileDesc}> — {profile.description}</span>
+                  <div>
+                    <span className={s.dianaProfileName}>Prospect: {profile.name}</span>
+                    <span className={s.dianaProfileDesc}> — {profile.company}, {profile.location}</span>
+                  </div>
+                  <div className={s.dianaProfileDesc}>Background: {profile.background}</div>
                 </div>
               )}
 
@@ -681,9 +686,12 @@ export default function DianaWorkspace() {
                   </div>
 
                   {profile && (
-                    <p className={s.dianaChatFeedbackText} style={{ marginBottom: 12 }}>
-                      Prospect: {profile.name} — {profile.description}
-                    </p>
+                    <div style={{ marginBottom: 12 }}>
+                      <p className={s.dianaChatFeedbackText}>
+                        Prospect: {profile.name} — {profile.company}, {profile.location}
+                      </p>
+                      <p className={s.dianaChatFeedbackText}>Background: {profile.background}</p>
+                    </div>
                   )}
 
                   <div className={s.dianaStageScoreList}>

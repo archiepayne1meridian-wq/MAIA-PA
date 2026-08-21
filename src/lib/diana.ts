@@ -28,7 +28,9 @@ interface ProspectProfileTemplate {
   key: ProspectProfileKey
   company: string
   location: string
-  descriptionTemplate: string  // one-line, shown in the dashboard header — no name in it
+  // Work-history only, one line — what you'd see on LinkedIn. No assets, no
+  // products, no problems. Shown in the dashboard header as "Background: ...".
+  background: string
   openingLine: string
   hasUkPension: boolean        // false only for 'second_door' — the pension door is shut from the start
   briefBody: string            // full character detail, `{name}` interpolated in at call time
@@ -39,7 +41,7 @@ const PROSPECT_PROFILE_TEMPLATES: Record<ProspectProfileKey, ProspectProfileTemp
     key: 'forgotten_pension',
     company: 'UBS',
     location: 'Zurich',
-    descriptionTemplate: 'UBS, Zurich — old UK pension, frozen ISA, and cash, none of it reviewed in years',
+    background: 'British. Worked in London asset management for 10 years before moving to Zurich 6 years ago.',
     openingLine: "Yes, that's me — sorry, I'm just in between meetings.",
     hasUkPension: true,
     briefBody: `British, moved to Switzerland 6 years ago from London, works in asset management at UBS in Zurich. Settled and comfortable in Switzerland by now.
@@ -54,7 +56,7 @@ Your one early objection (use at most once, near the start): "Send me an email" 
     key: 'db_believer',
     company: 'Roche',
     location: 'Basel',
-    descriptionTemplate: 'Roche, Basel — thinks her DB pension is "gold-plated," hasn\'t checked the details',
+    background: 'British. Worked 20 years at an NHS trust in Manchester before moving to Basel 8 years ago.',
     openingLine: 'Yes — what\'s this regarding?',
     hasUkPension: true,
     briefBody: `British, 51, moved from Manchester 8 years ago, now at Roche in Basel. Worked 20 years at an NHS trust in the UK before leaving and built up a defined benefit (DB) pension there. You genuinely believe it's "gold-plated" and have never checked the death benefits or thought about currency risk.
@@ -69,7 +71,7 @@ Your one early objection (use at most once, near the start): "I've already got a
     key: 'second_door',
     company: 'Google',
     location: 'Zurich',
-    descriptionTemplate: 'Google, Zurich — no UK pension, direct and time-pressured, high earner',
+    background: 'South African. Works in tech — moved to Zurich 3 years ago after working in South Africa.',
     openingLine: 'Yeah, make it quick — what is it?',
     hasUkPension: false,
     briefBody: `South African, 38, in the tech industry at Google Zurich. Been in Switzerland 3 years. Never worked in the UK long enough to build up a pension there — that door is genuinely closed, not a brush-off. High earner.
@@ -84,7 +86,7 @@ Your one early objection (use at most once, near the start): "I don't have any U
     key: 'legacy_product',
     company: 'Novartis',
     location: 'Basel',
-    descriptionTemplate: 'Novartis, Basel — happy with what she has, doesn\'t realise the problem yet',
+    background: 'British. Has worked at Novartis in Basel for the past 12 years, since first arriving in Switzerland.',
     openingLine: 'Speaking — who is this?',
     hasUkPension: true,
     briefBody: `British, 45, been in Switzerland 12 years, works at Novartis in Basel. Set up an offshore savings plan (Zurich Vista) when you first arrived and have been paying into it monthly ever since — you don't know the charges or surrender penalties on it. You also have a UK workplace pension from your old job that you've never touched.
@@ -122,13 +124,16 @@ export function generateProspectName(): string {
 export interface ProspectDisplay {
   key: ProspectProfileKey
   name: string
-  description: string
+  company: string
+  location: string
+  background: string  // work history only — no assets, no target product, no problems
 }
 
 // Display info for the dashboard header — no Claude call, pure string building.
+// Deliberately narrow: this is what you'd see on someone's LinkedIn, nothing more.
 export function getProfileDisplay(key: ProspectProfileKey, name: string): ProspectDisplay {
   const t = PROSPECT_PROFILE_TEMPLATES[key]
-  return { key, name, description: t.descriptionTemplate }
+  return { key, name, company: t.company, location: t.location, background: t.background }
 }
 
 export function getProfileOpeningLine(key: ProspectProfileKey): string {
@@ -348,11 +353,12 @@ jump ahead, and don't keep throwing objections once one's been handled:
 2. FACT FIND — Archie asks things like: how long you've been in Switzerland, where you worked before,
    how long you were there, whether you plan to stay in Switzerland or move on, what provisions you
    have for when you stop working, whether those assets are back home or in Switzerland, who the
-   pension's with, and whether you've got any other savings or investments. Answer naturally and
-   cooperatively — vague first ("I've got something from my old job back home, I think — haven't
-   really looked at it in a while"), more specific only when he asks a good follow-up that digs into
-   what you just said (the ladder — deeper, not a new unrelated question). You are cooperative in this
-   stage, not throwing objections.
+   pension's with, and whether you've got any other savings or investments. Answer only the specific
+   question just asked (see CRITICAL BEHAVIOUR RULES below) — cooperatively, but vague first ("I've
+   got something from my old job back home, I think — haven't really looked at it in a while"), more
+   specific only when he asks a good follow-up that digs into what you just said (the ladder — deeper,
+   not a new unrelated question). You are cooperative in this stage, not throwing objections — but
+   cooperative means answering honestly, not volunteering your whole financial picture unprompted.
 
 3. ENLARGE THE PROBLEM — Archie asks targeted questions specific to what you've told him about
    (pension, investments, or cash — see the examples below). Answer honestly but without volunteering
@@ -392,6 +398,20 @@ jump ahead, and don't keep throwing objections once one's been handled:
 ${OBJECTION_GUIDANCE}
 
 ${SOLUTIONS_KNOWLEDGE}
+
+CRITICAL BEHAVIOUR RULES:
+1. Only answer the exact question asked. Never volunteer information the prospect
+   wasn't asked about.
+2. If asked "do you have a UK pension?" and the answer is no — say "No, I don't
+   have a UK pension." Full stop. Do not add "but I do have..." unless directly
+   asked about other assets.
+3. Wait to be asked. Real prospects don't volunteer their full financial picture
+   unprompted. They answer what they're asked, sometimes vaguely.
+4. When asked a vague question ("any other savings?") — give a vague answer first
+   ("yes, a bit"). When pushed specifically ("what kind?") — give more detail.
+5. Never go on a tangent. Answer the question, nothing more.
+6. If Archie asks about something that doesn't apply — give a clear short answer
+   and stop. "No, not really." "Nothing significant." "I'm not sure what you mean."
 
 RULES:
 - Stay completely in character. Never break the fourth wall, never coach the adviser, never

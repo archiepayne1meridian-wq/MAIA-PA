@@ -158,6 +158,28 @@ function readFileAsText(file: File): Promise<string> {
   })
 }
 
+// PDFs are binary — reading them with FileReader.readAsText() produces garbled
+// output. Extract real text client-side with PDF.js instead, page by page.
+async function extractPdfText(file: File): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer()
+  const pdfjsLib = await import('pdfjs-dist')
+  // cdnjs only publishes the ESM worker (.mjs) for pdf.js 4+ — .min.js 404s.
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  const pages: string[] = []
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const content = await page.getTextContent()
+    const pageText = content.items
+      .map(item => ('str' in item ? item.str : ''))
+      .join(' ')
+    pages.push(pageText)
+  }
+  return pages.join('\n\n').trim()
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function MuseWorkspace() {
@@ -188,6 +210,7 @@ export default function MuseWorkspace() {
   const [knowSubmitting, setKnowSubmitting] = useState(false)
   const [knowMsg, setKnowMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [knowDragOver, setKnowDragOver] = useState(false)
+  const [pdfExtracting, setPdfExtracting] = useState(false)
   const [micActive, setMicActive] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
 
@@ -518,12 +541,28 @@ export default function MuseWorkspace() {
       setKnowMsg({ text: 'Only .pdf, .txt, or .md files are supported.', ok: false })
       return
     }
+
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
+
     try {
-      const text = await readFileAsText(file)
+      let text: string
+      if (isPdf) {
+        setPdfExtracting(true)
+        setKnowMsg(null)
+        text = await extractPdfText(file)
+        if (!text.trim()) {
+          setKnowMsg({ text: `"${file.name}" has no extractable text — it may be a scanned/image-only PDF.`, ok: false })
+          return
+        }
+      } else {
+        text = await readFileAsText(file)
+      }
       setKnowContent(prev => prev.trim() ? `${prev.trim()}\n\n${text}` : text)
       setKnowMsg({ text: `Loaded "${file.name}" — review and submit below.`, ok: true })
     } catch {
       setKnowMsg({ text: `Couldn't read "${file.name}".`, ok: false })
+    } finally {
+      setPdfExtracting(false)
     }
   }
 
@@ -1005,12 +1044,16 @@ export default function MuseWorkspace() {
                 </div>
                 <div
                   className={s.museDropZone}
-                  style={knowDragOver ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)' } : undefined}
-                  onDragOver={e => { e.preventDefault(); setKnowDragOver(true) }}
+                  style={
+                    pdfExtracting
+                      ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)', cursor: 'wait' }
+                      : knowDragOver ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)' } : undefined
+                  }
+                  onDragOver={e => { e.preventDefault(); if (!pdfExtracting) setKnowDragOver(true) }}
                   onDragLeave={() => setKnowDragOver(false)}
-                  onDrop={e => void handleKnowFileDrop(e)}
+                  onDrop={e => { e.preventDefault(); if (!pdfExtracting) void handleKnowFileDrop(e) }}
                 >
-                  Drop a PDF, .txt, or .md file — combines with content above
+                  {pdfExtracting ? 'Extracting text from PDF…' : 'Drop a PDF, .txt, or .md file — combines with content above'}
                 </div>
               </div>
 

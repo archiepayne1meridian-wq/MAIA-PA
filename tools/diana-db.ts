@@ -3,7 +3,7 @@
 
 import { getDb } from '@/db'
 import { diana_sessions, activity } from '@/db/schema'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, desc, isNotNull } from 'drizzle-orm'
 
 export interface DianaTranscriptTurn {
   role: 'user' | 'diana'
@@ -16,8 +16,10 @@ export interface DianaSession {
   slack_user: string
   scenario: string | null
   difficulty: string
-  prospect_profile: string | null
-  prospect_name: string | null
+  prospect_profile: string | null    // legacy fixed-profile key — no longer written
+  prospect_name: string | null       // legacy fixed-profile name — no longer written
+  generated_prospect: string | null  // JSON GeneratedProspect (src/lib/diana.ts) — one per session
+  score_total: number | null         // set on exit once the call is scored
   transcript_json: string
   status: string
   created_at: number
@@ -63,8 +65,7 @@ export async function startSession(opts: {
   slackUser: string
   scenario?: string
   difficulty?: 'warm' | 'neutral' | 'tough'
-  prospectProfile?: string
-  prospectName?: string
+  generatedProspect?: string  // pre-serialised JSON — diana-db stays free of diana.ts's domain types
 }): Promise<DianaSession> {
   // End any existing active session for this user before starting a new one.
   const existing = await getActiveSession(opts.slackUser)
@@ -77,8 +78,10 @@ export async function startSession(opts: {
     slack_user: opts.slackUser,
     scenario: opts.scenario ?? null,
     difficulty: opts.difficulty ?? 'neutral',
-    prospect_profile: opts.prospectProfile ?? null,
-    prospect_name: opts.prospectName ?? null,
+    prospect_profile: null,
+    prospect_name: null,
+    generated_prospect: opts.generatedProspect ?? null,
+    score_total: null,
     transcript_json: '[]',
     status: 'active',
     created_at: now,
@@ -87,6 +90,22 @@ export async function startSession(opts: {
   }
   await getDb().insert(diana_sessions).values(row)
   return row as DianaSession
+}
+
+export async function setSessionScore(sessionId: string, total: number): Promise<void> {
+  await getDb().update(diana_sessions).set({ score_total: total }).where(eq(diana_sessions.id, sessionId))
+}
+
+// Raw JSON strings only — parsing/typing stays in src/lib/diana.ts (parseGeneratedProspect)
+// so this file has no dependency on diana.ts's domain types.
+export async function getRecentGeneratedProspects(slackUser: string, limit: number): Promise<string[]> {
+  const rows = await getDb()
+    .select({ generated_prospect: diana_sessions.generated_prospect })
+    .from(diana_sessions)
+    .where(and(eq(diana_sessions.slack_user, slackUser), isNotNull(diana_sessions.generated_prospect)))
+    .orderBy(desc(diana_sessions.created_at))
+    .limit(limit)
+  return rows.map(r => r.generated_prospect).filter((v): v is string => v !== null)
 }
 
 // Appends a turn to the session transcript. Returns the updated transcript.

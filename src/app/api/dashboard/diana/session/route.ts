@@ -10,20 +10,16 @@ import {
   getActiveSession,
   endSession,
   parseTranscript,
+  getRecentGeneratedProspects,
   type DianaSession,
 } from '../../../../../../tools/diana-db'
-import {
-  pickRandomProfile,
-  generateProspectName,
-  getProfileDisplay,
-  type ProspectProfileKey,
-} from '@/lib/diana'
+import { generateProspect, parseGeneratedProspect, prospectDisplay } from '@/lib/diana'
 
 const WEB_USER = 'web'
 
-function profileInfo(key: string | null, name: string | null) {
-  if (!key || !name) return null
-  return getProfileDisplay(key as ProspectProfileKey, name)
+function profileInfo(generatedProspectJson: string | null) {
+  const prospect = parseGeneratedProspect(generatedProspectJson)
+  return prospect ? prospectDisplay(prospect) : null
 }
 
 function serialise(s: DianaSession) {
@@ -34,7 +30,7 @@ function serialise(s: DianaSession) {
     status: s.status,
     slackUser: s.slack_user,
     transcript: parseTranscript(s.transcript_json).map(t => ({ role: t.role, text: t.text })),
-    profile: profileInfo(s.prospect_profile, s.prospect_name),
+    profile: profileInfo(s.generated_prospect),
   }
 }
 
@@ -57,20 +53,30 @@ export async function POST(req: Request) {
     mode?: 'text' | 'voice'
   }
 
-  // Randomly select one of the 4 deVere prospect profiles for this call, plus a
-  // fresh random name — both stored on the session so every turn stays consistent.
-  const profileKey = pickRandomProfile()
-  const prospectName = generateProspectName()
+  // One Haiku call generates a fresh, randomly-combined prospect for this call —
+  // stored on the session as JSON so every turn (and scoring) reuses the same one.
+  // Recent first names are fed back in so Haiku doesn't converge on the same
+  // handful of names when asked to "pick randomly" with no real entropy source.
+  let prospect
+  try {
+    const recentJson = await getRecentGeneratedProspects(WEB_USER, 8)
+    const recentFirstNames = recentJson
+      .map(j => parseGeneratedProspect(j)?.firstName)
+      .filter((n): n is string => Boolean(n))
+    prospect = await generateProspect(recentFirstNames)
+  } catch (err) {
+    console.error('[diana] generateProspect failed:', err)
+    return NextResponse.json({ error: 'Could not generate a prospect — try again' }, { status: 500 })
+  }
 
   const session = await startSession({
     slackUser: WEB_USER,
     difficulty: body.difficulty,
-    prospectProfile: profileKey,
-    prospectName,
+    generatedProspect: JSON.stringify(prospect),
   })
 
   // DIANA never speaks first — the transcript starts empty. Archie opens the
-  // call; her opening line (the profile's exact scripted line) is returned by
+  // call; her opening line (from the generated prospect) is returned by
   // /message on the first adviser turn, not generated here.
   return NextResponse.json({
     session: {
@@ -81,7 +87,7 @@ export async function POST(req: Request) {
       slackUser: WEB_USER,
       transcript: [],
       mode: body.mode ?? 'text',
-      profile: getProfileDisplay(profileKey, prospectName),
+      profile: prospectDisplay(prospect),
     },
   })
 }

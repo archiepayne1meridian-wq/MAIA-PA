@@ -1513,6 +1513,7 @@
 .dianaSessHistRow:hover { background: var(--raised); padding-left: 6px; padding-right: 6px; margin: 0 -6px; border-radius: 6px; }
 .dianaSessDate { font-family: var(--mono); font-size: 10px; color: var(--text-dim); flex-shrink: 0; width: 60px; }
 .dianaSessScenario { font-size: 12px; color: var(--text-mid); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dianaSessScore { font-family: var(--mono); font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
 .dianaSessStatusChip {
   font-family: var(--mono); font-size: 9px; padding: 2px 7px; border-radius: 100px;
   border: 1px solid var(--border); color: var(--text-dim); flex-shrink: 0;

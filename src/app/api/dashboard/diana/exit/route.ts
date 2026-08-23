@@ -5,9 +5,10 @@ import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import {
   getActiveSession,
   endSession,
+  setSessionScore,
   parseTranscript,
 } from '../../../../../../tools/diana-db'
-import { scoreCall, type ProspectProfileKey } from '@/lib/diana'
+import { scoreCall } from '@/lib/diana'
 
 const WEB_USER = 'web'
 
@@ -34,11 +35,8 @@ export async function POST() {
     })
   }
 
-  const score = await scoreCall(
-    transcript,
-    session.prospect_profile as ProspectProfileKey | null,
-    session.prospect_name,
-  )
+  const score = await scoreCall(transcript, session.generated_prospect)
+  await setSessionScore(session.id, score.total)
 
   return NextResponse.json({ score, turns: adviserTurns })
 }

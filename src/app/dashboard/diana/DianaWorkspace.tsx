@@ -96,7 +96,9 @@ interface ObjStat {
 
 interface SessionRecord {
   id: string
-  scenario: string
+  scenario: string        // generated prospect's "FirstName L." — see performance/route.ts
+  company: string | null
+  score: number | null    // out of 100, set once the call is scored; null until then
   difficulty: string
   status: string
   date: string
@@ -817,7 +819,12 @@ export default function DianaWorkspace() {
                       onClick={() => setExpandedSessId(expandedSessId === sess.id ? null : sess.id)}
                     >
                       <span className={s.dianaSessDate}>{sess.date}</span>
-                      <span className={s.dianaSessScenario}>{sess.scenario}</span>
+                      <span className={s.dianaSessScenario}>
+                        {sess.scenario}{sess.company ? ` — ${sess.company}` : ''}
+                      </span>
+                      {sess.score !== null && (
+                        <span className={s.dianaSessScore}>{sess.score}/100</span>
+                      )}
                       <span className={`${s.dianaSessStatusChip} ${sess.completed ? s.dianaSessStatusEnded : ''}`}>
                         {sess.completed ? 'done' : sess.status}
                       </span>

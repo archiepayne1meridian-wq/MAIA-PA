@@ -21,6 +21,7 @@ interface FormState {
   termYears: number
   observationFrequency: ObservationFrequency
   investmentAmount: number
+  worstOf: boolean
 }
 
 const DEFAULT_FORM: FormState = {
@@ -32,6 +33,7 @@ const DEFAULT_FORM: FormState = {
   termYears: 6,
   observationFrequency: 'quarterly',
   investmentAmount: 100000,
+  worstOf: false,
 }
 
 interface SavedNote {
@@ -48,9 +50,14 @@ interface SavedNote {
   created_at: number
 }
 
-type ParsedField = 'underlyingAsset' | 'autocallBarrier' | 'couponBarrier' | 'capitalProtection' | 'couponRate' | 'termYears'
+type ParsedField =
+  | 'underlyingAsset' | 'autocallBarrier' | 'couponBarrier' | 'capitalProtection'
+  | 'couponRate' | 'termYears' | 'observationFrequency'
 
-const PARSED_FIELDS: ParsedField[] = ['underlyingAsset', 'autocallBarrier', 'couponBarrier', 'capitalProtection', 'couponRate', 'termYears']
+const PARSED_FIELDS: ParsedField[] = [
+  'underlyingAsset', 'autocallBarrier', 'couponBarrier', 'capitalProtection',
+  'couponRate', 'termYears', 'observationFrequency',
+]
 
 const FIELD_LABELS: Record<ParsedField, string> = {
   underlyingAsset: 'Underlying Asset',
@@ -59,6 +66,7 @@ const FIELD_LABELS: Record<ParsedField, string> = {
   capitalProtection: 'Capital Protection',
   couponRate: 'Coupon Rate',
   termYears: 'Term',
+  observationFrequency: 'Observation Frequency',
 }
 
 // ── PDF extraction (same pattern as MUSE's brain-dump PDF drop) ───────────────
@@ -85,26 +93,77 @@ async function extractPdfText(file: File): Promise<string> {
 
 function parseFactSheet(text: string): Partial<Record<ParsedField, string | number>> {
   const params: Partial<Record<ParsedField, string | number>> = {}
+  // Fact sheets wrap text across lines and pad with runs of spaces from column
+  // layouts — collapse both before matching so patterns don't need to account
+  // for arbitrary whitespace.
+  const t = text.replace(/\n/g, ' ').replace(/\s+/g, ' ')
 
-  const autocall = text.match(/autocall[^\d]*(\d+(?:\.\d+)?)\s*%/i)
+  // Autocall trigger/barrier
+  const autocall = t.match(/autocall\s+trigger[:\s]+(\d+(?:\.\d+)?)\s*%/i)
+    || t.match(/autocall[^\d]*(\d+(?:\.\d+)?)\s*%/i)
   if (autocall) params.autocallBarrier = parseFloat(autocall[1])
 
-  const coupon = text.match(/(?:coupon|barrier)[^\d]*(\d+(?:\.\d+)?)\s*%/i)
-  if (coupon) params.couponBarrier = parseFloat(coupon[1])
+  // Coupon barrier/hurdle
+  const couponHurdle = t.match(/coupon\s+hurdle[:\s]+(\d+(?:\.\d+)?)\s*%/i)
+    || t.match(/coupon\s+barrier[:\s]+(\d+(?:\.\d+)?)\s*%/i)
+    || t.match(/(\d+(?:\.\d+)?)\s*%\s+on\s+(?:least|all)/i)
+  if (couponHurdle) params.couponBarrier = parseFloat(couponHurdle[1])
 
-  const protection = text.match(/(?:capital\s+protection|protected)[^\d]*(\d+(?:\.\d+)?)\s*%/i)
+  // Capital protection
+  const protection = t.match(/capital\s+protection\s+barrier[:\s]+(\d+(?:\.\d+)?)\s*%/i)
+    || t.match(/capital\s+protection[^\d]*(\d+(?:\.\d+)?)\s*%/i)
+    || t.match(/(\d+(?:\.\d+)?)\s*%\s+european\s+barrier/i)
   if (protection) params.capitalProtection = parseFloat(protection[1])
 
-  const rate = text.match(/(?:coupon\s+rate|annual\s+coupon)[^\d]*(\d+(?:\.\d+)?)\s*%/i)
-  if (rate) params.couponRate = parseFloat(rate[1])
+  // Coupon rate — dual-currency fact sheets (USD/GBP) list a rate per currency;
+  // this app is GBP-only (£ throughout), so prefer the figure tagged GBP over
+  // a bare first-match, which would silently grab the USD leg instead.
+  const gbpAnnual = t.match(/gbp[:\s]*\d+(?:\.\d+)?\s*%\s*per\s+quarter\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*p\.?a\.?\)/i)
+  const gbpQuarterly = t.match(/gbp[:\s]*(\d+(?:\.\d+)?)\s*%\s*per\s+quarter/i)
+  const annualRate = gbpAnnual || t.match(/(\d+(?:\.\d+)?)\s*%\s*p\.?a\.?/i)
+  const quarterlyRate = gbpQuarterly || t.match(/(\d+(?:\.\d+)?)\s*%\s*per\s+quarter/i)
+  if (annualRate) {
+    params.couponRate = parseFloat(annualRate[1])
+  } else if (quarterlyRate) {
+    params.couponRate = parseFloat(quarterlyRate[1]) * 4
+  }
 
-  const term = text.match(/(\d+)[- ]?year/i)
+  // Term
+  const term = t.match(/term[:\s]+(\d+)\s*year/i)
+    || t.match(/(\d+)[- ]?year\s+(?:term|note|product)/i)
+    || t.match(/(\d+)[- ]?year/i)
   if (term) params.termYears = parseInt(term[1], 10)
 
-  const underlying = text.match(/(?:underlying|linked to|index)[:\s]+([A-Z][^\n,]+)/i)
-  if (underlying) params.underlyingAsset = underlying[1].trim()
+  // Observation frequency
+  if (/quarterly/i.test(t)) params.observationFrequency = 'quarterly'
+  else if (/semi.?annual|half.?year/i.test(t)) params.observationFrequency = 'semi-annual'
+  else if (/annual/i.test(t)) params.observationFrequency = 'annual'
+
+  // Underlying asset — grab the index names present, rather than a single
+  // free-text capture, since basket notes list several underlyings.
+  const indices: string[] = []
+  if (/nikkei/i.test(t)) indices.push('Nikkei 225')
+  if (/euro\s*stoxx\s*50/i.test(t)) indices.push('Euro Stoxx 50')
+  if (/nasdaq\s*100/i.test(t)) indices.push('Nasdaq 100')
+  if (/s&p\s*500/i.test(t)) indices.push('S&P 500')
+  if (/ftse\s*100/i.test(t)) indices.push('FTSE 100')
+  if (/dax/i.test(t)) indices.push('DAX')
+  if (indices.length > 0) {
+    params.underlyingAsset = indices.join(', ')
+  } else {
+    const underlying = t.match(/(?:underlying|linked to|index)[:\s]+([A-Z][^\n,]+)/i)
+    if (underlying) params.underlyingAsset = underlying[1].trim()
+  }
 
   return params
+}
+
+// Worst-of basket notes key their payoff off the least-performing underlying.
+// Real fact sheets rarely use the literal phrase "worst-of" — they say "least
+// performing index/underlying" instead — so match both.
+function detectWorstOf(text: string): boolean {
+  const t = text.replace(/\n/g, ' ').replace(/\s+/g, ' ')
+  return /worst[\s-]?of/i.test(t) || /least\s+performing/i.test(t)
 }
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
@@ -217,6 +276,8 @@ export default function StructuredNoteVisualizer() {
         ...(parsed.capitalProtection !== undefined ? { capitalProtection: Number(parsed.capitalProtection) } : {}),
         ...(parsed.couponRate !== undefined ? { couponRate: Number(parsed.couponRate) } : {}),
         ...(parsed.termYears !== undefined ? { termYears: Number(parsed.termYears) } : {}),
+        ...(parsed.observationFrequency !== undefined ? { observationFrequency: parsed.observationFrequency as ObservationFrequency } : {}),
+        worstOf: detectWorstOf(text),
       }))
     } catch (err) {
       console.error('[visualizer] PDF parse error', err)
@@ -235,6 +296,7 @@ export default function StructuredNoteVisualizer() {
     observationFrequency: form.observationFrequency,
     investmentAmount: form.investmentAmount,
     indexPerformance: performance,
+    worstOf: form.worstOf,
   }
 
   const result = useMemo(() => calculateNote(noteParams), [
@@ -295,6 +357,7 @@ export default function StructuredNoteVisualizer() {
       termYears: note.term_years,
       observationFrequency: note.observation_frequency as ObservationFrequency,
       investmentAmount: note.investment_amount,
+      worstOf: false,
     })
     setPerformance(0)
   }
@@ -437,6 +500,12 @@ export default function StructuredNoteVisualizer() {
           </div>
         </div>
       </div>
+
+      {form.worstOf && (
+        <div className={s.vizWorstOfBanner}>
+          ⚠ Worst-of basket — all indices must be above the barrier
+        </div>
+      )}
 
       {/* Asset performance slider */}
       <div className={s.vizSliderSection}>

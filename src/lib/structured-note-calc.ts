@@ -11,6 +11,7 @@ export interface NoteParams {
   observationFrequency: 'quarterly' | 'semi-annual' | 'annual'
   investmentAmount: number     // e.g. 100000
   indexPerformance: number     // slider value, e.g. -20 (%)
+  worstOf?: boolean            // basket note where the least-performing underlying determines the outcome — display only, not used in the maths here
 }
 
 export interface ObservationResult {

@@ -930,6 +930,12 @@
   padding: 7px 10px; font-family: var(--mono); font-size: 12.5px; color: var(--text); outline: none;
 }
 
+.vizWorstOfBanner {
+  font-family: var(--mono); font-size: 11px; color: var(--idle);
+  background: rgba(224, 179, 65, 0.08); border: 1px solid rgba(224, 179, 65, 0.3);
+  border-radius: 8px; padding: 8px 14px; margin-bottom: 20px;
+}
+
 .vizSliderSection { margin-bottom: 28px; }
 .vizSliderLabel { font-family: var(--display); font-weight: 500; font-size: 13px; margin-bottom: 8px; }
 .vizSliderValueRow { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }

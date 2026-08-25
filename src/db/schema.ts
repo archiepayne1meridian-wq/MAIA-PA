@@ -311,6 +311,20 @@ export const maia_config = sqliteTable('maia_config', {
   updated_at: integer('updated_at').notNull(),
 })
 
+export const visualizer_notes = sqliteTable('visualizer_notes', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  underlying_asset: text('underlying_asset').notNull(),
+  autocall_barrier: real('autocall_barrier').notNull(),
+  coupon_barrier: real('coupon_barrier').notNull(),
+  capital_protection: real('capital_protection').notNull(),
+  coupon_rate: real('coupon_rate').notNull(),
+  term_years: integer('term_years').notNull(),
+  observation_frequency: text('observation_frequency').notNull(),   // 'quarterly' | 'semi-annual' | 'annual'
+  investment_amount: real('investment_amount').notNull(),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
 export const apollo_calls = sqliteTable('apollo_calls', {
   id: text('id').primaryKey(),
   call_date: text('call_date').notNull(),

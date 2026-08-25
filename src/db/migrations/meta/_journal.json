@@ -169,6 +169,13 @@
       "when": 1787504942866,
       "tag": "0023_wise_omega_flight",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1787576155215,
+      "tag": "0024_spotty_spectrum",
+      "breakpoints": true
     }
   ]
 }

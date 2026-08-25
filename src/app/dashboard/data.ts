@@ -412,6 +412,21 @@ export async function buildDashboardData(): Promise<DashboardData> {
       ],
       feed: apolloFeed,
     },
+    {
+      id: 'VISUALIZER', role: 'Product Visualizer', badge: 'V',
+      status: 'idle',
+      stat: 'Ready',
+      statusLabel: 'Deterministic product illustrations — Structured Notes live, more coming',
+      prog: 0,
+      progAlert: false,
+      tiles: [
+        ['Products live', '1', 'Structured Notes'],
+        ['Coming soon', '5', 'Portfolio Bond, Ardan, Liberty VB, AXA Pillar 3, SIPP vs QROPS'],
+        ['Calculations', 'Client-side', 'no Claude calls, pure maths'],
+        ['Mode', 'Illustrative', 'not a quote or recommendation'],
+      ],
+      feed: [['—', 'Say nothing — open from the nav rail']],
+    },
     ...INACTIVE_AGENTS,
   ]
 

@@ -1,12 +1,14 @@
 name: VICTORIA — End-of-Day Nudge & Weekly Scorecard
 
 on:
-  schedule:
-    # End-of-day nudge: 17:00 UTC = 18:00 BST (BST = UTC+1, summer), weekdays Mon–Fri
-    # Offset from HERA (20:30 UTC) and CASSANDRA/DEMETER (06:35–07:00 UTC).
-    - cron: '0 17 * * 1-5'
-    # Weekly scorecard: 15:30 UTC Friday (afternoon, clear of all other crons)
-    - cron: '30 15 * * 5'
+  # schedule:
+  #   VICTORIA removed from dashboard nav/routing — schedule disabled, keep
+  #   workflow_dispatch for manual runs if needed.
+  #   End-of-day nudge: 17:00 UTC = 18:00 BST (BST = UTC+1, summer), weekdays Mon–Fri
+  #   Offset from HERA (20:30 UTC) and CASSANDRA/DEMETER (06:35–07:00 UTC).
+  #   - cron: '0 17 * * 1-5'
+  #   Weekly scorecard: 15:30 UTC Friday (afternoon, clear of all other crons)
+  #   - cron: '30 15 * * 5'
   workflow_dispatch:
     inputs:
       mode:

@@ -7,6 +7,7 @@ import {
 } from 'recharts'
 import s from '../../dashboard.module.css'
 import { calculateBond, formatGBP, type BondParams, type YearlySnapshot } from '@/lib/portfolio-bond-calc'
+import ProductProfile from '@/components/atlas/ProductProfile'
 
 // ── Types & defaults ─────────────────────────────────────────────────────────
 
@@ -37,6 +38,51 @@ const TAX_RATE_OPTIONS = [
   { value: 40, label: '40% Higher Rate' },
   { value: 45, label: '45% Additional Rate' },
 ]
+
+const PROFILE_DATA = {
+  productName: 'Portfolio Bond',
+  whatItIs: 'A portfolio bond is an offshore life-insurance wrapper that holds investments inside a tax-efficient structure. The client owns a contract (not the underlying assets directly), which is what creates the tax deferral. It is designed for internationally mobile clients who move between tax jurisdictions — the wrapper travels with them and tax treatment adjusts accordingly.',
+  whatItHolds: [
+    'Unit trusts and OEICs',
+    'ETFs and index funds',
+    'Structured notes',
+    'Cash (multi-currency)',
+    'Model portfolios (discretionary managed)',
+    'Alternative investments (subject to provider rules)',
+  ],
+  whoItsFor: [
+    'UK expat planning to return to the UK at some point (time-apportionment relief reduces the tax bill)',
+    'Client with a large lump sum who wants to defer tax while invested',
+    'Client who rebalances frequently (no CGT on switching inside the bond)',
+    'Client who wants to draw income via the 5% annual allowance with no immediate tax',
+    'NOT suitable for UK residents holding a Personal Portfolio Bond (PPB rules — punitive taxation)',
+  ],
+  keyBenefits: [
+    'Gross roll-up — no annual income or capital gains tax while inside the bond',
+    '5% annual withdrawal allowance — draw up to 5% per year for 20 years, no immediate UK tax',
+    'Time-apportionment relief — years spent non-UK resident reduce the eventual taxable gain',
+    'Top-slicing relief — softens a one-off gain by spreading it over the bond’s life',
+    'Multi-currency — can hold and switch between currencies without FX tax events',
+    'Portability — designed to follow the client across jurisdictions',
+  ],
+  gaps: [
+    'Client investing in a GIA and paying CGT every time they rebalance — bond removes this drag',
+    'Client with a maturing pension or large lump sum who has no tax-efficient wrapper for it',
+    'Client who left the UK and has ISA frozen — bond is the offshore equivalent',
+    'Client rebalancing frequently in a taxable account — every switch inside a bond is tax-free',
+    'Client planning to return to the UK — bond held abroad reduces their eventual UK tax bill via TAR',
+  ],
+  comparisons: [
+    { product: 'GIA (trading account)', difference: 'GIA is fully taxable on gains and income each year. Bond defers all tax until encashment.', useWhen: 'Use bond when client has a long horizon and wants to defer tax — GIA when no tax reason exists' },
+    { product: 'ISA', difference: 'ISA is completely tax-free but unavailable to non-UK residents. Bond is available globally and defers (not removes) tax.', useWhen: 'Use ISA if client is UK resident. Use bond if client lives abroad.' },
+    { product: 'Ardan Platform', difference: 'Ardan is a platform (the shelf). Portfolio bond is the wrapper. Ardan often sits inside a bond.', useWhen: 'Use bond wrapper around Ardan for tax deferral — Ardan alone gives no tax benefit' },
+    { product: 'Structured note', difference: 'Note is an investment that can sit inside the bond. Bond provides the wrapper, note provides the return structure.', useWhen: 'Combine — note inside bond gives defined income with tax deferral' },
+  ],
+  whenToUseVs: [
+    { useThis: 'Client is non-UK resident with a lump sum to invest long-term', useAlternative: 'Client is UK resident — PPB rules make bond punitive', alternative: 'ISA or pension' },
+    { useThis: 'Client plans to return to the UK — TAR will reduce their tax bill', useAlternative: 'Client has no intention of returning to UK ever — less benefit from TAR', alternative: 'Direct investment platform' },
+  ],
+}
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
 
@@ -431,6 +477,8 @@ export default function PortfolioBondVisualizer() {
           ⚠ All figures are illustrations only. Returns not guaranteed. Tax treatment depends on individual circumstances.
         </div>
       </div>
+
+      <ProductProfile {...PROFILE_DATA} />
     </div>
   )
 }

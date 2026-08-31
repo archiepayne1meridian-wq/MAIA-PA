@@ -56,7 +56,7 @@ class AudioQueue {
 // Agents with a full page at /dashboard/<id>. DEMETER's page still exists (route intact,
 // code preserved) but is deliberately excluded here — removed from the dashboard, unreachable
 // via nav rail or voice routing.
-const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'HERA', 'DIANA', 'VICTORIA', 'MERCURY', 'IRIS', 'MUSE', 'APOLLO', 'ATLAS'])
+const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'HERA', 'DIANA', 'MERCURY', 'IRIS', 'MUSE', 'APOLLO', 'ATLAS'])
 
 // Agent id -> route slug, only where they differ (ATLAS's route folder is
 // still /dashboard/visualizer — the folder/route path is not renamed, only

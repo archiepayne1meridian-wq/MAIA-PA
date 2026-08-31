@@ -30,7 +30,7 @@ const products: ProductCard[] = [
     id: 'ardan-platform',
     name: 'Ardan Platform',
     description: 'Cost transparency — platform, adviser and fund fees vs bundled alternatives',
-    status: 'coming-soon',
+    status: 'active',
     accent: '#B87FD4',
   },
   {
@@ -59,6 +59,7 @@ const products: ProductCard[] = [
 const ROUTES: Record<string, string> = {
   'structured-notes': '/dashboard/visualizer/structured-notes',
   'portfolio-bond': '/dashboard/visualizer/portfolio-bond',
+  'ardan-platform': '/dashboard/visualizer/ardan-platform',
 }
 
 export default function VisualizerHome() {

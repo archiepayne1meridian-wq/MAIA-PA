@@ -10,6 +10,7 @@ import {
   calculateNote, periodsPerYearFor, generatePresetPath, resizeIndexPath,
   type NoteParams, type ObservationResult, type PresetScenario,
 } from '@/lib/structured-note-calc'
+import ProductProfile from '@/components/atlas/ProductProfile'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,48 @@ const PRESET_LABELS: Record<PresetScenario, string> = {
   'bear-dip': 'Bear dip — drops to ~70%, recovers to ~95%',
   crash: 'Crash — drops to ~45%, stays low',
   volatile: 'Volatile — zigzag',
+}
+
+const PROFILE_DATA = {
+  productName: 'Structured Notes',
+  whatItIs: 'A structured note is a defined-outcome investment linked to one or more market indices. It is not a fund — it is a debt instrument issued by a bank (the issuer), with defined terms for how returns are calculated. The note pays a coupon if the index stays above a barrier, protects capital down to a set level, and may pay out early if the index hits the autocall trigger.',
+  whatItHolds: [
+    'Linked to equity indices (e.g. S&P 500, Euro Stoxx 50, Nikkei 225)',
+    'May be worst-of basket (all indices must perform)',
+    'Capital at risk below protection barrier',
+    'Counterparty risk — issuer must not default',
+  ],
+  whoItsFor: [
+    'Client with surplus capital seeking defined income',
+    'Client uncomfortable with pure equity volatility but wanting better than cash',
+    'Client with a medium-term horizon (3-6 years) who doesn’t need liquidity',
+    'Client who wants to know exactly what they’ll receive under different scenarios',
+    'NOT suitable for clients who need immediate access to capital',
+  ],
+  keyBenefits: [
+    'Defined outcome — you know the rules before you invest',
+    'Memory feature — missed coupons accumulate and pay later',
+    'Capital protection down to the barrier (typically 60-70%)',
+    'Potential for above-market income (8-12% p.a.) without taking pure equity risk',
+    'Autocall — can return capital + income early if market performs well',
+  ],
+  gaps: [
+    'Client holding cash ‘temporarily’ earning nothing — structured note offers defined income with protection',
+    'Client in low-yield bonds seeking more return without full equity exposure',
+    'Client who wants income but is put off by stock market volatility',
+    'Client with a lump sum (inheritance, property sale, pension transfer) with no plan for it',
+    'Client who thinks their money is ‘safe’ in cash but losing to inflation',
+  ],
+  comparisons: [
+    { product: 'Cash savings', difference: 'Cash is safe from falling but loses to inflation. Structured note offers defined income with capital protection.', useWhen: 'Use structured note when client wants income and can accept defined risk' },
+    { product: 'Equity funds', difference: 'Funds have unlimited upside but no protection. Structured note caps upside in exchange for downside protection.', useWhen: 'Use structured note when client wants protection floor but still wants market-linked returns' },
+    { product: 'Portfolio bond', difference: 'Bond is the wrapper, note is the investment. A structured note can sit inside a portfolio bond for tax deferral.', useWhen: 'Combine both — note inside bond for income + tax efficiency' },
+    { product: 'Fixed rate bonds (bank)', difference: 'Bank fixed rate is typically 4-5%. Structured notes offer 8-12% but with conditional payment and market risk.', useWhen: 'Use structured note when client wants significantly higher income and understands the conditions' },
+  ],
+  whenToUseVs: [
+    { useThis: 'Client has lump sum, medium horizon, wants defined income with protection', useAlternative: 'Client needs guaranteed capital return or immediate liquidity', alternative: 'Cash or fixed rate deposit' },
+    { useThis: 'Client wants income without full equity risk', useAlternative: 'Client wants unlimited upside and long horizon (10+ years)', alternative: 'Equity fund or portfolio bond' },
+  ],
 }
 
 // ── PDF extraction (same pattern as MUSE's brain-dump PDF drop) ───────────────
@@ -764,6 +807,8 @@ export default function StructuredNoteVisualizer() {
           </div>
         )}
       </div>
+
+      <ProductProfile {...PROFILE_DATA} />
     </div>
   )
 }

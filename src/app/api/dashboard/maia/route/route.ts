@@ -6,7 +6,7 @@ import { saveTasks, completeTask } from '../../../../../../tools/maia-voice'
 
 // Agents that have real data to summarise — anything not in this set gets the
 // router's own spokenResponse (which is already reasonable for MUSE, MERCURY, etc.)
-const DATA_AGENTS = new Set(['DEMETER', 'ATHENA', 'CASSANDRA', 'VICTORIA', 'DIANA', 'IRIS'])
+const DATA_AGENTS = new Set(['DEMETER', 'ATHENA', 'CASSANDRA', 'DIANA', 'IRIS'])
 
 export async function POST(req: Request) {
   if (!(await requireDashboardAuth())) {

@@ -332,23 +332,6 @@ export async function buildDashboardData(): Promise<DashboardData> {
       feed: dianaFeed,
     },
     {
-      id: 'VICTORIA', role: 'KPI & pipeline', badge: 'V',
-      status: kpiLoggedToday ? 'online' : 'idle',
-      stat: callsThisWeek > 0 ? `Calls ${callsThisWeek} / ${victoriaTarget}` : 'No KPIs logged yet',
-      statusLabel: callsThisWeek > 0
-        ? `${callsThisWeek}/${victoriaTarget} calls logged this week`
-        : 'No KPI data yet — log in Slack',
-      prog: victoriaProg,
-      progAlert: false,
-      tiles: [
-        ['Calls this week', String(callsThisWeek), `target ${victoriaTarget}`],
-        ['Progress', `${victoriaProg}%`, 'of weekly target'],
-        ['KPI logged today', kpiLoggedToday ? 'Yes' : 'No', 'via Slack'],
-        ['Scorecard', 'Weekly', 'sent via Slack'],
-      ],
-      feed: victoriaFeed,
-    },
-    {
       id: 'IRIS', role: 'LinkedIn content engine', badge: 'I',
       status: irisDraft ? 'online' : irisTotal > 0 ? 'idle' : 'idle',
       stat: irisDraft ? 'Draft pending review' : irisTotal > 0 ? `${irisApproved}/${irisTotal} approved` : 'No drafts this week',

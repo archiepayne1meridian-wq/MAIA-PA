@@ -56,7 +56,15 @@ class AudioQueue {
 // Agents with a full page at /dashboard/<id>. DEMETER's page still exists (route intact,
 // code preserved) but is deliberately excluded here — removed from the dashboard, unreachable
 // via nav rail or voice routing.
-const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'HERA', 'DIANA', 'VICTORIA', 'MERCURY', 'IRIS', 'MUSE', 'APOLLO', 'VISUALIZER'])
+const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'HERA', 'DIANA', 'VICTORIA', 'MERCURY', 'IRIS', 'MUSE', 'APOLLO', 'ATLAS'])
+
+// Agent id -> route slug, only where they differ (ATLAS's route folder is
+// still /dashboard/visualizer — the folder/route path is not renamed, only
+// the agent's display name).
+const ROUTE_SLUG_OVERRIDES: Record<string, string> = { ATLAS: 'visualizer' }
+function routeSlugFor(agentId: string): string {
+  return ROUTE_SLUG_OVERRIDES[agentId] ?? agentId.toLowerCase()
+}
 
 interface Props {
   agents: Agent[]
@@ -116,7 +124,7 @@ export default function DashboardClient({ agents, onlineCount, needYouCount }: P
         if (data.action?.type === 'navigate' && data.action.payload?.agent) {
           const agentId = String(data.action.payload.agent).toUpperCase()
           if (ROUTABLE_AGENTS.has(agentId)) {
-            router.push(`/dashboard/${agentId.toLowerCase()}`)
+            router.push(`/dashboard/${routeSlugFor(agentId)}`)
           }
         }
       })
@@ -151,7 +159,7 @@ export default function DashboardClient({ agents, onlineCount, needYouCount }: P
 
   function handleAgentSelect(id: string) {
     if (!ROUTABLE_AGENTS.has(id)) return
-    router.push(`/dashboard/${id.toLowerCase()}`)
+    router.push(`/dashboard/${routeSlugFor(id)}`)
   }
 
   return (

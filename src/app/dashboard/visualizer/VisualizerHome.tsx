@@ -68,9 +68,9 @@ export default function VisualizerHome() {
       <button className={s.museBackBtn} onClick={() => router.push('/dashboard')}>← MAIA</button>
 
       <div className={s.visualizerHomeHead}>
-        <div className={s.drawerBadge}>V</div>
+        <div className={s.drawerBadge}>AT</div>
         <div>
-          <div className={s.drawerName}>Product Visualizer</div>
+          <div className={s.drawerName}>ATLAS</div>
           <div className={s.drawerRole}>Deterministic client-facing product illustrations</div>
         </div>
       </div>

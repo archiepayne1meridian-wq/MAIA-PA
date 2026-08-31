@@ -10,7 +10,7 @@ export interface NoteParams {
   termYears: number            // e.g. 6
   observationFrequency: 'quarterly' | 'semi-annual' | 'annual'
   investmentAmount: number     // e.g. 100000
-  indexPerformance: number     // slider value, e.g. -20 (%)
+  indexPath: number[]          // index level (% of strike) at each observation, one entry per period — user-editable via drag
   worstOf?: boolean            // basket note where the least-performing underlying determines the outcome — display only, not used in the maths here
 }
 
@@ -52,12 +52,12 @@ export function calculateNote(params: NoteParams): NoteResult {
 
   const totalPeriods = params.termYears * periodsPerYear
   const couponPerPeriod = params.couponRate / periodsPerYear / 100
-  const startingLevel = 100
-  const endLevel = 100 + params.indexPerformance
 
-  // Linear interpolation of index level over time
+  // Index level is whatever the user set for that observation (via drag or a
+  // preset) — no interpolation. Missing entries (path shorter than the term)
+  // default to 100.
   function indexAtPeriod(p: number): number {
-    return startingLevel + (endLevel - startingLevel) * (p / totalPeriods)
+    return params.indexPath[p - 1] ?? 100
   }
 
   const observations: ObservationResult[] = []
@@ -166,4 +166,66 @@ export function calculateNote(params: NoteParams): NoteResult {
     totalCouponsPaid, totalMemoryPaid, capitalReturned, capitalLost,
     totalReturned, totalReturnPct, annualisedReturnPct, monthsInNote,
   }
+}
+
+// ── Draggable path helpers ───────────────────────────────────────────────────
+
+export type PresetScenario = 'flat' | 'bull-run' | 'bear-dip' | 'crash' | 'volatile'
+
+// Piecewise-linear interpolation between control points, each [fraction of
+// term (0-1), index level]. Used to generate the smooth preset shapes.
+function piecewiseInterp(n: number, points: Array<[number, number]>): number[] {
+  if (n <= 0) return []
+  return Array.from({ length: n }, (_, i) => {
+    const frac = n === 1 ? 0 : i / (n - 1)
+    for (let k = 0; k < points.length - 1; k++) {
+      const [f0, v0] = points[k]
+      const [f1, v1] = points[k + 1]
+      if (frac >= f0 && frac <= f1) {
+        const t = f1 === f0 ? 0 : (frac - f0) / (f1 - f0)
+        return v0 + (v1 - v0) * t
+      }
+    }
+    return points[points.length - 1][1]
+  })
+}
+
+export function generatePresetPath(preset: PresetScenario, periods: number): number[] {
+  switch (preset) {
+    case 'flat':
+      // Deliberately pinned at exactly 100 — with the default 100% autocall
+      // barrier this autocalls on the first observation, same as a genuinely
+      // flat index would in real life.
+      return Array(periods).fill(100)
+    case 'bull-run':
+      // Starts a touch under 100 so the "gradual rise" is visible for a few
+      // periods before crossing a barrier — starting at exactly 100 would
+      // autocall instantly against the default 100% barrier and skip the story.
+      return piecewiseInterp(periods, [[0, 90], [1, 130]])
+    case 'bear-dip':
+      // Trough sits below the default 70% coupon barrier (not just touching
+      // it) so a real stretch of periods miss and accumulate memory before
+      // the recovery leg pays it back.
+      return piecewiseInterp(periods, [[0, 98], [0.4, 60], [1, 95]])
+    case 'crash':
+      return piecewiseInterp(periods, [[0, 98], [0.25, 45], [1, 45]])
+    case 'volatile':
+      // Down first, then up, so period 1 doesn't land on/above a 100% barrier.
+      return Array.from({ length: periods }, (_, i) => 100 + (i % 2 === 0 ? -20 : 20))
+    default:
+      return Array(periods).fill(100)
+  }
+}
+
+// Keeps an existing path aligned with the term/frequency after an edit —
+// extends with the last value, or truncates — rather than resetting the
+// user's edits every time an unrelated field changes.
+export function resizeIndexPath(path: number[], newLength: number): number[] {
+  if (path.length === newLength) return path
+  if (path.length === 0) return Array(newLength).fill(100)
+  if (newLength > path.length) {
+    const last = path[path.length - 1]
+    return [...path, ...Array(newLength - path.length).fill(last)]
+  }
+  return path.slice(0, newLength)
 }

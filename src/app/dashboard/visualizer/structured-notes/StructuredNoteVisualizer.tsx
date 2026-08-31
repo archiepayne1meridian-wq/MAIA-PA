@@ -6,7 +6,10 @@ import {
   ComposedChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import s from '../../dashboard.module.css'
-import { calculateNote, periodsPerYearFor, type NoteParams, type ObservationResult } from '@/lib/structured-note-calc'
+import {
+  calculateNote, periodsPerYearFor, generatePresetPath, resizeIndexPath,
+  type NoteParams, type ObservationResult, type PresetScenario,
+} from '@/lib/structured-note-calc'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +70,14 @@ const FIELD_LABELS: Record<ParsedField, string> = {
   couponRate: 'Coupon Rate',
   termYears: 'Term',
   observationFrequency: 'Observation Frequency',
+}
+
+const PRESET_LABELS: Record<PresetScenario, string> = {
+  flat: 'Flat (100%)',
+  'bull-run': 'Bull run — rising to ~130%',
+  'bear-dip': 'Bear dip — drops to ~70%, recovers to ~95%',
+  crash: 'Crash — drops to ~45%, stays low',
+  volatile: 'Volatile — zigzag',
 }
 
 // ── PDF extraction (same pattern as MUSE's brain-dump PDF drop) ───────────────
@@ -192,7 +203,22 @@ function cellInfo(o: ObservationResult | null, investmentAmount: number): CellIn
   return { icon: '', cls: '', amount: '' }
 }
 
-// ── Chart dot renderer ──────────────────────────────────────────────────────
+// ── Chart geometry (kept in sync with the ComposedChart config below) ───────
+// Dragging converts mouse-pixel deltas to index-level deltas using the chart's
+// known, fixed pixel dimensions — no DOM measurement needed, since every
+// dimension here is one we set explicitly on the chart/axes.
+const CHART_HEIGHT = 280
+const CHART_MARGIN_TOP = 16
+const CHART_MARGIN_BOTTOM = 8
+const CHART_X_AXIS_HEIGHT = 22
+const CHART_Y_MIN = 0
+const CHART_Y_MAX = 180
+const PLOT_PIXEL_HEIGHT = CHART_HEIGHT - CHART_MARGIN_TOP - CHART_MARGIN_BOTTOM - CHART_X_AXIS_HEIGHT
+const PIXELS_PER_PERCENT = PLOT_PIXEL_HEIGHT / (CHART_Y_MAX - CHART_Y_MIN)
+const PATH_MIN = 20
+const PATH_MAX = 180
+
+// ── Draggable chart dot ──────────────────────────────────────────────────────
 
 interface DotProps {
   cx?: number
@@ -201,18 +227,31 @@ interface DotProps {
   payload?: ObservationResult
 }
 
-function renderObservationDot(props: DotProps) {
+function dotColor(payload: ObservationResult): string {
+  if (payload.afterAutocall) return '#555E6B'
+  if (payload.autocalled) return '#5BC08A'
+  if (payload.memoryPaid) return '#B87FD4'
+  if (payload.couponPaid) return '#8AA9F0'
+  if (payload.couponMissed) return '#E0B341'
+  return '#8AA9F0'
+}
+
+function renderDraggableDot(props: DotProps, onDragStart: (index: number, clientY: number) => void) {
   const { cx, cy, index, payload } = props
-  if (cx == null || cy == null || !payload) return <g key={`dot-${index}`} />
-  let fill = '#8AA9F0'
-  let r = 4
-  let opacity = 1
-  if (payload.afterAutocall) { fill = '#555E6B'; r = 3; opacity = 0.4 }
-  else if (payload.autocalled) { fill = '#5BC08A'; r = 5.5 }
-  else if (payload.memoryPaid) { fill = '#B87FD4'; r = 5 }
-  else if (payload.couponPaid) { fill = '#8AA9F0'; r = 4 }
-  else if (payload.couponMissed) { fill = '#E0B341'; r = 4 }
-  return <circle key={`dot-${index}`} cx={cx} cy={cy} r={r} fill={fill} fillOpacity={opacity} stroke="#0D1014" strokeWidth={1} />
+  if (cx == null || cy == null || !payload || index == null) return <g key={`dot-${index}`} />
+  const fill = dotColor(payload)
+  const opacity = payload.afterAutocall ? 0.4 : 1
+  return (
+    <circle
+      key={`dot-${index}`}
+      cx={cx} cy={cy} r={8}
+      fill={fill} fillOpacity={opacity}
+      stroke="#0D1014" strokeWidth={1.5}
+      style={{ cursor: 'ns-resize' }}
+      onMouseDown={e => { e.stopPropagation(); onDragStart(index, e.clientY) }}
+      onTouchStart={e => { e.stopPropagation(); e.preventDefault(); onDragStart(index, e.touches[0].clientY) }}
+    />
+  )
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -220,7 +259,9 @@ function renderObservationDot(props: DotProps) {
 export default function StructuredNoteVisualizer() {
   const router = useRouter()
   const [form, setForm] = useState<FormState>(DEFAULT_FORM)
-  const [performance, setPerformance] = useState(0)
+  const [indexPath, setIndexPath] = useState<number[]>(() =>
+    Array(periodsPerYearFor(DEFAULT_FORM.observationFrequency) * DEFAULT_FORM.termYears).fill(100))
+  const [dragging, setDragging] = useState<{ index: number; startClientY: number; startValue: number } | null>(null)
 
   const [dropActive, setDropActive] = useState(false)
   const [parsing, setParsing] = useState(false)
@@ -247,6 +288,45 @@ export default function StructuredNoteVisualizer() {
   }, [])
 
   useEffect(() => { loadNotes() }, [loadNotes])
+
+  const totalPeriods = periodsPerYearFor(form.observationFrequency) * form.termYears
+
+  // Keep the path aligned with term/frequency edits without discarding a drag
+  // the user has already made — extend with the last value, or truncate.
+  useEffect(() => {
+    setIndexPath(prev => resizeIndexPath(prev, totalPeriods))
+  }, [totalPeriods])
+
+  // Drag lifecycle: mousedown/touchstart on a dot (via renderDraggableDot)
+  // starts a drag; window-level listeners track movement so the drag keeps
+  // working even if the pointer leaves the chart area, and end on release.
+  useEffect(() => {
+    if (!dragging) return
+    function applyDelta(clientY: number) {
+      if (!dragging) return
+      const deltaPixels = clientY - dragging.startClientY
+      const deltaValue = -deltaPixels / PIXELS_PER_PERCENT
+      const newValue = Math.min(PATH_MAX, Math.max(PATH_MIN, Math.round(dragging.startValue + deltaValue)))
+      setIndexPath(path => path.map((v, i) => (i === dragging.index ? newValue : v)))
+    }
+    function onMouseMove(e: MouseEvent) { applyDelta(e.clientY) }
+    function onTouchMove(e: TouchEvent) { if (e.touches[0]) { e.preventDefault(); applyDelta(e.touches[0].clientY) } }
+    function onEnd() { setDragging(null) }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onEnd)
+    window.addEventListener('touchmove', onTouchMove, { passive: false })
+    window.addEventListener('touchend', onEnd)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onEnd)
+      window.removeEventListener('touchmove', onTouchMove)
+      window.removeEventListener('touchend', onEnd)
+    }
+  }, [dragging])
+
+  function handleDragStart(index: number, clientY: number) {
+    setDragging({ index, startClientY: clientY, startValue: indexPath[index] ?? 100 })
+  }
 
   function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(f => ({ ...f, [key]: value }))
@@ -295,13 +375,13 @@ export default function StructuredNoteVisualizer() {
     termYears: form.termYears,
     observationFrequency: form.observationFrequency,
     investmentAmount: form.investmentAmount,
-    indexPerformance: performance,
+    indexPath,
     worstOf: form.worstOf,
   }
 
   const result = useMemo(() => calculateNote(noteParams), [
     form.autocallBarrier, form.couponBarrier, form.capitalProtection, form.couponRate,
-    form.termYears, form.observationFrequency, form.investmentAmount, performance,
+    form.termYears, form.observationFrequency, form.investmentAmount, indexPath,
   ])
 
   const chartData = result.observations
@@ -359,7 +439,8 @@ export default function StructuredNoteVisualizer() {
       investmentAmount: note.investment_amount,
       worstOf: false,
     })
-    setPerformance(0)
+    const loadedPeriods = periodsPerYearFor(note.observation_frequency as ObservationFrequency) * note.term_years
+    setIndexPath(Array(loadedPeriods).fill(100))
   }
 
   async function handleDelete(id: string) {
@@ -386,12 +467,12 @@ export default function StructuredNoteVisualizer() {
 
   return (
     <div className={s.vizPage}>
-      <button className={s.agentPageBack} onClick={() => router.push('/dashboard/visualizer')}>← Product Visualizer</button>
+      <button className={s.agentPageBack} onClick={() => router.push('/dashboard/visualizer')}>← ATLAS</button>
 
       <div className={s.vizPageHead}>
         <div className={s.drawerBadge}>SN</div>
         <div>
-          <div className={s.drawerName}>Structured Notes</div>
+          <div className={s.drawerName}>ATLAS — Structured Notes</div>
           <div className={s.drawerRole}>Autocall barriers, memory coupons, capital protection</div>
         </div>
       </div>
@@ -507,32 +588,36 @@ export default function StructuredNoteVisualizer() {
         </div>
       )}
 
-      {/* Asset performance slider */}
-      <div className={s.vizSliderSection}>
-        <div className={s.vizSliderLabel}>Underlying Asset Performance</div>
-        <div className={s.vizSliderValueRow}>
-          <span className={[s.vizSliderValue, performance > 0 ? s.vizSliderValuePos : performance < 0 ? s.vizSliderValueNeg : ''].join(' ')}>
-            {performance > 0 ? '+' : ''}{performance}%
-          </span>
-          <span className={s.vizSliderSub}>Index at {100 + performance}% vs starting level</span>
-        </div>
-        <input
-          className={s.vizSliderInput}
-          type="range" min={-60} max={60} step={1}
-          value={performance}
-          onChange={e => setPerformance(Number(e.target.value))}
-        />
+      {/* Path controls */}
+      <div className={s.vizPathControls}>
+        <select
+          className={s.vizPresetSelect}
+          value=""
+          onChange={e => {
+            const preset = e.target.value as PresetScenario
+            if (preset) setIndexPath(generatePresetPath(preset, totalPeriods))
+          }}
+        >
+          <option value="">Preset scenarios…</option>
+          {(Object.keys(PRESET_LABELS) as PresetScenario[]).map(p => (
+            <option key={p} value={p}>{PRESET_LABELS[p]}</option>
+          ))}
+        </select>
+        <button className={s.vizResetBtn} onClick={() => setIndexPath(Array(totalPeriods).fill(100))}>
+          Reset to flat
+        </button>
+        <span className={s.vizPathHint}>Drag any point on the chart below to set the index path</span>
       </div>
 
       {/* Section 3 — Graphs */}
       <div className={s.vizChartsRow}>
         <div className={s.vizChartCard}>
           <div className={s.vizChartTitle}>Note Structure</div>
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart data={chartData} margin={{ top: 10, right: 60, bottom: 10, left: 0 }}>
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+            <ComposedChart data={chartData} margin={{ top: CHART_MARGIN_TOP, right: 60, bottom: CHART_MARGIN_BOTTOM, left: 0 }}>
               <CartesianGrid stroke="var(--hairline)" strokeDasharray="3 3" />
-              <XAxis dataKey="period" tick={{ fontSize: 9, fill: 'var(--text-dim)' }} interval="preserveStartEnd" />
-              <YAxis domain={[0, 160]} tick={{ fontSize: 10, fill: 'var(--text-dim)' }} />
+              <XAxis dataKey="period" height={CHART_X_AXIS_HEIGHT} tick={{ fontSize: 9, fill: 'var(--text-dim)' }} interval="preserveStartEnd" />
+              <YAxis domain={[CHART_Y_MIN, CHART_Y_MAX]} width={34} tick={{ fontSize: 10, fill: 'var(--text-dim)' }} />
               <Tooltip
                 contentStyle={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }}
                 labelStyle={{ color: 'var(--text)' }}
@@ -548,7 +633,7 @@ export default function StructuredNoteVisualizer() {
                   label={{ value: 'Autocalled', position: 'top', fill: '#5BC08A', fontSize: 10 }} />
               )}
               <Line type="linear" dataKey="indexLevel" stroke="var(--accent)" strokeWidth={2}
-                dot={renderObservationDot} isAnimationActive={false} />
+                dot={(p: DotProps) => renderDraggableDot(p, handleDragStart)} activeDot={false} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

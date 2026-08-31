@@ -413,7 +413,7 @@ export async function buildDashboardData(): Promise<DashboardData> {
       feed: apolloFeed,
     },
     {
-      id: 'VISUALIZER', role: 'Product Visualizer', badge: 'V',
+      id: 'ATLAS', role: 'Product Visualizer', badge: 'AT',
       status: 'idle',
       stat: 'Ready',
       statusLabel: 'Deterministic product illustrations — Structured Notes live, more coming',

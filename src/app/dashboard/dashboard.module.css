@@ -1035,6 +1035,89 @@
 .vizSavedBtnDanger:hover { border-color: var(--alert); color: var(--alert); }
 .vizSavedEmpty { font-size: 11px; color: var(--text-dim); text-align: center; padding: 20px 0; }
 
+/* ── Portfolio Bond ───────────────────────────────────────────────────────── */
+.bondPillsRow { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+.bondPill {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em;
+  padding: 5px 13px; border-radius: 100px; color: #0D1014; font-weight: 600;
+}
+.bondPillAccent { background: var(--accent); }
+.bondPillGreen { background: var(--online); }
+.bondPillAmber { background: var(--idle); }
+
+.bondControls { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-bottom: 24px; }
+.bondControlsCol { display: flex; flex-direction: column; gap: 20px; }
+
+.bondSliderGroup { display: flex; flex-direction: column; gap: 6px; }
+.bondSliderLabel { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+.bondSliderValueRow { display: flex; align-items: baseline; gap: 8px; }
+.bondSliderValue { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--accent); }
+.bondSliderInput { width: 100%; accent-color: var(--accent); }
+.bondSliderHint { font-family: var(--mono); font-size: 9.5px; color: var(--text-dim); line-height: 1.5; }
+
+.bondPillToggle { display: flex; gap: 6px; flex-wrap: wrap; }
+.bondPillToggleBtn {
+  font-family: var(--mono); font-size: 11px; padding: 6px 14px; border-radius: 100px;
+  border: 1px solid var(--border); background: none; color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.bondPillToggleBtn:hover { border-color: var(--accent-deep); color: var(--text); }
+.bondPillToggleBtnActive { border-color: var(--accent) !important; color: var(--accent) !important; background: rgba(138,169,240,0.08); }
+
+.bondFeatureBlock { padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+.bondFeatureHead { display: flex; align-items: center; justify-content: space-between; }
+.bondFeatureLabel { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+.bondFeatureBody { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+.bondToggle {
+  position: relative; width: 38px; height: 21px; border-radius: 100px;
+  background: var(--raised-2); border: 1px solid var(--border); cursor: pointer;
+  transition: background 0.15s, border-color 0.15s; flex-shrink: 0; padding: 0;
+}
+.bondToggleOn { background: var(--accent); border-color: var(--accent); }
+.bondToggleKnob {
+  position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--text); transition: transform 0.15s;
+}
+.bondToggleOn .bondToggleKnob { transform: translateX(17px); background: #0D1014; }
+
+.bondRunningTotal { font-family: var(--mono); font-size: 11px; color: var(--online); }
+
+.bondChartArea { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px; margin-bottom: 24px; }
+.bondChartTitle { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; }
+.bondChartCaption { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); margin-top: 10px; }
+.bondLegendRow { display: flex; gap: 18px; margin-top: 10px; flex-wrap: wrap; }
+.bondLegendItem { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 10.5px; color: var(--text-mid); }
+.bondLegendLine { width: 16px; height: 2px; flex-shrink: 0; }
+
+.bondInfoPanels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+.bondInfoPanel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.bondInfoPanelHead { display: flex; align-items: center; gap: 8px; }
+.bondInfoPanelIcon { font-size: 16px; }
+.bondInfoPanelTitle { font-family: var(--display); font-weight: 600; font-size: 14px; }
+.bondInfoBigFigure { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--online); }
+.bondInfoLine { font-size: 11.5px; color: var(--text-mid); line-height: 1.5; }
+.bondInfoCompareRow { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; margin-top: 2px; }
+.bondCompareBar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--raised-2); margin-top: 4px; }
+.bondCompareBarBond { background: var(--accent); }
+.bondCompareBarGia { background: var(--alert); }
+.bondProgressBar { height: 6px; background: var(--raised-2); border-radius: 4px; overflow: hidden; }
+.bondProgressFill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
+
+.bondSummaryCard {
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 20px; font-family: var(--mono); margin-bottom: 20px;
+}
+.bondSummaryHead { font-family: var(--display); font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.bondSummarySub { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); margin-bottom: 14px; }
+.bondSummaryRow { display: flex; justify-content: space-between; padding: 5px 0; font-size: 12.5px; color: var(--text-mid); }
+.bondSummaryRow span:last-child { color: var(--text); }
+.bondSummaryColHead { display: grid; grid-template-columns: 1fr 110px 110px; padding: 6px 0; font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.bondSummaryColRow { display: grid; grid-template-columns: 1fr 110px 110px; padding: 5px 0; font-size: 12.5px; color: var(--text-mid); }
+.bondSummaryColRow span:not(:first-child) { color: var(--text); text-align: right; }
+.bondSummaryDivider { border: none; border-top: 1px solid var(--hairline); margin: 10px 0; }
+.bondSummaryTotal { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13.5px; font-weight: 600; color: var(--online); }
+.bondDisclaimer { font-family: var(--mono); font-size: 10px; color: var(--idle); margin-top: 14px; line-height: 1.6; }
+
 .mercuryDraftSection { display: flex; flex-direction: column; gap: 12px; }
 .mercuryDraftHead { display: flex; align-items: center; justify-content: space-between; }
 

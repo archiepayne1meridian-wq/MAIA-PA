@@ -23,7 +23,7 @@ const products: ProductCard[] = [
     id: 'portfolio-bond',
     name: 'Portfolio Bond',
     description: 'Tax deferral vs annual taxation, 5% withdrawal allowance, time-apportionment relief',
-    status: 'coming-soon',
+    status: 'active',
     accent: '#7BC99A',
   },
   {
@@ -58,6 +58,7 @@ const products: ProductCard[] = [
 
 const ROUTES: Record<string, string> = {
   'structured-notes': '/dashboard/visualizer/structured-notes',
+  'portfolio-bond': '/dashboard/visualizer/portfolio-bond',
 }
 
 export default function VisualizerHome() {

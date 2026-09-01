@@ -44,7 +44,7 @@ const products: ProductCard[] = [
     id: 'axa-pillar3',
     name: 'AXA SmartFlex Pillar 3',
     description: 'Guaranteed vs market-linked split, contribution growth, Swiss tax saving',
-    status: 'coming-soon',
+    status: 'active',
     accent: '#5BC0C0',
   },
   {
@@ -61,6 +61,7 @@ const ROUTES: Record<string, string> = {
   'portfolio-bond': '/dashboard/visualizer/portfolio-bond',
   'ardan-platform': '/dashboard/visualizer/ardan-platform',
   'liberty-vb': '/dashboard/visualizer/liberty-vb',
+  'axa-pillar3': '/dashboard/visualizer/axa-pillar3',
 }
 
 export default function VisualizerHome() {

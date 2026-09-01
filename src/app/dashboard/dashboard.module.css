@@ -2292,3 +2292,22 @@
   background: var(--raised); border-left: 3px solid var(--alert); border-radius: 6px;
   padding: 10px 14px; font-family: var(--mono); font-size: 11px; color: var(--text-mid); margin-top: 6px;
 }
+
+/* ── ATLAS — AXA SmartFlex Pillar 3a ─────────────────────────────────────── */
+.pillar3Controls { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-bottom: 24px; }
+.pillar3TaxHighlight {
+  background: var(--raised); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+  border-radius: var(--r); padding: 16px; margin-bottom: 24px;
+}
+.pillar3TaxStats { display: flex; gap: 28px; margin-top: 12px; flex-wrap: wrap; }
+.pillar3SplitBar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--raised-2); margin-bottom: 4px; }
+.pillar3InfoPanel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 18px; display: flex; flex-direction: column; gap: 10px;
+}
+.pillar3SummaryCard {
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 20px; font-family: var(--mono); margin-bottom: 20px;
+}
+.pillar3SummaryCard .eyebrow { display: block; margin: 14px 0 4px; }
+.pillar3SummaryCard .eyebrow:first-of-type { margin-top: 10px; }

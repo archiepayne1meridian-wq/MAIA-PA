@@ -37,7 +37,7 @@ const products: ProductCard[] = [
     id: 'liberty-vb',
     name: 'Liberty Vested Benefits',
     description: 'Cash at 0.02% vs Liberty Invest — real value erosion and growth comparison',
-    status: 'coming-soon',
+    status: 'active',
     accent: '#E0B341',
   },
   {
@@ -60,6 +60,7 @@ const ROUTES: Record<string, string> = {
   'structured-notes': '/dashboard/visualizer/structured-notes',
   'portfolio-bond': '/dashboard/visualizer/portfolio-bond',
   'ardan-platform': '/dashboard/visualizer/ardan-platform',
+  'liberty-vb': '/dashboard/visualizer/liberty-vb',
 }
 
 export default function VisualizerHome() {

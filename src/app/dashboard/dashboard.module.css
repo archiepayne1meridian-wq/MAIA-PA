@@ -2267,3 +2267,28 @@
 .ardanChipEUR.ardanCurrencyChipActive { background: #B87FD4; }
 .ardanChipCHF { color: #E0B341; border-color: #E0B341; }
 .ardanChipCHF.ardanCurrencyChipActive { background: #E0B341; }
+
+/* ── ATLAS — Liberty Vested Benefits ─────────────────────────────────────── */
+.libertyControls { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-bottom: 24px; }
+.libertyContextPanel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 16px; display: flex; flex-direction: column; gap: 12px; height: fit-content;
+}
+.libertyFactChip {
+  font-family: var(--mono); font-size: 10.5px; padding: 5px 12px; border-radius: 100px;
+  border: 1px solid var(--border); color: var(--text-mid); background: var(--raised);
+}
+.libertyInfoPanel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 18px; display: flex; flex-direction: column; gap: 10px;
+}
+.libertySummaryCard {
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 20px; font-family: var(--mono); margin-bottom: 20px;
+}
+.libertyRealBar { display: flex; align-items: flex-end; gap: 2px; height: 40px; margin-top: 6px; }
+.libertyRealBarSeg { flex: 1 1 0; min-width: 2px; background: var(--alert); opacity: 0.7; border-radius: 2px 2px 0 0; }
+.libertyCallout {
+  background: var(--raised); border-left: 3px solid var(--alert); border-radius: 6px;
+  padding: 10px 14px; font-family: var(--mono); font-size: 11px; color: var(--text-mid); margin-top: 6px;
+}

@@ -51,7 +51,7 @@ const products: ProductCard[] = [
     id: 'sipp-vs-qrops',
     name: 'SIPP vs QROPS',
     description: 'Side by side comparison — charges, portability, IHT exposure post-2027',
-    status: 'coming-soon',
+    status: 'active',
     accent: '#E07A5F',
   },
 ]
@@ -62,6 +62,7 @@ const ROUTES: Record<string, string> = {
   'ardan-platform': '/dashboard/visualizer/ardan-platform',
   'liberty-vb': '/dashboard/visualizer/liberty-vb',
   'axa-pillar3': '/dashboard/visualizer/axa-pillar3',
+  'sipp-vs-qrops': '/dashboard/visualizer/sipp-vs-qrops',
 }
 
 export default function VisualizerHome() {

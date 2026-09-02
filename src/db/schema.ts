@@ -339,3 +339,11 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   muse_case_id: text('muse_case_id'),               // muse_cases.id this call was filed against
   created_at: integer('created_at').notNull(),
 })
+
+export const hermes_script = sqliteTable('hermes_script', {
+  id: text('id').primaryKey().default('singleton'),
+  personas_json: text('personas_json'),
+  shared_json: text('shared_json'),
+  objections_json: text('objections_json'),
+  updated_at: integer('updated_at').default(sql`(unixepoch())`),
+})

@@ -410,6 +410,21 @@ export async function buildDashboardData(): Promise<DashboardData> {
       ],
       feed: [['—', 'Say nothing — open from the nav rail']],
     },
+    {
+      id: 'HERMES', role: 'Call Script', badge: 'HM',
+      status: 'idle',
+      stat: 'Ready',
+      statusLabel: 'Persona-based cold call script — fact-find, objections, close',
+      prog: 0,
+      progAlert: false,
+      tiles: [
+        ['Personas', '4', 'Generic, UK, New to CH, Leaving CH'],
+        ['Objections', '8', 'reflex vs real, with variants'],
+        ['Mode', 'Editable', 'inline edits, autosave'],
+        ['Storage', 'hermes_script', 'DB-backed, no localStorage'],
+      ],
+      feed: [['—', 'Say nothing — open from the nav rail']],
+    },
     ...INACTIVE_AGENTS,
   ]
 

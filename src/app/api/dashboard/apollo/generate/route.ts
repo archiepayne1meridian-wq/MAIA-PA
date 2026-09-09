@@ -66,6 +66,27 @@ Rules:
 - Write in plain text suitable for pasting into an email client — no markdown,
   no asterisks, no headers. A "Subject:" line on its own first line is fine.`
 
+const COACHING_INSIGHT_SYSTEM = `You are APOLLO, giving a trainee financial adviser one sharp coaching
+note after a call.
+
+Generate one coaching insight from this call.
+Maximum one sentence. Specific and actionable.
+Focus on the most impactful thing to improve.
+
+Examples:
+"You asked permission to carry on twice — costs you authority in the opener."
+"Strong fact find — prospect revealed pension not reviewed since 2017. Lost momentum at close."
+"23 filler words today — 'you know' used 11 times. Record yourself and listen back."
+"You interrupted the prospect twice — let them finish before responding."
+
+Rules:
+- Base it only on the transcript and extracted intelligence below — never invent detail.
+- If filler_words.total is high (10+), that's a strong candidate for the insight — name the
+  worst_offender and its count.
+- If call_stage_reached shows the call ended early or lost momentum, that's a strong candidate.
+- Warm but direct — this is coaching, not criticism.
+- Output ONLY the one sentence. No quotes, no prefix, no markdown.`
+
 async function logApolloActivity(
   type: string, callId: string, output: string, status: 'success' | 'error', startMs: number,
 ) {
@@ -104,7 +125,7 @@ export async function POST(req: Request) {
   const prospectName = intelligence.prospect_name ?? 'Unknown Prospect'
 
   try {
-    const [advisorBrief, clientEmail] = await Promise.all([
+    const [advisorBrief, clientEmail, coachingInsightRaw] = await Promise.all([
       askWith(
         ADVISOR_BRIEF_SYSTEM,
         `Today's date: ${dateStr}\n\nExtracted intelligence:\n${JSON.stringify(intelligence, null, 2)}`,
@@ -119,7 +140,15 @@ export async function POST(req: Request) {
         700,
         HAIKU,
       ),
+      askWith(
+        COACHING_INSIGHT_SYSTEM,
+        `Extracted intelligence:\n${JSON.stringify(intelligence, null, 2)}\n\n` +
+        `Transcript excerpt (for specific reference):\n${transcript.slice(0, 2000)}`,
+        120,
+        HAIKU,
+      ),
     ])
+    const coachingInsight = coachingInsightRaw.trim().replace(/^["']|["']$/g, '')
 
     await updateCall(callId, { advisor_brief: advisorBrief, client_email: clientEmail })
 
@@ -235,7 +264,7 @@ export async function POST(req: Request) {
 
     await logApolloActivity('generate', callId, `brief + email generated for ${prospectName}`, 'success', startMs)
 
-    return NextResponse.json({ advisorBrief, clientEmail })
+    return NextResponse.json({ advisorBrief, clientEmail, coaching_insight: coachingInsight })
   } catch (err) {
     console.error('[apollo] generation failed:', err)
     await logApolloActivity('generate', callId, err instanceof Error ? err.message : String(err), 'error', startMs)

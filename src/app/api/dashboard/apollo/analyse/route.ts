@@ -15,6 +15,24 @@ Return JSON only — no prose outside the JSON. Extract every detail mentioned,
 infer carefully where appropriate, never invent. If something isn't mentioned,
 return null for that field.
 
+Also identify at which stage the call ended:
+
+STAGES:
+- opener: call ended before fact find started
+- fact_find: call ended during fact find
+- enlarge: call ended during enlarge/problem surfacing
+- disturb: call ended during disturb
+- close: call ended during close/funnel
+- completed: meeting booked, call completed successfully
+- voicemail: reached voicemail, no conversation
+
+Add to your JSON response:
+"call_stage_reached": one of the above values
+"call_stage_note": one sentence — what specifically happened at that stage
+  e.g. "Prospect said not interested after opener, before any fact find questions"
+  e.g. "Good fact find, lost momentum when asking for meeting — ask softened"
+  e.g. "Meeting booked successfully after handling send me an email objection"
+
 PRIVACY RULES — apply to all extracted fields:
 - Names: first name + last initial only. "John Smith" → "John S."
 - Never store: full surname, phone, email, home address, children's details
@@ -43,8 +61,18 @@ Return this exact shape:
   "advisor_name": string | null,
   "tone_notes": string | null,
   "suggested_approach": string | null,
-  "talking_points": string[]
+  "talking_points": string[],
+  "call_stage_reached": "opener" | "fact_find" | "enlarge" | "disturb" | "close" | "completed" | "voicemail",
+  "call_stage_note": string
 }`
+
+export type CallStage = 'opener' | 'fact_find' | 'enlarge' | 'disturb' | 'close' | 'completed' | 'voicemail'
+
+export interface FillerWordAnalysis {
+  total: number
+  breakdown: Record<string, number>
+  worst_offender: string | null  // the most used filler word
+}
 
 export interface ApolloIntelligence {
   prospect_name: string | null
@@ -65,6 +93,55 @@ export interface ApolloIntelligence {
   tone_notes: string | null
   suggested_approach: string | null
   talking_points: string[]
+  call_stage_reached: CallStage | null
+  call_stage_note: string | null
+  filler_words: FillerWordAnalysis
+}
+
+// ── Filler word counter — simple string match, no extra API call ────────────
+
+const FILLER_WORDS = [
+  'you know', 'sort of', 'kind of', 'basically',
+  'literally', 'obviously', 'right', 'yeah so',
+  'i mean', 'like i said', 'to be honest',
+  'at the end of the day', 'if you know what i mean',
+]
+
+function countFillerWords(transcript: string): Record<string, number> {
+  const lower = transcript.toLowerCase()
+  const counts: Record<string, number> = {}
+  for (const filler of FILLER_WORDS) {
+    const matches = lower.match(new RegExp(filler, 'g'))
+    if (matches && matches.length > 0) {
+      counts[filler] = matches.length
+    }
+  }
+  return counts
+}
+
+function totalFillerCount(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((a, b) => a + b, 0)
+}
+
+// Only Archie's turns count — never the prospect's. Transcript lines look like
+// "[MM:SS] Archie: ..." (see formatTranscript in transcribe/route.ts) or, after
+// manual editing in the workspace, "Archie: ..." with no timestamp — match both.
+function extractArchieText(transcript: string): string {
+  const lines: string[] = []
+  for (const line of transcript.split('\n')) {
+    const match = line.match(/^(?:\[\d{1,2}:\d{2}\]\s*)?([^:]+):\s*(.*)$/)
+    if (match && /^archie$/i.test(match[1].trim())) {
+      lines.push(match[2])
+    }
+  }
+  return lines.join(' ')
+}
+
+function analyseFillerWords(transcript: string): FillerWordAnalysis {
+  const counts = countFillerWords(extractArchieText(transcript))
+  const total = totalFillerCount(counts)
+  const worstOffender = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+  return { total, breakdown: counts, worst_offender: worstOffender }
 }
 
 // Robust JSON extraction — Opus is instructed to return JSON only, but models
@@ -83,7 +160,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { callId } = await req.json().catch(() => ({})) as { callId?: string }
+  const { callId, transcript: editedTranscript } = await req.json().catch(() => ({})) as {
+    callId?: string
+    transcript?: string  // current edited state from the workspace, if the transcript was corrected before analysing
+  }
   if (!callId) {
     return NextResponse.json({ error: 'callId required' }, { status: 400 })
   }
@@ -93,13 +173,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Call or transcript not found' }, { status: 404 })
   }
 
+  // Edited transcript (if supplied) always wins — corrections feed the analysis,
+  // and get persisted so later views/generation see the corrected version too.
+  const transcript = editedTranscript && editedTranscript.trim() ? editedTranscript : call.transcript
+
   const startMs = Date.now()
 
   try {
-    const raw = await askWith(APOLLO_EXTRACT_SYSTEM, call.transcript, 2000, OPUS)
+    const raw = await askWith(APOLLO_EXTRACT_SYSTEM, transcript, 2000, OPUS)
     const intelligence = JSON.parse(extractJson(raw)) as ApolloIntelligence
+    intelligence.filler_words = analyseFillerWords(transcript)
 
     await updateCall(callId, {
+      transcript,
       intelligence_json: JSON.stringify(intelligence),
       prospect_name: intelligence.prospect_name ?? null,
     })

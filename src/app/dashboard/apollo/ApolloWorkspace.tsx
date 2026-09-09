@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import s from '../dashboard.module.css'
 
@@ -20,6 +20,46 @@ interface TranscribeResponse {
 interface ApolloIntelligence {
   prospect_name: string | null
   [key: string]: unknown
+}
+
+// ── Editable transcript turns ────────────────────────────────────────────────
+// Each turn is one speaker's block: "[MM:SS] Archie: text" or, for turns created
+// by splitting/merging in the editor, "Archie: text" with no timestamp.
+
+type Speaker = 'Archie' | 'Prospect'
+
+interface Turn {
+  id: string
+  speaker: Speaker
+  time: string | null
+  text: string
+}
+
+function normaliseSpeaker(raw: string): Speaker {
+  return /archie/i.test(raw) ? 'Archie' : 'Prospect'
+}
+
+function parseTranscriptToTurns(transcript: string, makeId: () => string): Turn[] {
+  return transcript
+    .split('\n')
+    .filter(line => line.trim().length > 0)
+    .map(line => {
+      const withTime = line.match(/^\[(\d{1,2}:\d{2})\]\s*([^:]+):\s*(.*)$/)
+      if (withTime) {
+        const [, time, speakerRaw, text] = withTime
+        return { id: makeId(), speaker: normaliseSpeaker(speakerRaw), time, text }
+      }
+      const noTime = line.match(/^([^:]+):\s*(.*)$/)
+      if (noTime) {
+        const [, speakerRaw, text] = noTime
+        return { id: makeId(), speaker: normaliseSpeaker(speakerRaw), time: null, text }
+      }
+      return { id: makeId(), speaker: 'Archie' as const, time: null, text: line }
+    })
+}
+
+function serialiseTurns(turns: Turn[]): string {
+  return turns.map(t => (t.time ? `[${t.time}] ${t.speaker}: ${t.text}` : `${t.speaker}: ${t.text}`)).join('\n')
 }
 
 interface RecentCall {
@@ -75,15 +115,53 @@ export default function ApolloWorkspace() {
   const [dragOver, setDragOver] = useState(false)
 
   const [callId, setCallId] = useState<string | null>(null)
-  const [transcript, setTranscript] = useState<string | null>(null)
+  const [originalTranscript, setOriginalTranscript] = useState<string | null>(null)
+  const [turns, setTurns] = useState<Turn[]>([])
   const [copied, setCopied] = useState(false)
 
   const [intelligence, setIntelligence] = useState<ApolloIntelligence | null>(null)
   const [advisorBrief, setAdvisorBrief] = useState<string | null>(null)
   const [clientEmail, setClientEmail] = useState<string | null>(null)
+  const [coachingInsight, setCoachingInsight] = useState<string | null>(null)
   const [museSaved, setMuseSaved] = useState(false)
   const [briefCopied, setBriefCopied] = useState(false)
   const [emailCopied, setEmailCopied] = useState(false)
+
+  // Live mirror of `turns` for handlers that need the current array without
+  // waiting on a re-render (split/merge caret math, Analyse Call submission).
+  const turnsRef = useRef<Turn[]>([])
+  useEffect(() => { turnsRef.current = turns }, [turns])
+
+  const idCounterRef = useRef(0)
+  const makeId = useCallback(() => `turn-${idCounterRef.current++}`, [])
+
+  const turnRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const [focusTarget, setFocusTarget] = useState<{ id: string; caret: number } | null>(null)
+
+  // Places the caret inside a turn's text div after a structural edit
+  // (split/merge) — contenteditable doesn't preserve cursor position across a
+  // React re-render on its own.
+  useEffect(() => {
+    if (!focusTarget) return
+    const el = turnRefs.current[focusTarget.id]
+    if (el) {
+      el.focus()
+      const textNode = el.firstChild
+      const range = document.createRange()
+      if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+        const offset = Math.min(focusTarget.caret, (textNode.textContent ?? '').length)
+        range.setStart(textNode, offset)
+        range.setEnd(textNode, offset)
+      } else {
+        range.selectNodeContents(el)
+        range.collapse(true)
+      }
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+    }
+    setFocusTarget(null)
+  }, [turns, focusTarget])
 
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([])
   const [viewLoadingId, setViewLoadingId] = useState<string | null>(null)
@@ -118,11 +196,13 @@ export default function ApolloWorkspace() {
     }
 
     setErrorMsg(null)
-    setTranscript(null)
+    setOriginalTranscript(null)
+    setTurns([])
     setCallId(null)
     setIntelligence(null)
     setAdvisorBrief(null)
     setClientEmail(null)
+    setCoachingInsight(null)
     setMuseSaved(false)
     setState('uploading')
     setUploadProgress(0)
@@ -140,7 +220,8 @@ export default function ApolloWorkspace() {
         },
       )
       setCallId(result.callId)
-      setTranscript(result.transcript)
+      setOriginalTranscript(result.transcript)
+      setTurns(parseTranscriptToTurns(result.transcript, makeId))
       setState('complete')
       refetchRecentCalls()
     } catch (err) {
@@ -163,22 +244,40 @@ export default function ApolloWorkspace() {
   }
 
   function handleCopy() {
-    if (!transcript) return
-    void navigator.clipboard.writeText(transcript)
+    if (turns.length === 0) return
+    void navigator.clipboard.writeText(serialiseTurns(turns))
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  // Reads any in-progress (not-yet-blurred) edit straight out of the DOM and
+  // folds it into the turns array, without waiting on React state timing —
+  // needed because a click on "Analyse Call" can fire before the contenteditable
+  // div's onBlur has committed.
+  function commitActiveTurnEdit(): Turn[] {
+    const active = document.activeElement as HTMLElement | null
+    const activeTurnId = active?.getAttribute?.('data-turn-id')
+    if (!activeTurnId) return turnsRef.current
+    const updated = turnsRef.current.map(t => (t.id === activeTurnId ? { ...t, text: active!.innerText } : t))
+    turnsRef.current = updated
+    setTurns(updated)
+    return updated
   }
 
   async function handleAnalyse() {
     if (!callId) return
     setErrorMsg(null)
+
+    const finalTurns = commitActiveTurnEdit()
+    const editedTranscript = serialiseTurns(finalTurns)
+
     setState('analysing')
 
     try {
       const analyseRes = await fetch('/api/dashboard/apollo/analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ callId }),
+        body: JSON.stringify({ callId, transcript: editedTranscript }),
       })
       const analyseBody = await analyseRes.json() as { intelligence?: ApolloIntelligence; error?: string }
       if (!analyseRes.ok) throw new Error(analyseBody.error ?? 'Analysis failed')
@@ -190,10 +289,11 @@ export default function ApolloWorkspace() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ callId }),
       })
-      const generateBody = await generateRes.json() as { advisorBrief?: string; clientEmail?: string; error?: string }
+      const generateBody = await generateRes.json() as { advisorBrief?: string; clientEmail?: string; coaching_insight?: string; error?: string }
       if (!generateRes.ok) throw new Error(generateBody.error ?? 'Output generation failed')
       setAdvisorBrief(generateBody.advisorBrief ?? null)
       setClientEmail(generateBody.clientEmail ?? null)
+      setCoachingInsight(generateBody.coaching_insight ?? null)
       setState('done')
       // MUSE auto-save is fire-and-forget server-side; give it a moment then
       // show the confirmation badge (matches the design — save never blocks
@@ -215,10 +315,12 @@ export default function ApolloWorkspace() {
 
       const call = body.call
       setCallId(call.id)
-      setTranscript(call.transcript)
+      setOriginalTranscript(call.transcript)
+      setTurns(call.transcript ? parseTranscriptToTurns(call.transcript, makeId) : [])
       setIntelligence(call.intelligence)
       setAdvisorBrief(call.advisorBrief)
       setClientEmail(call.clientEmail)
+      setCoachingInsight(null)  // not persisted — only available fresh after re-running Analyse Call
       setMuseSaved(call.museSaved)
       setErrorMsg(null)
       setState(call.advisorBrief ? 'done' : call.transcript ? 'complete' : 'idle')
@@ -230,14 +332,89 @@ export default function ApolloWorkspace() {
   }
 
   function handleSwapSpeakers() {
-    setTranscript(prev => {
-      if (!prev) return prev
-      const PLACEHOLDER = 'APOLLO_SWAP_MARKER'
-      return prev
-        .split('Archie:').join(PLACEHOLDER)
-        .split('Prospect:').join('Archie:')
-        .split(PLACEHOLDER).join('Prospect:')
+    setTurns(prev => prev.map(t => ({ ...t, speaker: t.speaker === 'Archie' ? 'Prospect' : 'Archie' })))
+  }
+
+  function handleResetTranscript() {
+    if (!originalTranscript) return
+    setTurns(parseTranscriptToTurns(originalTranscript, makeId))
+  }
+
+  function toggleTurnSpeaker(turnId: string) {
+    setTurns(prev => prev.map(t => (t.id === turnId ? { ...t, speaker: t.speaker === 'Archie' ? 'Prospect' : 'Archie' } : t)))
+  }
+
+  function commitTurnText(turnId: string, text: string) {
+    setTurns(prev => prev.map(t => (t.id === turnId ? { ...t, text } : t)))
+  }
+
+  function splitTurn(turnId: string, caret: number) {
+    const newId = makeId()
+    setTurns(prev => {
+      const idx = prev.findIndex(t => t.id === turnId)
+      if (idx === -1) return prev
+      const turn = prev[idx]
+      const before = turn.text.slice(0, caret)
+      const after = turn.text.slice(caret)
+      const otherSpeaker: Speaker = turn.speaker === 'Archie' ? 'Prospect' : 'Archie'
+      const updated = [...prev]
+      updated[idx] = { ...turn, text: before }
+      updated.splice(idx + 1, 0, { id: newId, speaker: otherSpeaker, time: null, text: after })
+      return updated
     })
+    setFocusTarget({ id: newId, caret: 0 })
+  }
+
+  function mergeWithPrevious(turnId: string) {
+    const idx = turnsRef.current.findIndex(t => t.id === turnId)
+    if (idx <= 0) return
+    const previous = turnsRef.current[idx - 1]
+    const caret = previous.text.length
+    setTurns(prev => {
+      const i = prev.findIndex(t => t.id === turnId)
+      if (i <= 0) return prev
+      const current = prev[i]
+      const prevTurn = prev[i - 1]
+      const updated = [...prev]
+      updated[i - 1] = { ...prevTurn, text: prevTurn.text + current.text }
+      updated.splice(i, 1)
+      return updated
+    })
+    setFocusTarget({ id: previous.id, caret })
+  }
+
+  function handleTurnKeyDown(e: React.KeyboardEvent<HTMLDivElement>, turnId: string) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const el = e.currentTarget
+      let caret = el.innerText.length
+      const sel = window.getSelection()
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0)
+        if (el.contains(range.startContainer)) {
+          const preRange = range.cloneRange()
+          preRange.selectNodeContents(el)
+          preRange.setEnd(range.startContainer, range.startOffset)
+          caret = preRange.toString().length
+        }
+      }
+      splitTurn(turnId, caret)
+      return
+    }
+    if (e.key === 'Backspace') {
+      const el = e.currentTarget
+      const sel = window.getSelection()
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0)
+        const atStart = range.collapsed
+          && range.startOffset === 0
+          && (range.startContainer === el || range.startContainer === el.firstChild)
+        if (atStart) {
+          e.preventDefault()
+          mergeWithPrevious(turnId)
+        }
+      }
+    }
   }
 
   function handleCopyOutput(text: string | null, which: 'brief' | 'email') {
@@ -337,10 +514,15 @@ export default function ApolloWorkspace() {
             )}
           </div>
 
-          {(state === 'complete' || state === 'error') && callId && transcript && !advisorBrief && (
-            <button className={s.apolloAnalyseBtn} onClick={() => void handleAnalyse()}>
-              Analyse Call
-            </button>
+          {(state === 'complete' || state === 'error') && callId && turns.length > 0 && !advisorBrief && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <button className={s.apolloAnalyseBtn} style={{ flex: 1 }} onClick={() => void handleAnalyse()}>
+                Analyse Call
+              </button>
+              <button className={s.apolloResetTranscriptBtn} onClick={handleResetTranscript} title="Restores the original Whisper output">
+                Reset transcript
+              </button>
+            </div>
           )}
 
           <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
@@ -370,9 +552,9 @@ export default function ApolloWorkspace() {
         <div className={s.fpCol} style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div className={s.fpColHead} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <div className={s.fpColTitle}>Transcript</div>
-            {transcript && (
+            {turns.length > 0 && (
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className={s.apolloCopyBtn} onClick={handleSwapSpeakers} title="Flips Archie/Prospect labels across the transcript">
+                <button className={s.apolloCopyBtn} onClick={handleSwapSpeakers} title="Flips Archie/Prospect labels across the whole transcript">
                   ⇄ Swap speakers
                 </button>
                 <button className={s.apolloCopyBtn} onClick={handleCopy}>
@@ -382,12 +564,38 @@ export default function ApolloWorkspace() {
             )}
           </div>
 
-          {!transcript ? (
+          {turns.length === 0 ? (
             <p style={{ fontSize: 13, color: 'var(--text-dim)', paddingTop: 12 }}>
               Upload a call recording to see the transcript
             </p>
           ) : (
-            <pre className={s.apolloTranscript}>{transcript}</pre>
+            <>
+              <p className={s.apolloEditHint}>Click any line to edit · Enter to split · Click speaker label to swap</p>
+              <div className={s.apolloTranscriptTurns}>
+                {turns.map(turn => (
+                  <div key={turn.id} className={s.apolloTurn}>
+                    <span
+                      className={turn.speaker === 'Archie' ? s.apolloTurnSpeakerArchie : s.apolloTurnSpeakerProspect}
+                      onClick={() => toggleTurnSpeaker(turn.id)}
+                      title="Click to swap speaker"
+                    >
+                      [{turn.speaker}]
+                    </span>
+                    <div
+                      ref={el => { turnRefs.current[turn.id] = el }}
+                      className={s.apolloTurnText}
+                      contentEditable
+                      suppressContentEditableWarning
+                      data-turn-id={turn.id}
+                      onKeyDown={e => handleTurnKeyDown(e, turn.id)}
+                      onBlur={e => commitTurnText(turn.id, e.currentTarget.innerText)}
+                    >
+                      {turn.text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
 
@@ -396,6 +604,13 @@ export default function ApolloWorkspace() {
           <div className={s.fpColHead}>
             <div className={s.fpColTitle}>Outputs</div>
           </div>
+
+          {coachingInsight && (
+            <div className={s.apolloCoachingCard}>
+              <span className={s.apolloCoachingLabel}>Today&apos;s coaching point:</span>
+              <p className={s.apolloCoachingText}>{coachingInsight}</p>
+            </div>
+          )}
 
           <div className={s.apolloOutputCard} style={{ overflowY: 'auto', maxHeight: '48%' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

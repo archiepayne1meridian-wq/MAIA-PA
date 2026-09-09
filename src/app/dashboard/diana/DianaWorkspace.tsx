@@ -21,6 +21,7 @@ interface ProfileInfo {
   company: string
   location: string
   background: string  // work history only — no assets, no target product
+  todayAngle: string | null  // today's CASSANDRA angle, if any — display-only reminder
 }
 
 interface StageScore {
@@ -532,6 +533,11 @@ export default function DianaWorkspace() {
                     <span className={s.dianaProfileDesc}> — {profile.company}, {profile.location}</span>
                   </div>
                   <div className={s.dianaProfileDesc}>Background: {profile.background}</div>
+                  {profile.todayAngle && (
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--idle)', marginTop: 2 }}>
+                      Today&apos;s angle: {profile.todayAngle}
+                    </div>
+                  )}
                 </div>
               )}
 

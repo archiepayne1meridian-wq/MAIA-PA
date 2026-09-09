@@ -2,8 +2,8 @@
 // Pure data access: no Claude, no Slack. All reasoning stays in diana-handler.ts.
 
 import { getDb } from '@/db'
-import { diana_sessions, activity } from '@/db/schema'
-import { eq, and, desc, isNotNull } from 'drizzle-orm'
+import { diana_sessions, activity, research_briefs } from '@/db/schema'
+import { eq, and, desc, isNotNull, gte } from 'drizzle-orm'
 
 export interface DianaTranscriptTurn {
   role: 'user' | 'diana'
@@ -160,6 +160,40 @@ export async function endSession(sessionId: string): Promise<void> {
     .update(diana_sessions)
     .set({ status: 'ended', ended_at: Math.floor(Date.now() / 1000) })
     .where(eq(diana_sessions.id, sessionId))
+}
+
+// Returns a short "today's angle" string from the most recent CASSANDRA brief
+// generated today (research_briefs), or null if nothing has run yet today —
+// callers must not force a connection when this is null. Reads headlines_json
+// directly with a minimal, tolerant parse rather than importing cassandra.ts's
+// types, keeping this file free of dependencies on diana.ts/cassandra.ts domain
+// types (same principle as generated_prospect being handled as raw JSON above).
+export async function getTodayAngle(): Promise<string | null> {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  const todayStart = Math.floor(d.getTime() / 1000)
+
+  const rows = await getDb()
+    .select({ headlines_json: research_briefs.headlines_json })
+    .from(research_briefs)
+    .where(gte(research_briefs.created_at, todayStart))
+    .orderBy(desc(research_briefs.created_at))
+    .limit(1)
+
+  const headlinesJson = rows[0]?.headlines_json
+  if (!headlinesJson) return null
+
+  try {
+    const parsed = JSON.parse(headlinesJson)
+    const first = Array.isArray(parsed) ? (parsed[0] as Record<string, unknown> | undefined) : undefined
+    if (first) {
+      if (typeof first.summary === 'string' && first.summary.trim()) return first.summary.trim()
+      if (typeof first.title === 'string' && first.title.trim()) return first.title.trim()
+    }
+  } catch {
+    // malformed JSON — no angle today, don't force it
+  }
+  return null
 }
 
 // Records which objection was drilled, for pattern visibility later.

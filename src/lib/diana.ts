@@ -37,6 +37,7 @@ export interface GeneratedProspect {
   personality: string
   earlyObjection: string | null
   openingLine: string
+  todayAngle: string | null    // today's CASSANDRA angle, if any — not model-generated, see session/route.ts
 }
 
 const PROSPECT_GENERATION_SYSTEM = `Generate a realistic prospect for a deVere BDA cold call practice session.
@@ -191,6 +192,7 @@ const DEFAULT_GENERATED_PROSPECT: GeneratedProspect = {
   personality: 'Friendly but vague',
   earlyObjection: 'I haven\'t got time',
   openingLine: "Hello, who's this?",
+  todayAngle: null,
 }
 
 function normaliseLastInitial(v: unknown, fallback: string): string {
@@ -229,6 +231,7 @@ function sanitiseGeneratedProspect(parsed: unknown): GeneratedProspect {
     personality: str(p.personality, DEFAULT_GENERATED_PROSPECT.personality),
     earlyObjection: typeof p.earlyObjection === 'string' && p.earlyObjection.trim() ? p.earlyObjection.trim() : null,
     openingLine: str(p.openingLine, DEFAULT_GENERATED_PROSPECT.openingLine),
+    todayAngle: typeof p.todayAngle === 'string' && p.todayAngle.trim() ? p.todayAngle.trim() : null,
   }
 }
 
@@ -241,19 +244,29 @@ function sanitiseGeneratedProspect(parsed: unknown): GeneratedProspect {
 // handful of names (three sessions in a row all came back "Marcus"). Passing
 // back what's already been used, plus a random session seed, gives it something
 // concrete to vary against instead of silently converging on its own defaults.
-export async function generateProspect(recentFirstNames: string[] = []): Promise<GeneratedProspect> {
+// `todayAngle` — today's CASSANDRA news angle, if one exists (see getTodayAngle in
+// tools/diana-db.ts) — nudges the generated situation to feel topical without
+// forcing it. Not model-generated: we set it on the prospect deterministically
+// after generation, same principle as clampAge/normaliseLastInitial above — never
+// trust the model to echo back a value we already know ourselves.
+export async function generateProspect(recentFirstNames: string[] = [], todayAngle: string | null = null): Promise<GeneratedProspect> {
   const seed = Math.floor(Math.random() * 1_000_000)
   const avoidLine = recentFirstNames.length > 0
     ? `\n\nDo not use these first names — they were used in recent sessions: ${recentFirstNames.join(', ')}.`
     : ''
-  const userText = `Generate the prospect now. (session seed: ${seed})${avoidLine}`
+  const angleLine = todayAngle
+    ? `\n\nToday's news angle: "${todayAngle}"\n\nThe prospect's situation should naturally connect to this angle.\nFor example if the angle is about Novartis job cuts — the prospect\nworks at Novartis or a similar company and feels uncertain about\ntheir future. If the angle is about UK pension IHT changes — the\nprospect has a UK pension they haven't reviewed.\n\nDon't make it obvious. Just make their situation relevant.`
+    : ''
+  const userText = `Generate the prospect now. (session seed: ${seed})${avoidLine}${angleLine}`
 
   const raw = await askWith(PROSPECT_GENERATION_SYSTEM, userText, 500, HAIKU)
   try {
-    return sanitiseGeneratedProspect(JSON.parse(extractJson(raw)))
+    const parsed = JSON.parse(extractJson(raw)) as Record<string, unknown>
+    parsed.todayAngle = todayAngle
+    return sanitiseGeneratedProspect(parsed)
   } catch (err) {
     console.error('[diana] generateProspect: unparseable JSON, using fallback prospect:', err, raw.slice(0, 300))
-    return DEFAULT_GENERATED_PROSPECT
+    return { ...DEFAULT_GENERATED_PROSPECT, todayAngle }
   }
 }
 
@@ -273,6 +286,7 @@ export interface ProspectDisplay {
   company: string
   location: string
   background: string  // work history only — no assets, no target product, no problems
+  todayAngle: string | null  // today's CASSANDRA angle, if any — display-only reminder
 }
 
 // Display info for the dashboard header — no Claude call, pure string building.
@@ -283,6 +297,7 @@ export function prospectDisplay(p: GeneratedProspect): ProspectDisplay {
     company: p.company,
     location: p.location,
     background: `${p.nationality}. ${p.workHistory}`,
+    todayAngle: p.todayAngle,
   }
 }
 
@@ -497,11 +512,13 @@ jump ahead, and don't keep throwing objections once one's been handled:
    how long you were there, whether you plan to stay in Switzerland or move on, what provisions you
    have for when you stop working, whether those assets are back home or in Switzerland, who the
    pension's with, and whether you've got any other savings or investments. Answer only the specific
-   question just asked (see CRITICAL BEHAVIOUR RULES below) — cooperatively, but vague first ("I've
-   got something from my old job back home, I think — haven't really looked at it in a while"), more
-   specific only when he asks a good follow-up that digs into what you just said (the ladder — deeper,
-   not a new unrelated question). You are cooperative in this stage, not throwing objections — but
-   cooperative means answering honestly, not volunteering your whole financial picture unprompted.
+   question just asked, in ONE short sentence (see CRITICAL BEHAVIOUR RULES below) — cooperative, but
+   bare: "Yeah, something from my old job, I think." Not "I've got something from my old job back
+   home, I think — haven't really looked at it in a while." — that second version is already two
+   sentences and volunteers "back home" unprompted. Go deeper only when he asks a good follow-up that
+   digs into what you just said (the ladder — one new fact per follow-up, not a new unrelated
+   question). You are cooperative in this stage, not throwing objections — but cooperative means
+   answering honestly in one sentence at a time, not volunteering your whole financial picture unprompted.
 
 3. ENLARGE THE PROBLEM — Archie asks targeted questions specific to what you've told him about
    (pension, investments, or cash — see the examples below). Answer honestly but without volunteering
@@ -543,23 +560,46 @@ ${OBJECTION_GUIDANCE}
 ${SOLUTIONS_KNOWLEDGE}
 
 CRITICAL BEHAVIOUR RULES:
-1. Only answer the exact question asked. Never volunteer information the prospect
-   wasn't asked about.
-2. If asked "do you have a UK pension?" and the answer is no — say "No, I don't
-   have a UK pension." Full stop. Do not add "but I do have..." unless directly
-   asked about other assets.
-3. Wait to be asked. Real prospects don't volunteer their full financial picture
-   unprompted. They answer what they're asked, sometimes vaguely.
-4. When asked a vague question ("any other savings?") — give a vague answer first
-   ("yes, a bit"). When pushed specifically ("what kind?") — give more detail.
-5. Never go on a tangent. Answer the question, nothing more.
-6. If Archie asks about something that doesn't apply — give a clear short answer
-   and stop. "No, not really." "Nothing significant." "I'm not sure what you mean."
-7. Your opening line when the call starts: "${prospect.openingLine}"
-8. ${objectionLine}
-9. You do not know what your financial problems are. You just know what you have —
-   never diagnose your own situation or hint that something's wrong with it.
-10. If Archie says something factually wrong about a product or regulation, respond
+1. You are a real busy professional. You did not expect this call.
+   Your default mode is guarded, brief, and slightly impatient.
+2. Answer in ONE sentence maximum. Never volunteer extra information.
+   If asked "do you have a pension?" say "Yeah I think so" not
+   "Yes I have a defined contribution pension from my old employer
+   at HSBC that I haven't reviewed since 2019." This applies always —
+   even mid-objection, even if Archie hasn't answered your question yet,
+   even if you're getting more guarded or impatient. Getting more
+   guarded means a SHORTER, sharper one-liner — never a longer or
+   multi-paragraph reply. Spoken words only: no asterisks, no
+   *stage directions*, no narrating your own tone or actions.
+3. Make Archie work for every single detail. He asks one question,
+   you give one vague answer. He has to ask a follow up to get more.
+4. Natural resistance at the opener — always say something like:
+   "Who is this?" or "What's this about?" or "I'm quite busy"
+   before Archie has finished his opener. Make him earn the right
+   to continue.
+5. Once past the opener — become cooperative but still vague.
+   You answer questions but never more than asked.
+6. Real human responses only:
+   WRONG: "I have a defined benefit pension with NHS paying £18,000
+           per year from age 65 with a 50% spousal benefit"
+   RIGHT: "Yeah I've got something from when I worked back home.
+           Haven't looked at it in years to be honest."
+7. If Archie asks something you genuinely wouldn't know as a normal
+   person — say "I'm not sure" or "I'd have to check."
+   Don't invent precise figures.
+8. Only reveal information when directly and specifically asked.
+   Never connect the dots for him. Never say "and also I have..."
+   unless he asked about something else specifically.
+9. The one early objection — raise it naturally in the first
+   30 seconds. Once Archie handles it — move on. Never repeat it.
+10. Emotional realism in the disturb stage — when Archie reflects
+    your own words back at you, respond with genuine realisation:
+    "I suppose I hadn't thought about it like that"
+    "Yeah when you put it that way..."
+    Not: "You're absolutely right, this is very concerning."
+11. Your opening line when the call starts: "${prospect.openingLine}"
+12. ${objectionLine}
+13. If Archie says something factually wrong about a product or regulation, respond
     as a curious prospect would — "Really? I thought..." or "Is that right?" — judged
     against the SOLUTIONS KNOWLEDGE above, not your own opinion.
 
@@ -609,11 +649,9 @@ export async function roleplayTurn(
   const userText =
     `${scenarioLine}${history}ADVISER: ${userMsg}\n\nContinue as the prospect:`
 
-  // 200, not 120 — the new Enlarge-stage answers legitimately cover 2-3 assets in
-  // one cooperative reply (see the ladder in Fact Find/Enlarge); 120 was clipping
-  // those mid-sentence. The system prompt's own "2-4 sentences" rule still keeps
-  // replies short — this is a ceiling, not a target.
-  return askWith(systemPrompt, userText, 200, HAIKU)
+  // Physical ceiling backing the "one sentence" rule — the prospect is now
+  // deliberately terse (see CRITICAL BEHAVIOUR RULES), so this should be tight.
+  return askWith(systemPrompt, userText, 120, HAIKU)
 }
 
 // ── roleplayFeedback (Haiku, 500 tok) — legacy free-text feedback ────────────

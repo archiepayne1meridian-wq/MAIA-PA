@@ -11,6 +11,7 @@ import {
   endSession,
   parseTranscript,
   getRecentGeneratedProspects,
+  getTodayAngle,
   type DianaSession,
 } from '../../../../../../tools/diana-db'
 import { generateProspect, parseGeneratedProspect, prospectDisplay } from '@/lib/diana'
@@ -63,7 +64,10 @@ export async function POST(req: Request) {
     const recentFirstNames = recentJson
       .map(j => parseGeneratedProspect(j)?.firstName)
       .filter((n): n is string => Boolean(n))
-    prospect = await generateProspect(recentFirstNames)
+    // Today's CASSANDRA angle, if any — makes the prospect's situation feel
+    // topical without forcing it (see getTodayAngle + generateProspect).
+    const todayAngle = await getTodayAngle()
+    prospect = await generateProspect(recentFirstNames, todayAngle)
   } catch (err) {
     console.error('[diana] generateProspect failed:', err)
     return NextResponse.json({ error: 'Could not generate a prospect — try again' }, { status: 500 })

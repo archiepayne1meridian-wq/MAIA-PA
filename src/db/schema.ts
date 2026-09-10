@@ -347,3 +347,25 @@ export const hermes_script = sqliteTable('hermes_script', {
   objections_json: text('objections_json'),
   updated_at: integer('updated_at').default(sql`(unixepoch())`),
 })
+
+export const hermes_scenarios = sqliteTable('hermes_scenarios', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  angle: text('angle'),
+  opener: text('opener').notNull(),
+  fact_find_questions: text('fact_find_questions').notNull(),   // JSON array
+  enlarge_points: text('enlarge_points').notNull(),             // JSON array
+  disturb_points: text('disturb_points').notNull(),             // JSON array
+  product_pathway: text('product_pathway').notNull(),           // internal only, never said aloud
+  product_questions: text('product_questions').notNull(),       // JSON array
+  close_script: text('close_script').notNull(),
+  // Not in the original spec's column list — added because the brief also
+  // describes a "soft landing" block, identical in content to close_script's
+  // sibling text but edited independently per scenario in the UI. Without its
+  // own column, editing one would silently clobber the other.
+  soft_landing: text('soft_landing').notNull(),
+  objections: text('objections').notNull(),                     // JSON array of {objection, response}
+  active: integer('active').notNull().default(1),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
+})

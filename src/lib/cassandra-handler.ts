@@ -6,7 +6,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { eq } from 'drizzle-orm'
 import { postMessage } from './slack'
-import { formatStructuredBrief, generateStructuredBrief, isRelevantToDeVere } from './cassandra'
+import { formatStructuredBrief, generateStructuredBrief, generateActionAngles, isRelevantToDeVere } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
 import { flagIrisTopics, savePost } from '../../tools/iris'
@@ -186,6 +186,7 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
   headlinesJson: string
   rawJson: string
   rawSearches: { key: string; label: string; findings: string }[]
+  actionAngles: string
 }> {
   const [indices, fx, feeds] = await Promise.all([
     getIndexQuotes(config.indices).catch(err => {
@@ -208,7 +209,10 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
   const { sections, rawJson, rawSearches } = await generateStructuredBrief(relevant, config.itemsPerSection)
   console.log(`[cassandra] generateStructuredBrief: ${sections.length} sections, raw JSON:`, rawJson)
 
-  const text = formatStructuredBrief(indices, fx, sections, feeds.skipped)
+  const actionAngles = await generateActionAngles(sections)
+  console.log('[cassandra] generateActionAngles raw output:', actionAngles)
+
+  const text = formatStructuredBrief(indices, fx, sections, feeds.skipped, actionAngles)
 
   const marketsJson = JSON.stringify({ indices, fx })
 
@@ -218,7 +222,7 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
     sections.flatMap(sec => sec.items.map(item => ({ ...item, section: sec.key, sectionLabel: sec.label }))),
   )
 
-  return { text, marketsJson, headlinesJson, rawJson, rawSearches }
+  return { text, marketsJson, headlinesJson, rawJson, rawSearches, actionAngles }
 }
 
 // ─── Scheduled brief (called by POST /api/cassandra/brief) ───────────────────

@@ -74,6 +74,17 @@ regulatory_feeds:
 # surface via the primary search-based sections, just not via this RSS feed.
 # Worth finding the SNB's actual RSS/Atom path (or an alternative — e.g. a
 # press-release page that isn't feed-based) rather than treating this as fixed.
+# UK Government Announcements: the originally-specified path
+# (gov.uk/government/announcements.atom) 404s — confirmed via curl, real
+# server response. gov.uk's actual sitewide announcements feed lives at
+# /search/news-and-communications.atom instead (confirmed 200, live entries,
+# updated within the hour when checked 2026-09-09) — using that URL below.
+# Sky News Politics, Guardian Politics, Financial Times: all confirmed live
+# (200) with real items.
+# This is Money: confirmed 403 across every path tried (root, /money/rss.xml,
+# /money/rss/index.rss) — Akamai bot protection blocks non-browser requests
+# outright, same pattern as MFSA below. Kept configured (degrades gracefully)
+# but contributes zero items until a non-blocked path is found, if one exists.
 
 news_feeds:
   - url: https://www.pensionsage.com/rss.xml
@@ -86,6 +97,16 @@ news_feeds:
     name: BBC Business
   - url: https://www.snb.ch/en/news/rss
     name: Swiss National Bank
+  - url: https://www.gov.uk/search/news-and-communications.atom
+    name: UK Government Announcements
+  - url: https://feeds.skynews.com/feeds/rss/politics.xml
+    name: Sky News Politics
+  - url: https://www.theguardian.com/politics/rss
+    name: Guardian Politics
+  - url: https://www.ft.com/rss/home
+    name: Financial Times
+  - url: https://www.thisismoney.co.uk/money/rss.xml
+    name: This is Money
 
 ---
 
@@ -98,3 +119,12 @@ news_feeds:
 - News digests (Claude summarisation) require explicit "go ahead" before being enabled.
 - MFSA: v2 follow-on. Build tools/mfsa-scraper.ts that fetches mfsa.mt/news and
   parses <article> headlines; log loudly on any structural change. Not a launch blocker.
+- UK politics/budget feeds (gov.uk, Sky Politics, Guardian Politics, FT, This is
+  Money) added 2026-09 — UK fiscal events (Budget, Autumn/Spring Statement) are
+  a major driver of pension/IHT client conversations, so UK political coverage
+  is now weighted alongside the existing pensions/regulatory/Swiss feeds.
+- The keyword relevance filter (`isRelevantToDeVere` in `src/lib/cassandra.ts`)
+  was sharpened alongside these feeds — high-value keyword list (UK tax/budget,
+  pensions, Switzerland, expat/cross-border, named Swiss employers, company
+  events, significant market moves) plus an exclude list for adjacent-but-noisy
+  regulatory admin (post-trade reporting, MiFID, individual share bans, etc.).

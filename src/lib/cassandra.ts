@@ -55,35 +55,66 @@ function fmtDate(d: Date): string {
 // ─── Topic filter (RSS supplementary items only) ──────────────────────────────
 // Keeps RSS supplementary context scoped to deVere's core advice areas instead of
 // general business news. Web search is the primary source now — RSS just fills
-// gaps search might miss. Title only — checking source too let curated feed names
+// gaps search might miss. Title only — FeedItem carries no description/summary
+// field (see tools/feeds.ts), and checking source too let curated feed names
 // (e.g. "Bank of England", "Pensions Age") give every item a free pass regardless
 // of content.
-const DEVERE_KEYWORDS = [
-  // Pensions
-  'pension', 'qrops', 'sipp', 'iorp', 'annuity', 'drawdown', 'retirement',
-  'pension transfer', 'pension scheme', 'lifetime allowance', 'annual allowance',
-  'pension age', 'defined contribution', 'defined benefit',
-  // Tax & legislation
-  'inheritance tax', 'iht', 'capital gains', 'income tax', 'tax relief',
-  'non-dom', 'domicile', 'residency', 'double taxation', 'hmrc',
-  'legislation', 'budget', 'autumn statement', 'spring statement',
-  // Offshore & investments
-  'offshore', 'portfolio bond', 'structured note', 'investment bond',
-  'wealth management', 'financial planning', 'expat', 'expatriate',
-  // Rates & markets (client conversation relevant)
-  'interest rate', 'base rate', 'bank of england', 'federal reserve',
-  'ecb', 'inflation', 'currency', 'sterling', 'gbp', 'eur',
-  // Regulatory
-  'fca', 'fsa', 'mfsa', 'compliance', 'regulation', 'financial conduct',
-  'consumer duty', 'financial advice', 'adviser',
-  // Switzerland
-  'swiss national bank', 'snb', 'swiss franc', 'chf', 'switzerland',
-  'swiss', 'helvetia', 'finma',
+const HIGH_VALUE_KEYWORDS = [
+  // UK tax and budget
+  'budget', 'autumn statement', 'spring statement', 'chancellor',
+  'keir starmer', 'rachel reeves', 'labour tax', 'uk tax',
+  'inheritance tax', 'iht', 'capital gains', 'income tax',
+  'non-dom', 'domicile', 'tax residency', 'pension tax',
+  'pension relief', 'pension annual allowance',
+
+  // Pensions specifically
+  'pension', 'qrops', 'sipp', 'drawdown', 'annuity',
+  'state pension', 'pension age', 'pension transfer',
+  'pension death', 'pension inheritance', 'april 2027',
+  'pension reform', 'defined benefit', 'defined contribution',
+
+  // Swiss specific
+  'switzerland', 'swiss', 'snb', 'swiss franc', 'chf',
+  'finma', 'pillar 2', 'pillar 3', 'vested benefits',
+  'freizugigkeit', 'bvg', 'lpp',
+
+  // Expat and cross border
+  'expat', 'expatriate', 'non-resident', 'overseas',
+  'cross-border', 'double taxation', 'tax treaty',
+  'foreign assets', 'offshore', 'repatriation',
+
+  // Swiss company events (high value for prospecting)
+  'novartis', 'roche', 'abb', 'nestle', 'nestlé',
+  'zurich insurance', 'julius baer', 'ubs', 'credit suisse',
+  'lonza', 'trafigura', 'philip morris', 'fmc corporation',
+  'glencore', 'syngenta', 'holcim', 'richemont', 'swatch',
+
+  // Company events that create mobile prospects
+  'redundan', 'layoff', 'restructur', 'merger', 'acquisition',
+  'office closure', 'job cut', 'headcount', 'relocat',
+  'expanding to switzerland', 'moving to switzerland',
+
+  // Markets (only when significant)
+  'market crash', 'market drop', 'market sell', 'bear market',
+  'rate decision', 'interest rate', 'bank of england',
+  'ecb rate', 'federal reserve', 'snb rate',
+  'tech selloff', 'market correction',
 ]
 
+// EXCLUDE these even if they match above
+const EXCLUDE_KEYWORDS = [
+  'stock ban', 'insider trading', 'individual share',
+  'post-trade', 'mifid reporting', 'fca fine',
+  'conduct rules', 'senior manager regime',
+  'esma consultation', 'annex 1',
+]
+
+// FeedItem has no separate description field — title is the only text available,
+// so it doubles as both title and description for this check.
 export function isRelevantToDeVere(item: FeedItem): boolean {
-  const titleLower = item.title.toLowerCase()
-  return DEVERE_KEYWORDS.some(keyword => titleLower.includes(keyword))
+  const text = item.title.toLowerCase()
+  if (EXCLUDE_KEYWORDS.some(k => text.includes(k))) return false
+  return HIGH_VALUE_KEYWORDS.some(k => text.includes(k))
 }
 
 // ─── Sections ──────────────────────────────────────────────────────────────────
@@ -394,6 +425,66 @@ export async function generateStructuredBrief(rssRelevant: FeedItem[], rssPerSec
   return { sections, rawJson: cleaned, rawSearches: searches }
 }
 
+// ─── Step 3 — action angles (call angle / post idea / knowledge update) ───────
+//
+// A second, small Haiku call over the SAME vetted section content (not a fresh
+// pass over raw search results) — asks "given everything already surfaced
+// today, is there one genuine reason to call someone, post something, or note
+// something?" Deliberately separate from the per-item summary/angle already on
+// each StructuredBriefItem: those are per-headline context; this is a single,
+// scarce, actionable pick across the whole brief. Plain text out (not JSON) —
+// the format is simple enough that JSON just adds parsing risk for no benefit,
+// and it keeps the raw Haiku output trivially inspectable end to end.
+
+const ACTION_ANGLE_SYSTEM = `You are CASSANDRA, spotting today's single best action for Archie Payne, a
+trainee financial adviser at deVere Group serving British expats across
+Europe and Switzerland.
+
+You've just reviewed today's structured morning brief findings (given below).
+From everything in it, decide if there's a genuine, specific reason to act
+today.
+
+For each relevant item found today, produce:
+
+1. A CALL ANGLE if the item creates a reason to call a specific type of prospect:
+   Format: "Call angle: [who to target] — [why today] — [what to say]"
+   Example: "Call angle: Finance professionals at Novartis Geneva — company announced 500 job cuts this week — lead with uncertainty about their future and asset portability"
+
+2. A POST IDEA if the item would make a good LinkedIn discussion:
+   Format: "Post idea: [topic] — [angle] — [question to end with]"
+   Example: "Post idea: UK pension IHT April 2027 — most expats don't know this applies to them — did you know your pension is now in scope?"
+
+3. A KNOWLEDGE UPDATE if it changes something you need to know:
+   Format: "Knowledge: [what changed] — [impact on products/clients]"
+   Example: "Knowledge: SNB holds rates at 1.5% — Swiss mortgage holders relieved but savings rates stay low"
+
+Rules:
+- Only produce a CALL ANGLE if there's genuinely a reason to call someone today.
+- Only produce a POST IDEA if it would genuinely spark discussion.
+- If nothing relevant today — respond with exactly: Nothing significant today.
+- Maximum 3 items total across all three types.
+- Never pad or force an angle that isn't there. Quality over quantity always.
+- Each item on its own single line, in the exact "Label: text" format shown
+  above — no bullet points, no numbering, no markdown, no commentary before or
+  after the line(s).
+- Never give financial advice or recommendations.`
+
+// Guarded like any other CASSANDRA-generated prose (see guardProse/guardField
+// above) — this is Archie's own "what to say" language, not attributed fact.
+export async function generateActionAngles(sections: StructuredBriefSection[]): Promise<string> {
+  if (sections.length === 0) return 'Nothing significant today.'
+
+  const digest = sections
+    .map(sec => `### ${sec.label}\n${sec.items.map(i => `- ${i.summary} — ${i.angle} (${i.source})`).join('\n')}`)
+    .join('\n\n')
+
+  const userMessage = `Today's structured brief findings:\n\n${digest}\n\nProduce today's action angles now, following the rules exactly.`
+
+  const raw = (await askWith(ACTION_ANGLE_SYSTEM, userMessage, 400, DIGEST_MODEL)).trim()
+  const guarded = guardProse(raw, 'Action Angles')
+  return guarded ?? 'Nothing significant today.'
+}
+
 // ─── Step 4 — deterministic Slack/dashboard rendering ─────────────────────────
 
 export function formatStructuredBrief(
@@ -401,6 +492,7 @@ export function formatStructuredBrief(
   fx: FxQuote[],
   sections: StructuredBriefSection[],
   skipped: string[],
+  actionAngles: string,
 ): string {
   const blocks: string[] = []
 
@@ -417,6 +509,12 @@ export function formatStructuredBrief(
     const guarded = guardProse(`*FX*\n${lines}`, 'FX')
     if (guarded) blocks.push(guarded)
   }
+
+  // ── Today's Angle (call angle / post idea / knowledge update) ──────────────
+  // Always included, even when it's just "Nothing significant today." — that's
+  // the honest, deliberate absence-case, not a gap to hide.
+  const guardedAngles = guardProse(actionAngles.trim(), 'Today\'s Angle')
+  blocks.push(`*Today's Angle*\n${guardedAngles ?? 'Nothing significant today.'}`)
 
   // ── Generated sections ───────────────────────────────────────────────────
   for (const sec of sections) {

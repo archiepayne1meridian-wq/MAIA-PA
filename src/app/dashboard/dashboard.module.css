@@ -1824,6 +1824,21 @@
 .cassandraNavMeta { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
 .cassandraEmptyBrief { font-size: 12px; color: var(--text-dim); text-align: center; padding: 40px 20px; line-height: 1.7; }
 
+.cassandraAngleSection {
+  background: var(--surface); border-left: 3px solid var(--text-dim); border-radius: 0 6px 6px 0;
+  padding: 10px 14px; margin-bottom: 14px;
+}
+.cassandraAngleLabel {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: 6px;
+}
+.cassandraAngleText { font-size: 13px; color: var(--text); line-height: 1.55; margin: 0 0 6px; }
+.cassandraAngleText:last-child { margin-bottom: 0; }
+.cassandraAngleNone {
+  font-size: 12px; color: var(--text-dim); text-align: center; padding: 14px 16px;
+  margin-bottom: 14px; line-height: 1.6;
+}
+
 .cassandraHeadItem { padding: 10px 0; border-bottom: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 5px; }
 .cassandraHeadItem:last-child { border-bottom: none; }
 .cassandraHeadMeta { display: flex; align-items: center; gap: 8px; }

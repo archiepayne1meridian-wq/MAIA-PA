@@ -74,6 +74,30 @@ interface GroupedSection {
   items: HeadlineItem[]
 }
 
+interface ActionAngles {
+  callAngles: string[]
+  postIdeas: string[]
+  knowledgeUpdates: string[]
+}
+
+// Parses the "Call angle: ...", "Post idea: ...", "Knowledge: ..." lines that
+// cassandra.ts's generateActionAngles embeds into brief.summary (under a
+// "Today's Angle" header) — matched by line prefix regardless of exact
+// surrounding formatting, so it degrades gracefully to "nothing found" rather
+// than throwing if the header text ever shifts.
+function parseActionAngles(summary: string): ActionAngles {
+  const callAngles: string[] = []
+  const postIdeas: string[] = []
+  const knowledgeUpdates: string[] = []
+  for (const rawLine of summary.split('\n')) {
+    const line = rawLine.trim()
+    if (/^call angle:/i.test(line)) callAngles.push(line.replace(/^call angle:\s*/i, ''))
+    else if (/^post idea:/i.test(line)) postIdeas.push(line.replace(/^post idea:\s*/i, ''))
+    else if (/^knowledge:/i.test(line)) knowledgeUpdates.push(line.replace(/^knowledge:\s*/i, ''))
+  }
+  return { callAngles, postIdeas, knowledgeUpdates }
+}
+
 // Groups the flat headlines array by section, preserving first-appearance order —
 // which already matches the backend's canonical section order since headlines_json
 // is built by flatMap-ing sections in that order.
@@ -257,6 +281,36 @@ export default function CassandraWorkspace() {
 
           {brief && !loading && (
             <>
+              {(() => {
+                const { callAngles, postIdeas, knowledgeUpdates } = parseActionAngles(brief.summary)
+                const hasAnyAngle = callAngles.length > 0 || postIdeas.length > 0 || knowledgeUpdates.length > 0
+                if (!hasAnyAngle) {
+                  return <p className={s.cassandraAngleNone}>Nothing significant today — standard calls, no specific angle.</p>
+                }
+                return (
+                  <>
+                    {callAngles.length > 0 && (
+                      <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--accent)' }}>
+                        <div className={s.cassandraAngleLabel}>📞 CALL ANGLES TODAY</div>
+                        {callAngles.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
+                      </div>
+                    )}
+                    {postIdeas.length > 0 && (
+                      <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--online)' }}>
+                        <div className={s.cassandraAngleLabel}>✍️ POST IDEAS</div>
+                        {postIdeas.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
+                      </div>
+                    )}
+                    {knowledgeUpdates.length > 0 && (
+                      <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--idle)' }}>
+                        <div className={s.cassandraAngleLabel}>📚 KNOWLEDGE UPDATE</div>
+                        {knowledgeUpdates.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+
               {groupedSections.length > 0 ? (
                 groupedSections.map(sec => (
                   <div

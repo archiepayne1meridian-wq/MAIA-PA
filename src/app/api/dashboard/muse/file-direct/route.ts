@@ -5,8 +5,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
-import { generateDirectFiling } from '@/lib/muse'
-import { saveEntry, saveLink, getEntryIdsByTitles, getAllEntryTitles } from '../../../../../../tools/muse'
+import { generateDirectFiling, autoTag, findRelatedEntries } from '@/lib/muse'
+import { saveEntry, saveLink, getEntryIdsByTitles, getAllEntryTitles, updateEntryTags, updateEntryLinkedEntries } from '../../../../../../tools/muse'
 
 function inferDepth(content: string): 'simple' | 'medium' | 'detailed' {
   if (content.length < 1000) return 'simple'
@@ -19,12 +19,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { content, sector, title, context, entryType } = await req.json().catch(() => ({})) as {
+  const { content, sector, title, context, entryType, privacyTier, sourceScenario, tags: tagsOverride } = await req.json().catch(() => ({})) as {
     content?: string
     sector?: string
     title?: string
     context?: string
-    entryType?: 'knowledge' | 'case'
+    entryType?: string
+    privacyTier?: 1 | 2
+    sourceScenario?: string
+    tags?: string[]
   }
 
   if (!content?.trim()) {
@@ -40,6 +43,7 @@ export async function POST(req: NextRequest) {
 
     const finalTitle = title?.trim() || meta.title
     const now = Math.floor(Date.now() / 1000)
+    const tags = Array.isArray(tagsOverride) ? tagsOverride : autoTag(content, finalTitle)
 
     const entryId = await saveEntry({
       sector,
@@ -52,7 +56,12 @@ export async function POST(req: NextRequest) {
       status: 'active',
       date_filed: now,
       last_updated: now,
+      privacy_tier: privacyTier === 2 ? 2 : 1,
+      entry_type: entryType ?? 'knowledge',
+      source_scenario: sourceScenario ?? null,
     })
+
+    await updateEntryTags(entryId, tags)
 
     let linkedTitles: string[] = []
     if (meta.links.length > 0) {
@@ -61,7 +70,15 @@ export async function POST(req: NextRequest) {
       linkedTitles = resolved.map(r => r.title)
     }
 
-    return NextResponse.json({ id: entryId, title: finalTitle, sector, links: linkedTitles })
+    // Auto-link via tag overlap, alongside the LLM-suggested title links above —
+    // findRelatedEntries only considers Tier 1 entries, so a Tier 2 filing never
+    // gets auto-linked to (or discovered from) other entries this way.
+    const relatedIds = await findRelatedEntries(entryId, tags, 5)
+    if (relatedIds.length > 0) {
+      await updateEntryLinkedEntries(entryId, relatedIds)
+    }
+
+    return NextResponse.json({ id: entryId, title: finalTitle, sector, links: linkedTitles, tags })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Filing failed'
     console.error('[muse] file-direct failed:', err)

@@ -178,6 +178,7 @@ export default function HermesWorkspace() {
   const [modalOpen, setModalOpen] = useState(false)
   const [activeObjIdx, setActiveObjIdx] = useState(0)
   const [, forceRender] = useState(0)
+  const [relatedKnowledge, setRelatedKnowledge] = useState<{ id: string; title: string; sector: string }[]>([])
 
   const loadScript = useCallback(async () => {
     setLoading(true)
@@ -215,6 +216,25 @@ export default function HermesWorkspace() {
     if (!modalOpen || !objBodyRef.current || !currentScenario) return
     objBodyRef.current.innerHTML = buildObjModalBody(s, currentScenario.objections, activeObjIdx)
   }, [modalOpen, activeObjIdx, currentScenario])
+
+  // MUSE — related knowledge for the active scenario, keyed off name + angle text
+  // run through the same autoTag() classifier MUSE uses when filing an entry.
+  useEffect(() => {
+    if (!currentScenario) { setRelatedKnowledge([]); return }
+    const text = `${currentScenario.name} ${currentScenario.angle ?? ''}`
+    let cancelled = false
+    fetch(`/api/dashboard/muse/related?text=${encodeURIComponent(text)}&limit=3`)
+      .then(res => res.json())
+      .then((data: { entries?: { id: string; title: string; sector: string }[] }) => {
+        if (!cancelled) setRelatedKnowledge(data.entries ?? [])
+      })
+      .catch(() => { if (!cancelled) setRelatedKnowledge([]) })
+    return () => { cancelled = true }
+  }, [currentScenarioId, currentScenario])
+
+  function openMuseEntry(id: string) {
+    router.push(`/dashboard/muse?entry=${id}`)
+  }
 
   const persistNow = useCallback(async () => {
     const scenarioId = pendingScenarioIdRef.current
@@ -460,6 +480,23 @@ export default function HermesWorkspace() {
                         </ul>
                       )}
                     </div>
+
+                    {relatedKnowledge.length > 0 && (
+                      <div className={s.hermesRelatedKnowledge}>
+                        <div className={s.hermesProductPathwayLabel}>Related Knowledge</div>
+                        <div className={s.hermesRelatedKnowledgeList}>
+                          {relatedKnowledge.map(rk => (
+                            <button
+                              key={rk.id}
+                              className={s.hermesRelatedKnowledgeChip}
+                              onClick={() => openMuseEntry(rk.id)}
+                            >
+                              {rk.title}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>

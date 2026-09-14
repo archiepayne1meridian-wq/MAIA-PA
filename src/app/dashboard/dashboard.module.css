@@ -1498,6 +1498,50 @@
 .museTextInput:focus { border-color: var(--accent-deep); }
 .museTextInput::placeholder { color: var(--text-dim); }
 
+/* ── Knowledge-graph rebuild additions ──────────────────────────────────── */
+
+.museResultDot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+.museNewCaseBtn {
+  width: calc(100% - 32px); margin: 10px 16px; background: none; border: 1px dashed var(--border);
+  color: var(--text-dim); border-radius: 6px; padding: 8px; font-family: var(--mono); font-size: 10.5px; cursor: pointer;
+}
+.museNewCaseBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
+
+.museCentreBody { padding: 60px 40px 40px; max-width: 720px; margin: 0 auto; }
+
+.museEntryView { display: flex; flex-direction: column; gap: 14px; }
+
+.museTypeChip {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 100px; border: 1px solid var(--border); color: var(--text-dim);
+}
+.musePrivacyBadge {
+  font-family: var(--mono); font-size: 10px; padding: 2px 8px; border-radius: 100px;
+  border: 1px solid var(--border); color: var(--text-dim);
+}
+
+.museTagChip {
+  display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 9.5px;
+  padding: 3px 9px; border-radius: 100px; background: rgba(138,169,240,0.08); border: 1px solid var(--accent-deep);
+  color: var(--accent);
+}
+.museTagRemove { background: none; border: none; color: inherit; cursor: pointer; font-size: 9px; padding: 0; }
+
+.museLockedWarning {
+  font-family: var(--mono); font-size: 10.5px; color: var(--idle); background: rgba(224,179,65,0.1);
+  border: 1px solid rgba(224,179,65,0.3); border-radius: 6px; padding: 8px 10px; margin: 0;
+}
+
+.musePlaceholderHelper { font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin: 2px 0 0; }
+
+.museLastEdited { font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+
+.museTabBadge {
+  display: inline-block; margin-left: 5px; background: var(--accent); color: #0D1014;
+  border-radius: 100px; font-size: 9px; font-weight: 700; padding: 1px 6px; font-family: var(--mono);
+}
+
 .museCaseModeRow { display: flex; gap: 6px; }
 .museCaseSelectList { display: flex; flex-direction: column; max-height: 160px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: 6px; }
 .museCaseSelectRow {
@@ -2628,3 +2672,15 @@
 .hermesProductPathwayText { font-family: var(--font-hermes-mono), 'IBM Plex Mono', monospace; font-size: 10px; color: var(--h-idle); line-height: 1.6; white-space: pre-line; }
 .hermesProductQuestions { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--h-border-soft); display: flex; flex-direction: column; gap: 6px; }
 .hermesProductQuestions li div { font-family: var(--font-hermes-mono), 'IBM Plex Mono', monospace; font-size: 10px; color: var(--h-idle); line-height: 1.6; }
+
+.hermesRelatedKnowledge {
+  background: var(--h-bg-elev); border: 1px solid var(--h-border-soft); border-radius: 9px;
+  padding: 12px 14px; margin: 10px 0 0;
+}
+.hermesRelatedKnowledgeList { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.hermesRelatedKnowledgeChip {
+  font-family: var(--font-hermes-mono), 'IBM Plex Mono', monospace; font-size: 10px; padding: 5px 10px;
+  background: var(--h-bg-card); border: 1px solid var(--h-border); border-radius: 100px;
+  color: var(--h-teal); cursor: pointer; transition: 0.12s;
+}
+.hermesRelatedKnowledgeChip:hover { border-color: var(--h-teal); background: var(--h-teal-soft); }

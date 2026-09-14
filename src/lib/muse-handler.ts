@@ -140,6 +140,15 @@ export async function handleMuseStatus(channel: string, slackUser?: string): Pro
 
 // ─── Search handler ───────────────────────────────────────────────────────────
 
+// NOTE: searchKnowledge's shape changed with the knowledge-graph rebuild — it's
+// now pure DB relevance scoring (no Haiku call), returning { knowledge, templates,
+// cases } instead of { synthesis, results }. Sector filtering also moved from a
+// DB-level WHERE clause to nothing (the new version doesn't take a sector param
+// at all) — this handler filters knowledge results by sector itself afterward so
+// "MUSE, search Products for X" still narrows the way it used to. The one real
+// loss: no more Haiku-authored one-line synthesis or per-result "why relevant"
+// reasoning — Slack search replies are now a plain ranked list, same content
+// discoverable, less narrated.
 export async function handleMuseSearch(
   channel: string,
   query: string,
@@ -151,30 +160,40 @@ export async function handleMuseSearch(
   await logRow(rowId, 'muse_search', query.slice(0, 400), slackUser)
 
   try {
-    const { synthesis, results } = await searchKnowledge(query, sector)
+    const { knowledge, templates, cases } = await searchKnowledge(query)
+    const scopedKnowledge = sector ? knowledge.filter(k => k.sector === sector) : knowledge
     const scope = sector ? ` in ${sector}` : ' across all sectors'
+    const totalResults = scopedKnowledge.length + (sector ? 0 : templates.length + cases.length)
 
-    if (results.length === 0) {
+    if (totalResults === 0) {
       await postMessage(
         channel,
-        `🔍 *MUSE — Search Results*\n*Query:* "${query}"${scope}\n\n${synthesis}`,
+        `🔍 *MUSE — Search Results*\n*Query:* "${query}"${scope}\n\nNothing found on this topic yet.`,
       )
       await resolveRow(rowId, 'no results', startMs)
       return
     }
 
-    let msg = `🔍 *MUSE — Search Results*\n*Query:* "${query}"${scope}\n\n_${synthesis}_\n\n`
-    results.forEach((r, i) => {
-      const date = new Date(r.last_updated * 1000).toISOString().slice(0, 10)
-      const snippet = r.summary.length > 120 ? r.summary.slice(0, 120) + '…' : r.summary
-      msg += `${i + 1}. *${r.title}* — ${r.sector} — Updated ${date}\n`
-      msg += `   ${snippet}\n`
-      msg += `   _Why relevant: ${r.relevanceReason}_\n\n`
-    })
+    let msg = `🔍 *MUSE — Search Results*\n*Query:* "${query}"${scope}\n\n`
+    let n = 1
+    for (const k of scopedKnowledge) {
+      const date = new Date(k.last_updated * 1000).toISOString().slice(0, 10)
+      const snippet = k.summary.length > 120 ? k.summary.slice(0, 120) + '…' : k.summary
+      msg += `${n++}. *${k.title}* — ${k.sector} — Updated ${date}\n   ${snippet}\n\n`
+    }
+    if (!sector) {
+      for (const t of templates) {
+        msg += `${n++}. *${t.name}* — Template (${t.category})\n\n`
+      }
+      for (const c of cases) {
+        const label = c.company ? `${c.display_name} — ${c.company}` : c.display_name
+        msg += `${n++}. *${label}* — Case\n\n`
+      }
+    }
     msg += 'Reply with a number to see the full entry.'
 
     await postMessage(channel, msg)
-    await resolveRow(rowId, `${results.length} results`, startMs)
+    await resolveRow(rowId, `${totalResults} results`, startMs)
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err)
     await errorRow(rowId, m, startMs)

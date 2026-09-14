@@ -14,6 +14,8 @@
 import { askWith, askWithWebSearch } from './claude'
 import type { IndexQuote, FxQuote } from '../../tools/market-data'
 import type { FeedItem } from '../../tools/feeds'
+import { saveEntry, updateEntryTags } from '../../tools/muse'
+import { autoTag } from './muse'
 
 // Haiku for search + structuring — cheap and fast, matches IRIS's model choice.
 const DIGEST_MODEL = 'claude-haiku-4-5-20251001'
@@ -483,6 +485,57 @@ export async function generateActionAngles(sections: StructuredBriefSection[]): 
   const raw = (await askWith(ACTION_ANGLE_SYSTEM, userMessage, 400, DIGEST_MODEL)).trim()
   const guarded = guardProse(raw, 'Action Angles')
   return guarded ?? 'Nothing significant today.'
+}
+
+// Product-related keywords route to the "Products" sector; everything else
+// (tax/legislation/compliance language, or no match) defaults to "Regulations" —
+// matching the split MUSE already uses for Training vs. everything-else sectors.
+const PRODUCT_SECTOR_KEYWORDS = ['structured note', 'portfolio bond', 'sipp', 'qrops', 'pillar 2', 'pillar 3', 'rl360', 'ardan', 'autocall']
+
+function sectorForAngleText(text: string): 'Products' | 'Regulations' {
+  const lower = text.toLowerCase()
+  return PRODUCT_SECTOR_KEYWORDS.some(k => lower.includes(k)) ? 'Products' : 'Regulations'
+}
+
+// Auto-files today's "Call angle" and "Knowledge" lines to MUSE as Tier 1 news
+// entries — Tier 1 because they're CASSANDRA's own already-guarded, public-facts
+// prose, safe to hand back to an AI model later (e.g. a future digest). "Post
+// idea" lines are IRIS's territory, not knowledge-base material, so they're
+// skipped here. A no-op on "Nothing significant today." or a guard-tripped fallback.
+export async function fileActionAnglesToMuse(actionAngles: string): Promise<number> {
+  if (!actionAngles || actionAngles.trim() === 'Nothing significant today.') return 0
+
+  let filed = 0
+  for (const rawLine of actionAngles.split('\n')) {
+    const line = rawLine.trim()
+    const callMatch = line.match(/^call angle:\s*(.+)$/i)
+    const knowledgeMatch = line.match(/^knowledge:\s*(.+)$/i)
+    const text = callMatch?.[1] ?? knowledgeMatch?.[1]
+    if (!text) continue
+
+    const kind = callMatch ? 'Call angle' : 'Knowledge update'
+    const title = `${kind} — ${text.split('—')[0]?.trim().slice(0, 60) ?? text.slice(0, 60)}`
+    const sector = sectorForAngleText(text)
+    const now = Math.floor(Date.now() / 1000)
+
+    const entryId = await saveEntry({
+      sector,
+      title,
+      summary: text,
+      content: text,
+      brief_depth: 'simple',
+      source: 'cassandra',
+      source_agent: 'CASSANDRA',
+      status: 'active',
+      date_filed: now,
+      last_updated: now,
+      privacy_tier: 1,
+      entry_type: 'news',
+    })
+    await updateEntryTags(entryId, autoTag(text, title))
+    filed++
+  }
+  return filed
 }
 
 // ─── Step 4 — deterministic Slack/dashboard rendering ─────────────────────────

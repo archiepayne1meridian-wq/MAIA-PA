@@ -196,6 +196,34 @@ export const muse_entries = sqliteTable('muse_entries', {
   date_filed: integer('date_filed').notNull(),
   last_updated: integer('last_updated').notNull(),
   created_at: integer('created_at').notNull(),
+  privacy_tier: integer('privacy_tier').notNull().default(1),   // 1 = AI can read, 2 = server only, never sent to AI
+  entry_type: text('entry_type').notNull().default('knowledge'),  // knowledge/adviser_email/linkedin_message/news/other
+  tags: text('tags').notNull().default('[]'),              // JSON array, from autoTag()
+  linked_entries: text('linked_entries').notNull().default('[]'),  // JSON array of muse_entries.id
+  source_scenario: text('source_scenario'),                 // hermes_scenarios.id, when filed from/for a scenario
+  times_accessed: integer('times_accessed').notNull().default(0),
+})
+
+export const muse_templates = sqliteTable('muse_templates', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  category: text('category').notNull(),    // email/linkedin/follow_up/reference
+  scenario: text('scenario'),              // hermes_scenarios.id, or a loose slug like 'generic'
+  angle: text('angle'),
+  subject: text('subject'),                // email only
+  body: text('body').notNull(),
+  medium: text('medium').notNull().default('email'),   // email/linkedin/whatsapp
+  times_used: integer('times_used').notNull().default(0),
+  last_used: integer('last_used'),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
+})
+
+export const muse_tags = sqliteTable('muse_tags', {
+  id: text('id').primaryKey(),
+  tag: text('tag').notNull().unique(),
+  entry_count: integer('entry_count').notNull().default(0),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
 })
 
 export const muse_change_log = sqliteTable('muse_change_log', {

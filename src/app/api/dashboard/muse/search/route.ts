@@ -7,9 +7,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { query, sector } = await req.json().catch(() => ({})) as {
+  const { query, sector, privacyTier, entryType, limit } = await req.json().catch(() => ({})) as {
     query?: string
     sector?: string
+    privacyTier?: 1 | 2 | 'all'
+    entryType?: string
+    limit?: number
   }
 
   if (!query) {
@@ -17,8 +20,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await searchKnowledge(query, sector)
-    return NextResponse.json(result)
+    const result = await searchKnowledge(query, { privacyTier, entryType, limit })
+    const knowledge = sector ? result.knowledge.filter(k => k.sector === sector) : result.knowledge
+    return NextResponse.json({ ...result, knowledge })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Search error'
     return NextResponse.json({ error: message }, { status: 500 })

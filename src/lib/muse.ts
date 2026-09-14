@@ -1,8 +1,10 @@
 // MUSE — Second Brain. Claude/Haiku calls for Steps 3+.
 
 import { askWith } from './claude'
-import { getAllEntryTitles, savePending, searchEntries } from '../../tools/muse'
-import { searchCases } from '../../tools/muse-cases'
+import { getAllEntryTitles, savePending, type MuseEntry } from '../../tools/muse'
+import { getDb } from '@/db'
+import { muse_entries, muse_templates, muse_cases } from '@/db/schema'
+import { eq, ne, and } from 'drizzle-orm'
 
 const HAIKU = 'claude-haiku-4-5-20251001'
 
@@ -264,142 +266,173 @@ export async function generateBrief(
   return assessment.content
 }
 
-// ─── searchKnowledge — DB lookup + optional Haiku ranking ────────────────────
+// ─── Auto-tagging ─────────────────────────────────────────────────────────────
 
-export interface SearchResult {
-  id: string
-  type: 'entry' | 'case'
-  title: string
-  sector: string       // for cases, always the literal label 'Case'
-  summary: string
-  relevanceReason: string
-  date_filed: number
-  last_updated: number
+const TAG_KEYWORDS: Record<string, string[]> = {
+  'uk-pension': ['uk pension', 'sipp', 'defined benefit', 'defined contribution', 'pension transfer', 'cetv'],
+  'qrops': ['qrops', 'overseas transfer', 'qualifying recognised'],
+  'iht': ['inheritance tax', 'iht', 'estate', 'april 2027', 'nil rate band'],
+  'swiss-pension': ['pillar 2', 'pillar 3', 'vested benefits', 'bvg', 'lpp', 'freizugigkeit', 'liberty'],
+  'portfolio-bond': ['portfolio bond', 'offshore bond', 'rl360', 'providence', 'gross roll-up', 'time-apportionment'],
+  'structured-notes': ['structured note', 'autocall', 'coupon barrier', 'capital protection', 'memory coupon'],
+  'ardan': ['ardan', 'platform', 'ocf', 'charges', 'cost transparency'],
+  'tax': ['tax', 'cgt', 'capital gains', 'income tax', 'non-dom', 'domicile', 'residency'],
+  'expat': ['expat', 'expatriate', 'internationally mobile', 'cross-border', 'non-resident'],
+  'switzerland': ['switzerland', 'swiss', 'geneva', 'zurich', 'basel', 'lausanne', 'chf'],
+  'uk-connected': ['uk connected', 'british', 'uk assets', 'back home', 'uk property'],
+  'leaving-switzerland': ['leaving switzerland', 'repatri', 'moving back', 'exit strategy'],
+  'new-to-switzerland': ['new to switzerland', 'recently moved', 'just arrived'],
+  'cash-pile': ['cash pile', 'sitting in cash', 'savings account', 'inflation erosion'],
+  'market': ['market drop', 'volatility', 'selloff', 'bear market', 'tech drop'],
+  'compounding': ['compound', 'rule of 72', 'cost drag', 'time in market'],
+  'objection': ['objection', 'not interested', 'send me an email', 'already got an adviser'],
+  'fact-find': ['fact find', 'what when who where', 'ladder', 'ted'],
+  'close': ['close', 'funnel', 'stephen smith', 'booking', 'meeting booked'],
+  'devere': ['devere', 'de vere', 'pepsi', 'wealth management'],
 }
 
-// Cases only enter "search everything" (no sector filter) — a case doesn't belong to a
-// knowledge sector, so a sector-scoped search stays knowledge-only.
-export async function searchKnowledge(
-  query: string,
-  sector?: string,
-): Promise<{ synthesis: string; results: SearchResult[] }> {
-  // Strip trailing punctuation so "QROPS?" and "QROPS" both hit the same LIKE pattern
-  const cleanQuery = query.replace(/[?!.,;:]+$/, '').trim() || query
-  const [dbResults, caseResults] = await Promise.all([
-    searchEntries(cleanQuery, sector),
-    sector ? Promise.resolve([]) : searchCases(cleanQuery),
-  ])
+export function autoTag(content: string, title: string): string[] {
+  const text = `${title} ${content}`.toLowerCase()
+  const tags: string[] = []
+  for (const [tag, keywords] of Object.entries(TAG_KEYWORDS)) {
+    if (keywords.some(kw => text.includes(kw))) tags.push(tag)
+  }
+  return tags
+}
 
-  if (dbResults.length === 0 && caseResults.length === 0) {
-    return { synthesis: 'Nothing found on this topic yet.', results: [] }
+// ─── Auto-linking ─────────────────────────────────────────────────────────────
+// Pure DB scoring, no Claude call — lives here (rather than tools/muse.ts) per
+// the brief; it's the one place in this file that talks to the DB directly.
+
+export async function findRelatedEntries(
+  entryId: string,
+  tags: string[],
+  limit = 5,
+): Promise<string[]> {
+  if (tags.length === 0) return []
+
+  const allEntries = await getDb().select({
+    id: muse_entries.id,
+    tags: muse_entries.tags,
+    privacy_tier: muse_entries.privacy_tier,
+  })
+    .from(muse_entries)
+    .where(
+      and(
+        ne(muse_entries.id, entryId),
+        eq(muse_entries.privacy_tier, 1),
+        eq(muse_entries.status, 'active'),
+      ),
+    )
+
+  const scored = allEntries.map(entry => {
+    let entryTags: string[] = []
+    try { entryTags = JSON.parse(entry.tags || '[]') } catch { /* ignore */ }
+    const overlap = tags.filter(t => entryTags.includes(t)).length
+    return { id: entry.id, score: overlap }
+  })
+    .filter(e => e.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+
+  return scored.map(e => e.id)
+}
+
+// ─── searchKnowledge — pure DB relevance scoring across entries + templates + cases ─
+// Replaces the previous Haiku-ranked version: no model call, so this is instant,
+// free, and (unlike the old version) trivially safe re Tier 2 — it never sends
+// entry content anywhere, it only reads from SQLite and returns rows.
+//
+// NOTE — signature/shape change: the old searchKnowledge(query, sector) returned
+// { synthesis, results: SearchResult[] } and was used by handleMuseSearch (Slack's
+// "MUSE, search..." intent). That caller has been updated to work off this new
+// { knowledge, templates, cases } shape instead — it loses the Haiku-authored
+// one-line synthesis, but gains templates in the same search and is instant.
+
+export interface ScoredEntry extends MuseEntry {
+  relevance_score: number
+  result_type: 'knowledge'
+}
+export interface ScoredTemplate {
+  id: string; name: string; category: string; scenario: string | null; angle: string | null
+  subject: string | null; body: string; medium: string; times_used: number; last_used: number | null
+  result_type: 'template'
+}
+export interface ScoredCase {
+  id: string; display_name: string; company: string | null; location: string | null
+  occupation: string | null; financial_profile: string | null; status: string; outcome: string | null
+  result_type: 'case'
+}
+
+export async function searchKnowledge(query: string, options?: {
+  privacyTier?: 1 | 2 | 'all'
+  entryType?: string
+  limit?: number
+}): Promise<{ knowledge: ScoredEntry[]; templates: ScoredTemplate[]; cases: ScoredCase[] }> {
+  const tier = options?.privacyTier ?? 1
+  const limit = options?.limit ?? 20
+  const queryLower = query.toLowerCase()
+  const queryWords = queryLower.split(' ').filter(w => w.length > 2)
+
+  let entries = await getDb().select().from(muse_entries)
+    .where(eq(muse_entries.status, 'active')) as MuseEntry[]
+
+  if (tier !== 'all') {
+    entries = entries.filter(e => e.privacy_tier === tier)
+  }
+  if (options?.entryType) {
+    entries = entries.filter(e => e.entry_type === options.entryType)
   }
 
-  const entriesBlock = dbResults
-    .map((r, i) => `${i + 1}. id="${r.id}" type=entry [${r.sector}] "${r.title}"\nSummary: ${r.summary}`)
-    .join('\n\n')
+  const scored = entries.map(entry => {
+    let score = 0
+    const title = (entry.title || '').toLowerCase()
+    const content = (entry.content || '').toLowerCase()
+    let tags: string[] = []
+    try { tags = JSON.parse(entry.tags || '[]') } catch { /* ignore */ }
+    const summary = (entry.summary || '').toLowerCase()
 
-  const casesBlock = caseResults
-    .map((c, i) => {
-      const label = c.company ? `${c.display_name} — ${c.company}` : c.display_name
-      const profile = [c.occupation, c.financial_profile, c.outcome].filter(Boolean).join(' — ')
-      return `${i + 1}. id="${c.id}" type=case "${label}"\nProfile: ${profile || '(no profile details yet)'}`
+    if (title.includes(queryLower)) score += 10
+    queryWords.forEach(word => {
+      if (tags.some(t => t.includes(word))) score += 5
+      if (summary.includes(word)) score += 2
+      if (content.includes(word)) score += 1
     })
-    .join('\n\n')
+    if (summary.includes(queryLower)) score += 4
+    if (content.includes(queryLower)) score += 3
+    score += Math.min((entry.times_accessed || 0) * 0.1, 2)
 
-  const prompt = `You are MUSE, a second-brain search assistant for a trainee financial adviser.
+    return { entry, score }
+  })
+    .filter(e => e.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
 
-Search query: "${cleanQuery}"${sector ? ` (sector filter: ${sector})` : ''}
+  for (const { entry } of scored.slice(0, 5)) {
+    await getDb().update(muse_entries)
+      .set({ times_accessed: (entry.times_accessed || 0) + 1 })
+      .where(eq(muse_entries.id, entry.id))
+  }
 
-Knowledge entries:
-${entriesBlock || '(none)'}
+  // Also search templates
+  const templates = await getDb().select().from(muse_templates)
+  const matchedTemplates = templates.filter(t => {
+    const text = `${t.name} ${t.body} ${t.scenario ?? ''}`.toLowerCase()
+    return queryWords.some(w => text.includes(w))
+  }).slice(0, 5)
 
-Prospect cases:
-${casesBlock || '(none)'}
+  // Also search cases
+  const cases = await getDb().select().from(muse_cases)
+  const matchedCases = cases.filter(c => {
+    const text = `${c.display_name} ${c.company ?? ''} ${c.location ?? ''} ${c.occupation ?? ''} ${c.financial_profile ?? ''}`.toLowerCase()
+    return queryWords.some(w => text.includes(w))
+  }).slice(0, 5)
 
-Return a JSON object (no markdown fences, no extra keys):
-{
-  "synthesis": "1-2 sentence factual synthesis of what the knowledge base and cases contain on this topic",
-  "results": [
-    {
-      "id": "<exact id from above>",
-      "type": "entry" | "case",
-      "relevanceReason": "<one sentence: why this genuinely relates to the query>"
-    }
-  ]
-}
-
-Order results by relevance (most relevant first). Include only items that genuinely relate to the query.
-synthesis: neutral, factual — no recommendations, no advice.
-Use ONLY the ids provided above — do not invent entries or cases.`
-
-  const raw = await askWith(
-    'You are MUSE, a precise knowledge-management agent. Respond with valid JSON only. No prose, no markdown fences.',
-    prompt,
-    800,
-    HAIKU,
-  )
-
-  const ranked = parseJSON<{
-    synthesis: string
-    results: { id: string; type: 'entry' | 'case'; relevanceReason: string }[]
-  }>(raw, 'searchKnowledge')
-
-  // Merge Haiku reasoning with authoritative DB data — reject any hallucinated IDs
-  const dbById = new Map(dbResults.map(r => [r.id, r]))
-  const caseById = new Map(caseResults.map(c => [c.id, c]))
-
-  const enriched = ranked.results
-    .map((r): SearchResult | null => {
-      if (r.type === 'case') {
-        const c = caseById.get(r.id)
-        if (!c) return null
-        return {
-          id: c.id,
-          type: 'case',
-          title: c.company ? `${c.display_name} — ${c.company}` : c.display_name,
-          sector: 'Case',
-          summary: [c.occupation, c.financial_profile].filter(Boolean).join(' — ') || 'No profile details yet.',
-          relevanceReason: r.relevanceReason ?? 'Matches your search query.',
-          date_filed: c.created_at,
-          last_updated: c.updated_at,
-        }
-      }
-      const db = dbById.get(r.id)
-      if (!db) return null
-      return {
-        id: db.id,
-        type: 'entry',
-        title: db.title,
-        sector: db.sector,
-        summary: db.summary,
-        relevanceReason: r.relevanceReason ?? 'Matches your search query.',
-        date_filed: db.date_filed,
-        last_updated: db.last_updated,
-      }
-    })
-    .filter((r): r is SearchResult => r !== null)
-
-  // Fallback: if Haiku returned no valid IDs, use DB order with generic reason
-  const finalResults: SearchResult[] =
-    enriched.length > 0
-      ? enriched
-      : [
-          ...dbResults.map((r): SearchResult => ({
-            id: r.id, type: 'entry', title: r.title, sector: r.sector, summary: r.summary,
-            relevanceReason: 'Matches your search query.',
-            date_filed: r.date_filed, last_updated: r.last_updated,
-          })),
-          ...caseResults.map((c): SearchResult => ({
-            id: c.id, type: 'case',
-            title: c.company ? `${c.display_name} — ${c.company}` : c.display_name,
-            sector: 'Case',
-            summary: [c.occupation, c.financial_profile].filter(Boolean).join(' — ') || 'No profile details yet.',
-            relevanceReason: 'Matches your search query.',
-            date_filed: c.created_at, last_updated: c.updated_at,
-          })),
-        ]
-
-  return { synthesis: ranked.synthesis ?? '', results: finalResults }
+  return {
+    knowledge: scored.map(({ entry, score }): ScoredEntry => ({ ...entry, relevance_score: score, result_type: 'knowledge' })),
+    templates: matchedTemplates.map((t): ScoredTemplate => ({ ...t, result_type: 'template' })),
+    cases: matchedCases.map((c): ScoredCase => ({ ...c, result_type: 'case' })),
+  }
 }
 
 // ─── checkDuplicate — folded into assessValue in Step 3 ──────────────────────

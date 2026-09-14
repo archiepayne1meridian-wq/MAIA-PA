@@ -6,7 +6,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { eq } from 'drizzle-orm'
 import { postMessage } from './slack'
-import { formatStructuredBrief, generateStructuredBrief, generateActionAngles, isRelevantToDeVere } from './cassandra'
+import { formatStructuredBrief, generateStructuredBrief, generateActionAngles, isRelevantToDeVere, fileActionAnglesToMuse } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
 import { flagIrisTopics, savePost } from '../../tools/iris'
@@ -243,7 +243,7 @@ export async function buildScheduledBrief(channel: string): Promise<void> {
   })
 
   try {
-    const { text, marketsJson, headlinesJson } = await buildBriefPayload(config)
+    const { text, marketsJson, headlinesJson, actionAngles } = await buildBriefPayload(config)
 
     await postMessage(channel, text)
 
@@ -259,6 +259,7 @@ export async function buildScheduledBrief(channel: string): Promise<void> {
     // Fire-and-forget: flag LinkedIn moments + harvest MUSE signals
     void flagIrisTopics(text)
     void checkMuseHarvest('CASSANDRA', 'brief_saved', { briefText: text })
+    void fileActionAnglesToMuse(actionAngles).catch(err => console.error('[cassandra] fileActionAnglesToMuse failed:', err))
 
     await getDb()
       .update(activity)
@@ -293,7 +294,7 @@ export async function handleCassandraBrief(channel: string, _slackUser?: string)
   })
 
   try {
-    const { text, marketsJson, headlinesJson } = await buildBriefPayload(config)
+    const { text, marketsJson, headlinesJson, actionAngles } = await buildBriefPayload(config)
 
     await postMessage(channel, text)
 
@@ -308,6 +309,7 @@ export async function handleCassandraBrief(channel: string, _slackUser?: string)
 
     // Fire-and-forget: harvest MUSE signals from on-demand brief
     void checkMuseHarvest('CASSANDRA', 'brief_saved', { briefText: text })
+    void fileActionAnglesToMuse(actionAngles).catch(err => console.error('[cassandra] fileActionAnglesToMuse failed:', err))
 
     await getDb()
       .update(activity)

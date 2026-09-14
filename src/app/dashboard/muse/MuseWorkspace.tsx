@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import s from '../dashboard.module.css'
-import type { MuseEntry, MusePending, MuseEntryFull } from '../../../../tools/muse'
+import type { MuseEntryFull } from '../../../../tools/muse'
 
 // ─── Sector definitions ───────────────────────────────────────────────────────
 
@@ -23,15 +23,32 @@ const SECTOR_COLOR: Record<string, string> = Object.fromEntries(
 )
 SECTOR_COLOR['Case'] = '#C0C05B'
 
+// Knowledge: blue · Case: green · Template: amber · News: purple
+const RESULT_TYPE_COLOR: Record<string, string> = {
+  knowledge: 'var(--accent)',
+  case: 'var(--online)',
+  template: 'var(--idle)',
+  news: '#B87FD4',
+}
+
 const FILTER_CHIPS = [
-  { id: 'all',                  label: 'All' },
-  { id: 'Training',             label: 'Training' },
-  { id: 'Products',             label: 'Products' },
-  { id: 'Regulations',          label: 'Regulations' },
-  { id: 'Sales & Prospecting',  label: 'Sales' },
-  { id: 'cases',                label: 'Cases' },
-  { id: 'Expat Knowledge',      label: 'Expat' },
+  { id: 'all',       label: 'All' },
+  { id: 'knowledge', label: 'Knowledge' },
+  { id: 'cases',     label: 'Cases' },
+  { id: 'templates', label: 'Templates' },
+  { id: 'news',      label: 'News' },
 ] as const
+
+const ENTRY_TYPES = [
+  { id: 'knowledge',        label: 'Knowledge' },
+  { id: 'adviser_email',    label: 'Adviser Email' },
+  { id: 'linkedin_message', label: 'LinkedIn Message' },
+  { id: 'news',             label: 'News' },
+  { id: 'other',            label: 'Other' },
+] as const
+
+const TEMPLATE_CATEGORIES = ['email', 'linkedin', 'follow_up', 'reference'] as const
+const TEMPLATE_MEDIUMS = ['email', 'linkedin', 'whatsapp'] as const
 
 const EVENT_TYPES = [
   { id: 'call',            label: 'Call' },
@@ -54,7 +71,49 @@ function fmtDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
-// ─── Case types (tools/muse-cases.ts shapes) ──────────────────────────────────
+function fmtDateTime(ts: number): string {
+  return new Date(ts * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+function parseTags(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface MuseEntryLite {
+  id: string
+  sector: string
+  title: string
+  summary: string
+  content: string
+  entry_type: string
+  privacy_tier: number
+  tags: string
+  linked_entries: string
+  last_updated: number
+  date_filed: number
+}
+
+interface MuseTemplate {
+  id: string
+  name: string
+  category: string
+  scenario: string | null
+  angle: string | null
+  subject: string | null
+  body: string
+  medium: string
+  times_used: number
+  last_used: number | null
+  created_at: number
+  updated_at: number
+}
 
 interface MuseCase {
   id: string
@@ -87,15 +146,30 @@ interface CaseWithEvents extends MuseCase {
   linkedEntries: { id: string; title: string; sector: string }[]
 }
 
-interface SearchResultItem {
+interface MusePending {
   id: string
-  type: 'entry' | 'case'
-  title: string
-  sector: string
-  summary: string
+  source: string
+  source_agent: string | null
+  suggested_sector: string
+  suggested_title: string
+  suggested_summary: string
+  suggested_content: string
+  suggested_depth: string
+  suggested_links: string
+  status: string
+  slack_ts: string | null
+  created_at: number
 }
 
-// ─── Web Speech API types (not in default TS DOM lib without strictLib config) ─
+interface SearchResponse {
+  knowledge: (MuseEntryLite & { relevance_score: number; result_type: 'knowledge' })[]
+  templates: (MuseTemplate & { result_type: 'template' })[]
+  cases: (MuseCase & { result_type: 'case' })[]
+}
+
+interface HermesScenarioLite { id: string; name: string }
+
+// ─── File / voice helpers (unchanged from prior version) ──────────────────────
 
 type AnyWindow = Window & {
   SpeechRecognition?: new () => SpeechRecognitionInstance
@@ -125,30 +199,6 @@ function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
   return win.SpeechRecognition ?? win.webkitSpeechRecognition ?? null
 }
 
-// ─── D3 node / link types (compatible with SimulationNodeDatum) ───────────────
-
-interface D3Node {
-  id: string
-  sector: string
-  title: string
-  summary: string
-  linkCount: number
-  index?: number
-  x?: number
-  y?: number
-  vx?: number
-  vy?: number
-  fx?: number | null
-  fy?: number | null
-}
-
-interface GraphLink {
-  id: string
-  entry_id_a: string
-  entry_id_b: string
-  link_type: string
-}
-
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -158,12 +208,9 @@ function readFileAsText(file: File): Promise<string> {
   })
 }
 
-// PDFs are binary — reading them with FileReader.readAsText() produces garbled
-// output. Extract real text client-side with PDF.js instead, page by page.
 async function extractPdfText(file: File): Promise<string> {
   const arrayBuffer = await file.arrayBuffer()
   const pdfjsLib = await import('pdfjs-dist')
-  // cdnjs only publishes the ESM worker (.mjs) for pdf.js 4+ — .min.js 404s.
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
 
@@ -172,86 +219,73 @@ async function extractPdfText(file: File): Promise<string> {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i)
     const content = await page.getTextContent()
-    const pageText = content.items
-      .map(item => ('str' in item ? item.str : ''))
-      .join(' ')
+    const pageText = content.items.map(item => ('str' in item ? item.str : '')).join(' ')
     pages.push(pageText)
   }
   return pages.join('\n\n').trim()
+}
+
+// ─── Placeholder highlighting (template preview) ───────────────────────────────
+
+const PLACEHOLDER_COLOR: Record<string, string> = {
+  NAME: 'var(--accent)',
+  COMPANY: 'var(--online)',
+  SPECIFIC_DETAIL: 'var(--idle)',
+}
+const PLACEHOLDER_RE = /(\[[A-Z_]+\])/g
+
+function renderWithPlaceholders(text: string): React.ReactNode[] {
+  return text.split(PLACEHOLDER_RE).map((part, i) => {
+    const match = part.match(/^\[([A-Z_]+)\]$/)
+    if (!match) return <span key={i}>{part}</span>
+    const key = match[1]!
+    const color = PLACEHOLDER_COLOR[key] ?? 'var(--text-dim)'
+    return (
+      <span key={i} style={{ color, fontWeight: 600, background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '0 3px' }}>
+        {part}
+      </span>
+    )
+  })
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function MuseWorkspace() {
   const router = useRouter()
-  const svgRef = useRef<SVGSVGElement | null>(null)
-  const simRef = useRef<{ stop: () => void } | null>(null)
   const recogRef = useRef<SpeechRecognitionInstance | null>(null)
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const tagsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const didDeepLink = useRef(false)
 
-  // Graph data
-  const [graphNodes, setGraphNodes] = useState<D3Node[]>([])
-  const [graphLinks, setGraphLinks] = useState<GraphLink[]>([])
-  const [allEntries, setAllEntries] = useState<MuseEntry[]>([])
-  const [allCases, setAllCases] = useState<MuseCase[]>([])
-
-  // Left panel — search & navigate
+  // Left panel
   const [leftSearch, setLeftSearch] = useState('')
   const [activeFilter, setActiveFilter] = useState<string>('all')
   const [expandedSector, setExpandedSector] = useState<string | null>(null)
+  const [searchResult, setSearchResult] = useState<SearchResponse | null>(null)
+  const [searching, setSearching] = useState(false)
 
-  // Right panel — tabs
-  const [rightTab, setRightTab] = useState<'knowledge' | 'case' | 'pending'>('knowledge')
+  const [allEntries, setAllEntries] = useState<MuseEntryLite[]>([])
+  const [allCases, setAllCases] = useState<MuseCase[]>([])
+  const [allTemplates, setAllTemplates] = useState<MuseTemplate[]>([])
+  const [hermesScenarios, setHermesScenarios] = useState<HermesScenarioLite[]>([])
 
-  // Tab 1 — Add Knowledge
-  const [knowSector, setKnowSector] = useState<string>(SECTORS[0].id)
-  const [knowTitle, setKnowTitle] = useState('')
-  const [knowContext, setKnowContext] = useState('')
-  const [knowContent, setKnowContent] = useState('')
-  const [knowSubmitting, setKnowSubmitting] = useState(false)
-  const [knowMsg, setKnowMsg] = useState<{ text: string; ok: boolean } | null>(null)
-  const [knowDragOver, setKnowDragOver] = useState(false)
-  const [pdfExtracting, setPdfExtracting] = useState(false)
-  const [micActive, setMicActive] = useState(false)
-  const [voiceError, setVoiceError] = useState<string | null>(null)
-
-  // Tab 2 — Add Case Update
-  const [caseFormMode, setCaseFormMode] = useState<'select' | 'new'>('select')
-  const [caseSearchQuery, setCaseSearchQuery] = useState('')
-  const [caseFormSelectedId, setCaseFormSelectedId] = useState<string | null>(null)
-  const [newCaseName, setNewCaseName] = useState('')
-  const [newCaseCompany, setNewCaseCompany] = useState('')
-  const [newCaseLocation, setNewCaseLocation] = useState('')
-  const [newCaseOccupation, setNewCaseOccupation] = useState('')
-  const [eventType, setEventType] = useState<string>('call')
-  const [eventDate, setEventDate] = useState(todayStr())
-  const [eventSummary, setEventSummary] = useState('')
-  const [eventSuggested, setEventSuggested] = useState('')
-  const [eventRecommendation, setEventRecommendation] = useState('')
-  const [eventWorked, setEventWorked] = useState<string>('')
-  const [caseSubmitting, setCaseSubmitting] = useState(false)
-  const [caseMsg, setCaseMsg] = useState<{ text: string; ok: boolean } | null>(null)
-
-  // Tab 3 — Pending approvals (unchanged logic, moved under a tab)
-  const [pendingItems, setPendingItems] = useState<MusePending[]>([])
-  const [confirmLoading, setConfirmLoading] = useState<string | null>(null)
-  const [refineOpenId, setRefineOpenId] = useState<string | null>(null)
-  const [refineText, setRefineText] = useState('')
-  const [refineLoading, setRefineLoading] = useState<string | null>(null)
-
-  // Entry overlay
-  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null)
+  // Centre panel selection
+  const [selected, setSelected] = useState<{ type: 'entry' | 'case' | 'template'; id: string } | null>(null)
   const [selectedEntry, setSelectedEntry] = useState<MuseEntryFull | null>(null)
-  const [editOpen, setEditOpen] = useState(false)
-  const [editContent, setEditContent] = useState('')
-  const [editSaving, setEditSaving] = useState(false)
-  const [entryLinkOpen, setEntryLinkOpen] = useState(false)
-  const [entryLinkQuery, setEntryLinkQuery] = useState('')
-  const [entryLinkMsg, setEntryLinkMsg] = useState<string | null>(null)
-
-  // Case overlay
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null)
   const [selectedCase, setSelectedCase] = useState<CaseWithEvents | null>(null)
+  const [selectedTemplate, setSelectedTemplate] = useState<MuseTemplate | null>(null)
+  const [copyMsg, setCopyMsg] = useState<string | null>(null)
+
+  // Entry editing
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [editingContent, setEditingContent] = useState(false)
+  const [contentDraft, setContentDraft] = useState('')
+  const [entrySaving, setEntrySaving] = useState(false)
+  const [tagInput, setTagInput] = useState('')
+
+  // Case: add update / new case
   const [addUpdateOpen, setAddUpdateOpen] = useState(false)
+  const [newCaseMode, setNewCaseMode] = useState(false)
   const [ovEventType, setOvEventType] = useState<string>('call')
   const [ovEventDate, setOvEventDate] = useState(todayStr())
   const [ovEventSummary, setOvEventSummary] = useState('')
@@ -259,83 +293,94 @@ export default function MuseWorkspace() {
   const [ovEventRecommendation, setOvEventRecommendation] = useState('')
   const [ovEventWorked, setOvEventWorked] = useState<string>('')
   const [ovEventSubmitting, setOvEventSubmitting] = useState(false)
-  const [caseLinkOpen, setCaseLinkOpen] = useState(false)
-  const [caseLinkQuery, setCaseLinkQuery] = useState('')
-  const [caseLinkMsg, setCaseLinkMsg] = useState<string | null>(null)
+  const [newCaseName, setNewCaseName] = useState('')
+  const [newCaseCompany, setNewCaseCompany] = useState('')
+  const [newCaseLocation, setNewCaseLocation] = useState('')
+  const [newCaseOccupation, setNewCaseOccupation] = useState('')
 
-  // Error
+  // Right panel tabs
+  const [rightTab, setRightTab] = useState<'knowledge' | 'template' | 'pending'>('knowledge')
+
+  // Tab 1 — Add Knowledge
+  const [knowEntryType, setKnowEntryType] = useState<string>('knowledge')
+  const [knowPrivacyTier, setKnowPrivacyTier] = useState<1 | 2>(1)
+  const [knowSector, setKnowSector] = useState<string>(SECTORS[0].id)
+  const [knowTitle, setKnowTitle] = useState('')
+  const [knowContext, setKnowContext] = useState('')
+  const [knowContent, setKnowContent] = useState('')
+  const [knowTagsPreview, setKnowTagsPreview] = useState<string[]>([])
+  const [knowSubmitting, setKnowSubmitting] = useState(false)
+  const [knowMsg, setKnowMsg] = useState<{ text: string; ok: boolean; tags?: string[] } | null>(null)
+  const [knowDragOver, setKnowDragOver] = useState(false)
+  const [pdfExtracting, setPdfExtracting] = useState(false)
+  const [micActive, setMicActive] = useState(false)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+
+  // Tab 2 — Add Template
+  const [tplName, setTplName] = useState('')
+  const [tplCategory, setTplCategory] = useState<string>('email')
+  const [tplMedium, setTplMedium] = useState<string>('email')
+  const [tplScenario, setTplScenario] = useState<string>('')
+  const [tplSubject, setTplSubject] = useState('')
+  const [tplBody, setTplBody] = useState('')
+  const [tplSubmitting, setTplSubmitting] = useState(false)
+  const [tplMsg, setTplMsg] = useState<{ text: string; ok: boolean } | null>(null)
+
+  // Tab 3 — Pending
+  const [pendingItems, setPendingItems] = useState<MusePending[]>([])
+  const [confirmLoading, setConfirmLoading] = useState<string | null>(null)
+  const [refineOpenId, setRefineOpenId] = useState<string | null>(null)
+  const [refineText, setRefineText] = useState('')
+  const [refineLoading, setRefineLoading] = useState<string | null>(null)
+
   const [error, setError] = useState<string | null>(null)
 
   // ─── Data fetching ──────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    void fetchGraph()
-    void fetchPending()
-    void fetchCases()
-  }, [])
-
-  useEffect(() => {
-    if (!selectedEntryId) { setSelectedEntry(null); setEditOpen(false); setEntryLinkOpen(false); return }
-    void fetchEntry(selectedEntryId)
-  }, [selectedEntryId])
-
-  useEffect(() => {
-    if (!selectedCaseId) { setSelectedCase(null); setAddUpdateOpen(false); setCaseLinkOpen(false); return }
-    void fetchCase(selectedCaseId)
-  }, [selectedCaseId])
-
-  useEffect(() => {
-    if (graphNodes.length === 0) return
-    void renderGraph()
-    return () => { simRef.current?.stop() }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphNodes, graphLinks])
-
-  async function fetchGraph() {
+  const fetchEntries = useCallback(async () => {
     try {
       const res = await fetch('/api/dashboard/muse')
       if (!res.ok) return
-      const data = await res.json() as { entries?: MuseEntry[]; links?: GraphLink[] }
-      const links: GraphLink[] = data.links ?? []
-      const countMap: Record<string, number> = {}
-      for (const l of links) {
-        countMap[l.entry_id_a] = (countMap[l.entry_id_a] ?? 0) + 1
-        countMap[l.entry_id_b] = (countMap[l.entry_id_b] ?? 0) + 1
-      }
-      const entries = data.entries ?? []
-      const nodes: D3Node[] = entries.map(en => ({
-        id: en.id, sector: en.sector, title: en.title, summary: en.summary,
-        linkCount: countMap[en.id] ?? 0,
-      }))
-      setGraphNodes(nodes)
-      setGraphLinks(links)
-      setAllEntries(entries)
-    } catch {
-      // non-fatal
-    }
-  }
+      const data = await res.json() as { entries?: MuseEntryLite[] }
+      setAllEntries(data.entries ?? [])
+    } catch { /* non-fatal */ }
+  }, [])
 
-  async function fetchPending() {
+  const fetchPending = useCallback(async () => {
     try {
       const res = await fetch('/api/dashboard/muse/pending')
       if (!res.ok) return
       const data = await res.json() as { items?: MusePending[] }
       setPendingItems(data.items ?? [])
-    } catch {
-      // non-fatal
-    }
-  }
+    } catch { /* non-fatal */ }
+  }, [])
 
-  async function fetchCases() {
+  const fetchCases = useCallback(async () => {
     try {
       const res = await fetch('/api/dashboard/muse/cases')
       if (!res.ok) return
       const data = await res.json() as { cases?: MuseCase[] }
       setAllCases(data.cases ?? [])
-    } catch {
-      // non-fatal
-    }
-  }
+    } catch { /* non-fatal */ }
+  }, [])
+
+  const fetchTemplates = useCallback(async () => {
+    try {
+      const res = await fetch('/api/dashboard/muse/templates')
+      if (!res.ok) return
+      const data = await res.json() as { templates?: MuseTemplate[] }
+      setAllTemplates(data.templates ?? [])
+    } catch { /* non-fatal */ }
+  }, [])
+
+  const fetchHermesScenarios = useCallback(async () => {
+    try {
+      const res = await fetch('/api/dashboard/hermes/scenarios')
+      if (!res.ok) return
+      const data = await res.json() as { scenarios?: HermesScenarioLite[] }
+      setHermesScenarios((data.scenarios ?? []).map(sc => ({ id: sc.id, name: sc.name })))
+    } catch { /* non-fatal */ }
+  }, [])
 
   async function fetchEntry(id: string) {
     try {
@@ -343,9 +388,7 @@ export default function MuseWorkspace() {
       if (!res.ok) return
       const data = await res.json() as { entry?: MuseEntryFull }
       setSelectedEntry(data.entry ?? null)
-    } catch {
-      // non-fatal
-    }
+    } catch { /* non-fatal */ }
   }
 
   async function fetchCase(id: string) {
@@ -354,149 +397,95 @@ export default function MuseWorkspace() {
       if (!res.ok) return
       const data = await res.json() as { case?: CaseWithEvents }
       setSelectedCase(data.case ?? null)
-    } catch {
-      // non-fatal
-    }
+    } catch { /* non-fatal */ }
   }
 
-  // ─── D3 render (unchanged — knowledge graph only) ──────────────────────────
+  async function fetchTemplate(id: string) {
+    const t = allTemplates.find(tp => tp.id === id) ?? null
+    setSelectedTemplate(t)
+  }
 
-  async function renderGraph() {
-    if (!svgRef.current || graphNodes.length === 0) return
-    const d3 = await import('d3')
+  useEffect(() => {
+    void fetchEntries()
+    void fetchPending()
+    void fetchCases()
+    void fetchTemplates()
+    void fetchHermesScenarios()
+  }, [fetchEntries, fetchPending, fetchCases, fetchTemplates, fetchHermesScenarios])
 
-    const svg = d3.select(svgRef.current)
-    svg.selectAll('*').remove()
-    simRef.current?.stop()
+  // Deep link: ?entry=<id> opens that entry in the centre panel on first load —
+  // read via window.location rather than useSearchParams() to avoid needing a
+  // Suspense boundary for what's only ever a one-time initial read.
+  useEffect(() => {
+    if (didDeepLink.current) return
+    didDeepLink.current = true
+    const params = new URLSearchParams(window.location.search)
+    const entryId = params.get('entry')
+    if (entryId) {
+      setSelected({ type: 'entry', id: entryId })
+    }
+  }, [])
 
-    const rect = svgRef.current.getBoundingClientRect()
-    const W = rect.width || 800
-    const H = rect.height || 600
+  useEffect(() => {
+    if (!selected) { setSelectedEntry(null); setSelectedCase(null); setSelectedTemplate(null); return }
+    setAddUpdateOpen(false)
+    setEditOpenReset()
+    if (selected.type === 'entry') void fetchEntry(selected.id)
+    else if (selected.type === 'case') void fetchCase(selected.id)
+    else void fetchTemplate(selected.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected])
 
-    const nodes: D3Node[] = graphNodes.map(n => ({ ...n }))
-    const links = graphLinks.map(l => ({ source: l.entry_id_a, target: l.entry_id_b, link_type: l.link_type }))
+  function setEditOpenReset() {
+    setEditingTitle(false)
+    setEditingContent(false)
+  }
 
-    const g = svg.append('g')
+  // ─── Search (300ms debounce) ────────────────────────────────────────────────
 
-    svg.call(
-      d3.zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.25, 4])
-        .on('zoom', (event: { transform: d3.ZoomTransform }) => {
-          g.attr('transform', event.transform.toString())
-        }),
-    )
-
-    const linkSel = g.append('g')
-      .selectAll('line')
-      .data(links)
-      .enter()
-      .append('line')
-      .attr('stroke', 'rgba(255,255,255,0.1)')
-      .attr('stroke-width', 1)
-
-    const radius = (d: D3Node) => Math.min(8 + (d.linkCount ?? 0) * 2, 24)
-
-    const nodeSel = g.append('g')
-      .selectAll('circle')
-      .data(nodes)
-      .enter()
-      .append('circle')
-      .attr('r', radius)
-      .attr('fill', (d: D3Node) => SECTOR_COLOR[d.sector] ?? '#8AA9F0')
-      .attr('stroke', 'rgba(255,255,255,0.18)')
-      .attr('stroke-width', 1.5)
-      .attr('cursor', 'pointer')
-      .on('click', (_event: MouseEvent, d: D3Node) => { setSelectedCaseId(null); setSelectedEntryId(d.id) })
-
-    nodeSel.append('title').text((d: D3Node) => `${d.title}\n${d.sector}`)
-
-    type DragEvent = d3.D3DragEvent<SVGCircleElement, D3Node, D3Node>
-
-    nodeSel.call(
-      d3.drag<SVGCircleElement, D3Node>()
-        .on('start', (ev: DragEvent, d: D3Node) => {
-          if (!ev.active) sim.alphaTarget(0.3).restart()
-          d.fx = d.x ?? 0; d.fy = d.y ?? 0
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    const q = leftSearch.trim()
+    if (!q) { setSearchResult(null); setSearching(false); return }
+    setSearching(true)
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/dashboard/muse/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, privacyTier: 'all', limit: 30 }),
         })
-        .on('drag', (ev: DragEvent, d: D3Node) => { d.fx = ev.x; d.fy = ev.y })
-        .on('end', (ev: DragEvent, d: D3Node) => {
-          if (!ev.active) sim.alphaTarget(0)
-          d.fx = null; d.fy = null
-        }),
-    )
+        const data = await res.json() as SearchResponse
+        setSearchResult(data)
+      } catch {
+        setSearchResult({ knowledge: [], templates: [], cases: [] })
+      } finally {
+        setSearching(false)
+      }
+    }, 300)
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current) }
+  }, [leftSearch])
 
-    const sim = d3.forceSimulation(nodes)
-      .force('link',
-        d3.forceLink(links)
-          .id((d) => (d as D3Node).id)
-          .distance(100),
-      )
-      .force('charge', d3.forceManyBody().strength(-220))
-      .force('center', d3.forceCenter(W / 2, H / 2))
-      .force('collision', d3.forceCollide().radius((d) => radius(d as D3Node) + 8))
-      .on('tick', () => {
-        linkSel
-          .attr('x1', (d) => ((d.source as unknown) as D3Node).x ?? 0)
-          .attr('y1', (d) => ((d.source as unknown) as D3Node).y ?? 0)
-          .attr('x2', (d) => ((d.target as unknown) as D3Node).x ?? 0)
-          .attr('y2', (d) => ((d.target as unknown) as D3Node).y ?? 0)
-        nodeSel
-          .attr('cx', (d: D3Node) => d.x ?? 0)
-          .attr('cy', (d: D3Node) => d.y ?? 0)
-      })
+  // ─── Tags preview (400ms debounce, Tab 1) ──────────────────────────────────
 
-    simRef.current = { stop: () => sim.stop() }
-  }
-
-  // ─── Handlers — approvals (Tab 3, unchanged logic) ─────────────────────────
-
-  async function handleConfirm(pendingId: string, decision: 'keep' | 'discard') {
-    setConfirmLoading(pendingId)
-    try {
-      const res = await fetch('/api/dashboard/muse/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pendingId, decision }),
-      })
-      if (!res.ok) throw new Error('Confirm failed')
-      await fetchPending()
-      if (decision === 'keep') await fetchGraph()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Confirm failed')
-    } finally {
-      setConfirmLoading(null)
-    }
-  }
-
-  function toggleRefine(pendingId: string) {
-    if (refineOpenId === pendingId) {
-      setRefineOpenId(null)
-      setRefineText('')
-    } else {
-      setRefineOpenId(pendingId)
-      setRefineText('')
-    }
-  }
-
-  async function handleRefineSubmit(pendingId: string) {
-    if (!refineText.trim()) return
-    setRefineLoading(pendingId)
-    try {
-      const res = await fetch('/api/dashboard/muse/refine', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pendingId, instruction: refineText.trim() }),
-      })
-      if (!res.ok) throw new Error('Refine failed')
-      await fetchPending()
-      setRefineOpenId(null)
-      setRefineText('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Refine failed')
-    } finally {
-      setRefineLoading(null)
-    }
-  }
+  useEffect(() => {
+    if (tagsDebounceRef.current) clearTimeout(tagsDebounceRef.current)
+    if (!knowContent.trim()) { setKnowTagsPreview([]); return }
+    tagsDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/dashboard/muse/preview-tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: knowTitle, content: knowContent }),
+        })
+        const data = await res.json() as { tags?: string[] }
+        setKnowTagsPreview(data.tags ?? [])
+      } catch {
+        setKnowTagsPreview([])
+      }
+    }, 400)
+    return () => { if (tagsDebounceRef.current) clearTimeout(tagsDebounceRef.current) }
+  }, [knowTitle, knowContent])
 
   // ─── Handlers — Tab 1: Add Knowledge ────────────────────────────────────────
 
@@ -541,9 +530,7 @@ export default function MuseWorkspace() {
       setKnowMsg({ text: 'Only .pdf, .txt, or .md files are supported.', ok: false })
       return
     }
-
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
-
     try {
       let text: string
       if (isPdf) {
@@ -566,6 +553,17 @@ export default function MuseWorkspace() {
     }
   }
 
+  function removeTagPreview(tag: string) {
+    setKnowTagsPreview(tags => tags.filter(t => t !== tag))
+  }
+
+  function addTagPreview() {
+    const t = tagInput.trim().toLowerCase()
+    if (!t) return
+    setKnowTagsPreview(tags => tags.includes(t) ? tags : [...tags, t])
+    setTagInput('')
+  }
+
   async function handleKnowSubmit() {
     if (!knowContent.trim() || !knowSector) return
     setKnowSubmitting(true)
@@ -579,16 +577,19 @@ export default function MuseWorkspace() {
           sector: knowSector,
           title: knowTitle.trim() || undefined,
           context: knowContext.trim() || undefined,
-          entryType: 'knowledge',
+          entryType: knowEntryType,
+          privacyTier: knowPrivacyTier,
+          tags: knowTagsPreview,
         }),
       })
-      const data = await res.json() as { id?: string; title?: string; sector?: string; error?: string }
+      const data = await res.json() as { id?: string; title?: string; sector?: string; tags?: string[]; error?: string }
       if (!res.ok) throw new Error(data.error ?? 'Filing failed')
-      setKnowMsg({ text: `Filed to ${data.sector} ✓ — "${data.title}"`, ok: true })
+      setKnowMsg({ text: `Filed to ${data.sector} ✓ — "${data.title}"`, ok: true, tags: data.tags })
       setKnowTitle('')
       setKnowContext('')
       setKnowContent('')
-      await fetchGraph()
+      setKnowTagsPreview([])
+      await fetchEntries()
     } catch (err) {
       setKnowMsg({ text: err instanceof Error ? err.message : 'Filing failed', ok: false })
     } finally {
@@ -596,138 +597,125 @@ export default function MuseWorkspace() {
     }
   }
 
-  // ─── Handlers — Tab 2: Add Case Update ──────────────────────────────────────
+  // ─── Handlers — Tab 2: Add Template ─────────────────────────────────────────
 
-  const caseSearchResults = caseSearchQuery.trim()
-    ? allCases.filter(c => {
-        const q = caseSearchQuery.trim().toLowerCase()
-        return c.display_name.toLowerCase().includes(q) || (c.company ?? '').toLowerCase().includes(q)
-      })
-    : allCases.slice(0, 8)
-
-  function resetCaseForm() {
-    setCaseFormMode('select')
-    setCaseSearchQuery('')
-    setCaseFormSelectedId(null)
-    setNewCaseName('')
-    setNewCaseCompany('')
-    setNewCaseLocation('')
-    setNewCaseOccupation('')
-    setEventType('call')
-    setEventDate(todayStr())
-    setEventSummary('')
-    setEventSuggested('')
-    setEventRecommendation('')
-    setEventWorked('')
-  }
-
-  async function handleCaseSubmit() {
-    if (caseFormMode === 'select' && !caseFormSelectedId) return
-    if (caseFormMode === 'new' && !newCaseName.trim()) return
-    if (!eventSummary.trim()) return
-
-    setCaseSubmitting(true)
-    setCaseMsg(null)
+  async function handleTemplateSubmit() {
+    if (!tplName.trim() || !tplBody.trim()) return
+    setTplSubmitting(true)
+    setTplMsg(null)
     try {
-      let caseId = caseFormSelectedId
-
-      if (caseFormMode === 'new') {
-        const res = await fetch('/api/dashboard/muse/cases', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            display_name: newCaseName.trim(),
-            company: newCaseCompany.trim() || undefined,
-            location: newCaseLocation.trim() || undefined,
-            occupation: newCaseOccupation.trim() || undefined,
-          }),
-        })
-        const data = await res.json() as { id?: string; error?: string }
-        if (!res.ok) throw new Error(data.error ?? 'Case creation failed')
-        caseId = data.id ?? null
-      }
-
-      if (!caseId) throw new Error('No case selected')
-
-      const evRes = await fetch(`/api/dashboard/muse/cases/${caseId}/events`, {
+      const res = await fetch('/api/dashboard/muse/templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          event_type: eventType,
-          date: eventDate,
-          summary: eventSummary.trim(),
-          what_suggested: eventSuggested.trim() || undefined,
-          adviser_recommendation: eventRecommendation.trim() || undefined,
-          worked: eventWorked || undefined,
+          name: tplName.trim(),
+          category: tplCategory,
+          medium: tplMedium,
+          scenario: tplScenario || null,
+          subject: tplCategory === 'email' ? tplSubject.trim() || null : null,
+          body: tplBody,
         }),
       })
-      const evData = await evRes.json() as { error?: string }
-      if (!evRes.ok) throw new Error(evData.error ?? 'Event failed')
-
-      setCaseMsg({ text: 'Case update saved ✓', ok: true })
-      resetCaseForm()
-      await fetchCases()
+      const data = await res.json() as { id?: string; error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Save failed')
+      setTplMsg({ text: 'Template saved ✓', ok: true })
+      setTplName(''); setTplSubject(''); setTplBody(''); setTplScenario('')
+      await fetchTemplates()
     } catch (err) {
-      setCaseMsg({ text: err instanceof Error ? err.message : 'Failed to save', ok: false })
+      setTplMsg({ text: err instanceof Error ? err.message : 'Save failed', ok: false })
     } finally {
-      setCaseSubmitting(false)
+      setTplSubmitting(false)
     }
   }
 
-  // ─── Handlers — entry overlay: edit ─────────────────────────────────────────
+  // ─── Handlers — approvals (Tab 3) ───────────────────────────────────────────
 
-  function openEdit() {
-    if (!selectedEntry) return
-    setEditContent(selectedEntry.content)
-    setEditOpen(true)
+  async function handleConfirm(pendingId: string, decision: 'keep' | 'discard') {
+    setConfirmLoading(pendingId)
+    try {
+      const res = await fetch('/api/dashboard/muse/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingId, decision }),
+      })
+      if (!res.ok) throw new Error('Confirm failed')
+      await fetchPending()
+      if (decision === 'keep') await fetchEntries()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Confirm failed')
+    } finally {
+      setConfirmLoading(null)
+    }
   }
 
-  async function saveEdit() {
+  function toggleRefine(pendingId: string) {
+    if (refineOpenId === pendingId) { setRefineOpenId(null); setRefineText('') }
+    else { setRefineOpenId(pendingId); setRefineText('') }
+  }
+
+  async function handleRefineSubmit(pendingId: string) {
+    if (!refineText.trim()) return
+    setRefineLoading(pendingId)
+    try {
+      const res = await fetch('/api/dashboard/muse/refine', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingId, instruction: refineText.trim() }),
+      })
+      if (!res.ok) throw new Error('Refine failed')
+      await fetchPending()
+      setRefineOpenId(null)
+      setRefineText('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Refine failed')
+    } finally {
+      setRefineLoading(null)
+    }
+  }
+
+  // ─── Handlers — entry overlay: title/content edit, tags, links ─────────────
+
+  async function saveEntryPatch(patch: { title?: string; content?: string }) {
     if (!selectedEntry) return
-    setEditSaving(true)
+    setEntrySaving(true)
     try {
       const res = await fetch(`/api/dashboard/muse/entry/${selectedEntry.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: editContent }),
+        body: JSON.stringify(patch),
       })
       if (!res.ok) throw new Error('Save failed')
       const data = await res.json() as { entry?: MuseEntryFull }
       setSelectedEntry(data.entry ?? null)
-      setEditOpen(false)
-      await fetchGraph()
+      await fetchEntries()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
     } finally {
-      setEditSaving(false)
+      setEntrySaving(false)
     }
   }
 
-  async function submitEntryLink() {
-    if (!selectedEntry || !entryLinkQuery.trim()) return
-    const target = allEntries.find(e =>
-      e.id !== selectedEntry.id && e.title.toLowerCase() === entryLinkQuery.trim().toLowerCase(),
-    ) ?? allEntries.find(e => e.id !== selectedEntry.id && e.title.toLowerCase().includes(entryLinkQuery.trim().toLowerCase()))
-
-    if (!target) { setEntryLinkMsg('No matching entry found — try the exact title.'); return }
-
-    try {
-      const res = await fetch(`/api/dashboard/muse/entry/${selectedEntry.id}/link`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetId: target.id }),
-      })
-      if (!res.ok) throw new Error('Link failed')
-      const data = await res.json() as { entry?: MuseEntryFull }
-      setSelectedEntry(data.entry ?? null)
-      setEntryLinkQuery('')
-      setEntryLinkMsg(`Linked to "${target.title}" ✓`)
-    } catch {
-      setEntryLinkMsg('Link failed')
-    }
+  function openTitleEdit() {
+    if (!selectedEntry) return
+    setEditingTitle(true)
   }
 
-  // ─── Handlers — case overlay: add update + link ────────────────────────────
+  function openContentEdit() {
+    if (!selectedEntry) return
+    setContentDraft(selectedEntry.content)
+    setEditingContent(true)
+  }
+
+  function navigateToEntry(id: string) {
+    setSelected({ type: 'entry', id })
+  }
+
+  // ─── Handlers — case: add update / new case ────────────────────────────────
+
+  function resetOverlayEventForm() {
+    setOvEventType('call'); setOvEventDate(todayStr()); setOvEventSummary('')
+    setOvEventSuggested(''); setOvEventRecommendation(''); setOvEventWorked('')
+  }
 
   async function submitOverlayUpdate() {
     if (!selectedCase || !ovEventSummary.trim()) return
@@ -749,8 +737,7 @@ export default function MuseWorkspace() {
       const data = await res.json() as { case?: CaseWithEvents }
       setSelectedCase(data.case ?? null)
       setAddUpdateOpen(false)
-      setOvEventType('call'); setOvEventDate(todayStr()); setOvEventSummary('')
-      setOvEventSuggested(''); setOvEventRecommendation(''); setOvEventWorked('')
+      resetOverlayEventForm()
       await fetchCases()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Update failed')
@@ -759,75 +746,84 @@ export default function MuseWorkspace() {
     }
   }
 
-  async function submitCaseLink() {
-    if (!selectedCase || !caseLinkQuery.trim()) return
-    const target = allEntries.find(e => e.title.toLowerCase() === caseLinkQuery.trim().toLowerCase())
-      ?? allEntries.find(e => e.title.toLowerCase().includes(caseLinkQuery.trim().toLowerCase()))
+  function resetNewCaseForm() {
+    setNewCaseMode(false)
+    setNewCaseName(''); setNewCaseCompany(''); setNewCaseLocation(''); setNewCaseOccupation('')
+    resetOverlayEventForm()
+  }
 
-    if (!target) { setCaseLinkMsg('No matching entry found — try the exact title.'); return }
-
+  async function submitNewCase() {
+    if (!newCaseName.trim() || !ovEventSummary.trim()) return
+    setOvEventSubmitting(true)
     try {
-      const res = await fetch(`/api/dashboard/muse/cases/${selectedCase.id}/link`, {
+      const res = await fetch('/api/dashboard/muse/cases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ museEntryId: target.id }),
+        body: JSON.stringify({
+          display_name: newCaseName.trim(),
+          company: newCaseCompany.trim() || undefined,
+          location: newCaseLocation.trim() || undefined,
+          occupation: newCaseOccupation.trim() || undefined,
+        }),
       })
-      if (!res.ok) throw new Error('Link failed')
-      const data = await res.json() as { case?: CaseWithEvents }
-      setSelectedCase(data.case ?? null)
-      setCaseLinkQuery('')
-      setCaseLinkMsg(`Linked to "${target.title}" ✓`)
-    } catch {
-      setCaseLinkMsg('Link failed')
+      const data = await res.json() as { id?: string; error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Case creation failed')
+      const caseId = data.id!
+
+      await fetch(`/api/dashboard/muse/cases/${caseId}/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: ovEventType,
+          date: ovEventDate,
+          summary: ovEventSummary.trim(),
+          what_suggested: ovEventSuggested.trim() || undefined,
+          adviser_recommendation: ovEventRecommendation.trim() || undefined,
+          worked: ovEventWorked || undefined,
+        }),
+      })
+
+      resetNewCaseForm()
+      await fetchCases()
+      setSelected({ type: 'case', id: caseId })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setOvEventSubmitting(false)
     }
   }
 
   // ─── Left panel derived data ────────────────────────────────────────────────
 
-  const searchQuery = leftSearch.trim().toLowerCase()
+  const isSearching = leftSearch.trim().length > 0
 
-  const searchResults: SearchResultItem[] = searchQuery
-    ? [
-        ...allEntries
-          .filter(en => activeFilter === 'all' || activeFilter === en.sector)
-          .filter(en => activeFilter !== 'cases')
-          .filter(en => en.title.toLowerCase().includes(searchQuery) || en.summary.toLowerCase().includes(searchQuery))
-          .map((en): SearchResultItem => ({ id: en.id, type: 'entry', title: en.title, sector: en.sector, summary: en.summary })),
-        ...(activeFilter === 'all' || activeFilter === 'cases'
-          ? allCases
-              .filter(c => {
-                const hay = `${c.display_name} ${c.company ?? ''} ${c.location ?? ''} ${c.occupation ?? ''} ${c.financial_profile ?? ''} ${c.outcome ?? ''}`.toLowerCase()
-                return hay.includes(searchQuery)
-              })
-              .map((c): SearchResultItem => ({
-                id: c.id, type: 'case',
-                title: c.company ? `${c.display_name} — ${c.company}` : c.display_name,
-                sector: 'Case',
-                summary: [c.occupation, c.financial_profile].filter(Boolean).join(' — '),
-              }))
-          : []),
-      ]
-    : []
-
-  function openResult(r: SearchResultItem) {
-    if (r.type === 'case') { setSelectedEntryId(null); setSelectedCaseId(r.id) }
-    else { setSelectedCaseId(null); setSelectedEntryId(r.id) }
+  function entriesForFilter(filter: string): MuseEntryLite[] {
+    if (filter === 'news') return allEntries.filter(e => e.entry_type === 'news')
+    if (filter === 'knowledge') return allEntries.filter(e => e.entry_type !== 'news')
+    return allEntries
   }
 
   const sectorEntriesFor = (sectorId: string) => allEntries.filter(en => en.sector === sectorId)
 
-  const recentCasesForSidebar = [...allCases]
-    .sort((a, b) => b.updated_at - a.updated_at)
-    .slice(0, 5)
+  function copyTemplate(t: MuseTemplate) {
+    void navigator.clipboard.writeText(t.body).then(() => {
+      setCopyMsg('Copied ✓')
+      setTimeout(() => setCopyMsg(null), 2000)
+    })
+  }
 
-  const pendingCount = pendingItems.length
+  function outlookLink(t: MuseTemplate): string {
+    const subject = encodeURIComponent(t.subject ?? t.name)
+    const body = encodeURIComponent(t.body)
+    return `mailto:?subject=${subject}&body=${body}`
+  }
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className={s.museWs}>
 
-      {/* ── Left panel — search & navigate (permanent) ──────────────────────── */}
+      {/* ── Left panel — search & navigate ──────────────────────────────────── */}
       <div className={s.musePermLeft}>
         <div className={s.musePanelHead}>
           <span className={s.eyebrow}>Search & Navigate</span>
@@ -836,7 +832,7 @@ export default function MuseWorkspace() {
         <div className={s.musePanelSearchWrap}>
           <input
             className={s.museSectorSearch}
-            placeholder="Search knowledge + cases…"
+            placeholder="Search knowledge, cases, templates…"
             value={leftSearch}
             onChange={e => setLeftSearch(e.target.value)}
           />
@@ -854,27 +850,47 @@ export default function MuseWorkspace() {
           ))}
         </div>
 
-        {searchQuery ? (
-          searchResults.length === 0 ? (
+        {isSearching ? (
+          searching && !searchResult ? (
+            <p className={s.musePanelEmpty}>Searching…</p>
+          ) : !searchResult || (searchResult.knowledge.length === 0 && searchResult.templates.length === 0 && searchResult.cases.length === 0) ? (
             <p className={s.musePanelEmpty}>No matches.</p>
           ) : (
             <div className={s.museEntryList}>
-              {searchResults.map(r => (
-                <button key={`${r.type}-${r.id}`} className={s.museEntryRow} onClick={() => openResult(r)}>
-                  <span className={s.museSectorDot} style={{ background: SECTOR_COLOR[r.sector] ?? '#8AA9F0' }} />
-                  <span className={s.museEntryTitle}>{r.title}</span>
-                  {r.type === 'case' && <span className={s.museResultTypeChip}>Case</span>}
+              {(activeFilter === 'all' || activeFilter === 'knowledge' || activeFilter === 'news') &&
+                searchResult.knowledge
+                  .filter(k => activeFilter === 'news' ? k.entry_type === 'news' : activeFilter === 'knowledge' ? k.entry_type !== 'news' : true)
+                  .map(k => (
+                    <button key={`k-${k.id}`} className={s.museEntryRow} onClick={() => setSelected({ type: 'entry', id: k.id })}>
+                      <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR[k.entry_type === 'news' ? 'news' : 'knowledge'] }} />
+                      <span className={s.museEntryTitle}>{k.title}</span>
+                      {k.privacy_tier === 2 && <span title="Server only — never sent to AI">🔒</span>}
+                    </button>
+                  ))}
+              {(activeFilter === 'all' || activeFilter === 'templates') && searchResult.templates.map(t => (
+                <button key={`t-${t.id}`} className={s.museEntryRow} onClick={() => setSelected({ type: 'template', id: t.id })}>
+                  <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR.template }} />
+                  <span className={s.museEntryTitle}>{t.name}</span>
+                  <span className={s.museResultTypeChip}>Template</span>
+                </button>
+              ))}
+              {(activeFilter === 'all' || activeFilter === 'cases') && searchResult.cases.map(c => (
+                <button key={`c-${c.id}`} className={s.museEntryRow} onClick={() => setSelected({ type: 'case', id: c.id })}>
+                  <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR.case }} />
+                  <span className={s.museEntryTitle}>{c.company ? `${c.display_name} — ${c.company}` : c.display_name}</span>
+                  <span className={s.museResultTypeChip}>Case</span>
                 </button>
               ))}
             </div>
           )
         ) : activeFilter === 'cases' ? (
           <div className={s.museEntryList}>
+            <button className={s.museNewCaseBtn} onClick={() => { setSelected(null); setNewCaseMode(true) }}>+ New Case</button>
             {allCases.length === 0 ? (
               <p className={s.musePanelEmpty}>No cases yet.</p>
             ) : (
               allCases.map(c => (
-                <button key={c.id} className={s.museCaseRow} onClick={() => { setSelectedEntryId(null); setSelectedCaseId(c.id) }}>
+                <button key={c.id} className={s.museCaseRow} onClick={() => setSelected({ type: 'case', id: c.id })}>
                   <div className={s.museCaseRowMain}>
                     <span className={s.museEntryTitle}>{c.display_name}{c.company ? ` — ${c.company}` : ''}</span>
                     <span className={s.museCaseRowLoc}>{c.location ?? ''}</span>
@@ -884,18 +900,42 @@ export default function MuseWorkspace() {
               ))
             )}
           </div>
-        ) : activeFilter !== 'all' ? (
+        ) : activeFilter === 'templates' ? (
           <div className={s.museEntryList}>
-            {sectorEntriesFor(activeFilter).length === 0 ? (
-              <p className={s.musePanelEmpty}>No entries in this sector yet.</p>
+            {allTemplates.length === 0 ? (
+              <p className={s.musePanelEmpty}>No templates yet.</p>
             ) : (
-              sectorEntriesFor(activeFilter).map(entry => (
-                <button key={entry.id} className={s.museEntryRow} onClick={() => { setSelectedCaseId(null); setSelectedEntryId(entry.id) }}>
+              allTemplates.map(t => (
+                <button key={t.id} className={s.museEntryRow} onClick={() => setSelected({ type: 'template', id: t.id })}>
+                  <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR.template }} />
+                  <span className={s.museEntryTitle}>{t.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+        ) : activeFilter === 'news' ? (
+          <div className={s.museEntryList}>
+            {entriesForFilter('news').length === 0 ? (
+              <p className={s.musePanelEmpty}>No news entries yet.</p>
+            ) : (
+              entriesForFilter('news').map(entry => (
+                <button key={entry.id} className={s.museEntryRow} onClick={() => setSelected({ type: 'entry', id: entry.id })}>
+                  <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR.news }} />
                   <span className={s.museEntryTitle}>{entry.title}</span>
                   <span className={s.museEntryDate}>{fmtDate(entry.last_updated)}</span>
                 </button>
               ))
             )}
+          </div>
+        ) : activeFilter === 'knowledge' ? (
+          <div className={s.museEntryList}>
+            {entriesForFilter('knowledge').map(entry => (
+              <button key={entry.id} className={s.museEntryRow} onClick={() => setSelected({ type: 'entry', id: entry.id })}>
+                <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR.knowledge }} />
+                <span className={s.museEntryTitle}>{entry.title}</span>
+                {entry.privacy_tier === 2 && <span title="Server only — never sent to AI">🔒</span>}
+              </button>
+            ))}
           </div>
         ) : (
           <div className={s.museSectorList}>
@@ -921,8 +961,9 @@ export default function MuseWorkspace() {
                       <p className={s.musePanelEmpty}>No entries in {sector.label} yet.</p>
                     ) : (
                       sectorEntriesFor(sector.id).map(entry => (
-                        <button key={entry.id} className={s.museEntryRow} onClick={() => { setSelectedCaseId(null); setSelectedEntryId(entry.id) }}>
+                        <button key={entry.id} className={s.museEntryRow} onClick={() => setSelected({ type: 'entry', id: entry.id })}>
                           <span className={s.museEntryTitle}>{entry.title}</span>
+                          {entry.privacy_tier === 2 && <span title="Server only — never sent to AI">🔒</span>}
                           <span className={s.museEntryDate}>{fmtDate(entry.last_updated)}</span>
                         </button>
                       ))
@@ -933,458 +974,159 @@ export default function MuseWorkspace() {
             ))}
           </div>
         )}
-
-        {activeFilter !== 'cases' && !searchQuery && (
-          <div className={s.museRecentCases}>
-            <div className={s.musePanelHead} style={{ padding: '10px 16px' }}>
-              <span className={s.eyebrow}>Cases</span>
-            </div>
-            {recentCasesForSidebar.length === 0 ? (
-              <p className={s.musePanelEmpty}>No cases yet.</p>
-            ) : (
-              <div className={s.museEntryList}>
-                {recentCasesForSidebar.map(c => (
-                  <button key={c.id} className={s.museCaseRow} onClick={() => { setSelectedEntryId(null); setSelectedCaseId(c.id) }}>
-                    <div className={s.museCaseRowMain}>
-                      <span className={s.museEntryTitle}>{c.display_name}{c.company ? ` — ${c.company}` : ''}</span>
-                      <span className={s.museCaseRowLoc}>{c.location ?? ''}</span>
-                    </div>
-                    <span className={s.museCaseStatusChip}>{CASE_STATUS_LABEL[c.status] ?? c.status}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* ── Centre panel — brain graph (permanent) ──────────────────────────── */}
-      <div className={s.musePermCentre}>
+      {/* ── Centre panel — entry / template / case view ─────────────────────── */}
+      <div className={s.musePermCentre} style={{ overflowY: 'auto' }}>
         <button className={s.museBackBtn} onClick={() => router.push('/dashboard')}>← MAIA</button>
 
-        <div className={s.museBrainContainer}>
-          {graphNodes.length === 0 ? (
+        <div className={s.museCentreBody}>
+          {newCaseMode ? (
+            <div className={s.museFileForm} style={{ maxWidth: 480, margin: '60px auto 0' }}>
+              <span className={s.eyebrow}>New Case</span>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Display name</span>
+                <input className={s.museTextInput} placeholder="e.g. John S." value={newCaseName} onChange={e => setNewCaseName(e.target.value)} />
+              </div>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Company</span>
+                <input className={s.museTextInput} value={newCaseCompany} onChange={e => setNewCaseCompany(e.target.value)} />
+              </div>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Location</span>
+                <input className={s.museTextInput} value={newCaseLocation} onChange={e => setNewCaseLocation(e.target.value)} />
+              </div>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Occupation</span>
+                <input className={s.museTextInput} value={newCaseOccupation} onChange={e => setNewCaseOccupation(e.target.value)} />
+              </div>
+              <div className={s.fpDivider} />
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>First event — summary</span>
+                <textarea className={s.museBrainDumpInput} style={{ height: 60 }} value={ovEventSummary} onChange={e => setOvEventSummary(e.target.value)} />
+              </div>
+              <div className={s.museEditActions}>
+                <button className={s.museKeepBtn} disabled={ovEventSubmitting || !newCaseName.trim() || !ovEventSummary.trim()} onClick={() => void submitNewCase()}>
+                  {ovEventSubmitting ? 'Saving…' : 'Create Case'}
+                </button>
+                <button className={s.museDiscardBtn} onClick={resetNewCaseForm}>Cancel</button>
+              </div>
+            </div>
+          ) : !selected ? (
             <div className={s.museEmptyState}>
               <div className={s.museEmptyIcon}>🧠</div>
-              <p className={s.museEmptyTitle}>Your knowledge brain is empty — start adding entries to see it grow</p>
-              <p className={s.museEmptyText}>Use the Add Knowledge tab or say &quot;MUSE, file this:&quot; in Slack</p>
+              <p className={s.museEmptyTitle}>MUSE — Your Second Brain</p>
+              <p className={s.museEmptyText}>Search anything above or browse sectors on the left.</p>
+              <p className={s.museEmptyText}>Everything connected. Everything searchable.</p>
             </div>
-          ) : (
-            <svg ref={svgRef} className={s.museBrainSvg} />
-          )}
-        </div>
-      </div>
-
-      {/* ── Right panel — filing tabs (permanent) ────────────────────────────── */}
-      <div className={s.musePermRight}>
-        <div className={s.museTabRow}>
-          <button className={`${s.museTab} ${rightTab === 'knowledge' ? s.museTabActive : ''}`} onClick={() => setRightTab('knowledge')}>
-            Add Knowledge
-          </button>
-          <button className={`${s.museTab} ${rightTab === 'case' ? s.museTabActive : ''}`} onClick={() => setRightTab('case')}>
-            Add Case Update
-          </button>
-          <button className={`${s.museTab} ${rightTab === 'pending' ? s.museTabActive : ''}`} onClick={() => setRightTab('pending')}>
-            Pending{pendingCount > 0 ? ` (${pendingCount})` : ''}
-          </button>
-        </div>
-
-        <div className={s.museTabBody}>
-
-          {/* ── Tab 1: Add Knowledge ─────────────────────────────────────── */}
-          {rightTab === 'knowledge' && (
-            <div className={s.museFileForm}>
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Sector</span>
-                <select className={s.museSelect} value={knowSector} onChange={e => setKnowSector(e.target.value)}>
-                  {SECTORS.filter(sec => !sec.locked).map(sec => (
-                    <option key={sec.id} value={sec.id}>{sec.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Title (optional — MUSE generates if empty)</span>
-                <input className={s.museTextInput} value={knowTitle} onChange={e => setKnowTitle(e.target.value)} placeholder="Leave blank to auto-generate" />
-              </div>
-
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Context</span>
-                <textarea
-                  className={s.museBrainDumpInput}
-                  style={{ height: 60 }}
-                  placeholder="Describe what this is and why you're filing it…"
-                  value={knowContext}
-                  onChange={e => setKnowContext(e.target.value)}
-                />
-              </div>
-
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Content</span>
-                <textarea
-                  className={s.museBrainDumpInput}
-                  style={{ height: 110 }}
-                  placeholder="Paste content, or drop a file below…"
-                  value={knowContent}
-                  onChange={e => setKnowContent(e.target.value)}
-                />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button
-                    className={`${s.museBrainDumpMic} ${micActive ? s.active : ''}`}
-                    onClick={handleKnowMic}
-                    aria-label={micActive ? 'Stop listening' : 'Voice input'}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-                      <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
-                      <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v3" />
-                    </svg>
-                  </button>
-                  {micActive && <span className={s.museBrainDumpMsg}>Listening…</span>}
-                  {voiceError && <span className={s.museBrainDumpMsg} style={{ color: 'var(--alert)' }}>{voiceError}</span>}
-                </div>
-                <div
-                  className={s.museDropZone}
-                  style={
-                    pdfExtracting
-                      ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)', cursor: 'wait' }
-                      : knowDragOver ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)' } : undefined
-                  }
-                  onDragOver={e => { e.preventDefault(); if (!pdfExtracting) setKnowDragOver(true) }}
-                  onDragLeave={() => setKnowDragOver(false)}
-                  onDrop={e => { e.preventDefault(); if (!pdfExtracting) void handleKnowFileDrop(e) }}
-                >
-                  {pdfExtracting ? 'Extracting text from PDF…' : 'Drop a PDF, .txt, or .md file — combines with content above'}
-                </div>
-              </div>
-
-              {knowMsg && (
-                <p className={s.museBrainDumpMsg} style={{ color: knowMsg.ok ? 'var(--online)' : 'var(--alert)' }}>{knowMsg.text}</p>
-              )}
-
-              <button
-                className={s.museBrainDumpBtn}
-                style={{ alignSelf: 'stretch', textAlign: 'center' }}
-                disabled={knowSubmitting || !knowContent.trim()}
-                onClick={() => void handleKnowSubmit()}
-              >
-                {knowSubmitting ? 'Filing…' : 'File to MUSE'}
-              </button>
-            </div>
-          )}
-
-          {/* ── Tab 2: Add Case Update ───────────────────────────────────── */}
-          {rightTab === 'case' && (
-            <div className={s.museFileForm}>
-              <div className={s.museCaseModeRow}>
-                <button
-                  className={`${s.museFilterChip} ${caseFormMode === 'select' ? s.museFilterChipActive : ''}`}
-                  onClick={() => setCaseFormMode('select')}
-                >
-                  Existing case
-                </button>
-                <button
-                  className={`${s.museFilterChip} ${caseFormMode === 'new' ? s.museFilterChipActive : ''}`}
-                  onClick={() => setCaseFormMode('new')}
-                >
-                  New case
-                </button>
-              </div>
-
-              {caseFormMode === 'select' ? (
-                <div className={s.fpSection}>
-                  <span className={s.fpSectionLabel}>Find case</span>
-                  <input
-                    className={s.museTextInput}
-                    placeholder="Search by name or company…"
-                    value={caseSearchQuery}
-                    onChange={e => { setCaseSearchQuery(e.target.value); setCaseFormSelectedId(null) }}
-                  />
-                  {caseSearchResults.length > 0 && (
-                    <div className={s.museCaseSelectList}>
-                      {caseSearchResults.map(c => (
-                        <button
-                          key={c.id}
-                          className={`${s.museCaseSelectRow} ${caseFormSelectedId === c.id ? s.museCaseSelectRowActive : ''}`}
-                          onClick={() => setCaseFormSelectedId(c.id)}
-                        >
-                          {c.display_name}{c.company ? ` — ${c.company}` : ''}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <div className={s.fpSection}>
-                    <span className={s.fpSectionLabel}>Display name</span>
-                    <input className={s.museTextInput} placeholder="e.g. John S." value={newCaseName} onChange={e => setNewCaseName(e.target.value)} />
-                  </div>
-                  <div className={s.fpSection}>
-                    <span className={s.fpSectionLabel}>Company</span>
-                    <input className={s.museTextInput} value={newCaseCompany} onChange={e => setNewCaseCompany(e.target.value)} />
-                  </div>
-                  <div className={s.fpSection}>
-                    <span className={s.fpSectionLabel}>Location</span>
-                    <input className={s.museTextInput} value={newCaseLocation} onChange={e => setNewCaseLocation(e.target.value)} />
-                  </div>
-                  <div className={s.fpSection}>
-                    <span className={s.fpSectionLabel}>Occupation</span>
-                    <input className={s.museTextInput} value={newCaseOccupation} onChange={e => setNewCaseOccupation(e.target.value)} />
-                  </div>
-                </>
-              )}
-
-              <div className={s.fpDivider} />
-
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Event type</span>
-                <select className={s.museSelect} value={eventType} onChange={e => setEventType(e.target.value)}>
-                  {EVENT_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-                </select>
-              </div>
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Date</span>
-                <input type="date" className={s.museTextInput} value={eventDate} onChange={e => setEventDate(e.target.value)} />
-              </div>
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Summary</span>
-                <textarea className={s.museBrainDumpInput} style={{ height: 60 }} value={eventSummary} onChange={e => setEventSummary(e.target.value)} />
-              </div>
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>What did you suggest?</span>
-                <textarea className={s.museBrainDumpInput} style={{ height: 50 }} value={eventSuggested} onChange={e => setEventSuggested(e.target.value)} />
-              </div>
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Steven&apos;s recommendation (optional)</span>
-                <textarea className={s.museBrainDumpInput} style={{ height: 50 }} value={eventRecommendation} onChange={e => setEventRecommendation(e.target.value)} />
-              </div>
-              <div className={s.fpSection}>
-                <span className={s.fpSectionLabel}>Did it work? (optional)</span>
-                <div className={s.museFilterChips}>
-                  {['yes', 'no', 'pending'].map(v => (
-                    <button key={v} className={`${s.museFilterChip} ${eventWorked === v ? s.museFilterChipActive : ''}`} onClick={() => setEventWorked(eventWorked === v ? '' : v)}>
-                      {v}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {caseMsg && (
-                <p className={s.museBrainDumpMsg} style={{ color: caseMsg.ok ? 'var(--online)' : 'var(--alert)' }}>{caseMsg.text}</p>
-              )}
-
-              <button
-                className={s.museBrainDumpBtn}
-                style={{ alignSelf: 'stretch', textAlign: 'center' }}
-                disabled={
-                  caseSubmitting || !eventSummary.trim() ||
-                  (caseFormMode === 'select' ? !caseFormSelectedId : !newCaseName.trim())
-                }
-                onClick={() => void handleCaseSubmit()}
-              >
-                {caseSubmitting ? 'Saving…' : 'Save Case Update'}
-              </button>
-            </div>
-          )}
-
-          {/* ── Tab 3: Pending Approvals ──────────────────────────────────── */}
-          {rightTab === 'pending' && (
-            <div className={s.museApprovalsQueue} style={{ borderBottom: 'none' }}>
-              {pendingItems.length === 0 ? (
-                <p className={s.musePanelEmpty}>No pending approvals</p>
-              ) : (
-                pendingItems.map(item => (
-                  <div key={item.id} className={s.museApprovalItem}>
-                    <div className={s.museApprovalMeta}>
-                      <span
-                        className={s.museApprovalSector}
-                        style={{ background: SECTOR_COLOR[item.suggested_sector] ?? '#8AA9F0' }}
-                      >
-                        {item.suggested_sector}
-                      </span>
-                      {item.source_agent && (
-                        <span className={s.museApprovalSource}>{item.source_agent}</span>
-                      )}
-                    </div>
-                    <div className={s.museApprovalTitle}>{item.suggested_title}</div>
-                    <div className={s.museApprovalActions}>
-                      <button
-                        className={s.museKeepBtn}
-                        disabled={confirmLoading === item.id}
-                        onClick={() => void handleConfirm(item.id, 'keep')}
-                      >
-                        {confirmLoading === item.id ? '…' : 'Keep'}
-                      </button>
-                      <button
-                        className={s.museDiscardBtn}
-                        disabled={confirmLoading === item.id}
-                        onClick={() => void handleConfirm(item.id, 'discard')}
-                      >
-                        Discard
-                      </button>
-                      <button
-                        className={s.museDiscardBtn}
-                        disabled={confirmLoading === item.id}
-                        onClick={() => toggleRefine(item.id)}
-                      >
-                        {refineOpenId === item.id ? 'Cancel' : 'Edit'}
-                      </button>
-                    </div>
-
-                    {refineOpenId === item.id && (
-                      <div className={s.museRefineBox}>
-                        <input
-                          className={s.museRefineInput}
-                          placeholder='Edit instruction, e.g. "make the summary shorter"…'
-                          value={refineText}
-                          onChange={e => setRefineText(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') void handleRefineSubmit(item.id) }}
-                          disabled={refineLoading === item.id}
-                        />
-                        <button
-                          className={s.museKeepBtn}
-                          disabled={refineLoading === item.id || !refineText.trim()}
-                          onClick={() => void handleRefineSubmit(item.id)}
-                        >
-                          {refineLoading === item.id ? '…' : 'Send'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Entry overlay ────────────────────────────────────────────────── */}
-      {selectedEntryId && (
-        <div className={s.museOverlay} onClick={() => setSelectedEntryId(null)}>
-          <div className={s.museOverlayCard} onClick={e => e.stopPropagation()}>
-            <button className={s.museOverlayClose} onClick={() => setSelectedEntryId(null)}>✕</button>
-
-            {!selectedEntry ? (
+          ) : selected.type === 'entry' ? (
+            !selectedEntry ? (
               <p className={s.museOverlayLoading}>Loading…</p>
             ) : (
-              <>
+              <div className={s.museEntryView}>
                 <div className={s.museOverlayMeta}>
-                  <span
-                    className={s.museOverlaySector}
-                    style={{ background: SECTOR_COLOR[selectedEntry.sector] ?? '#8AA9F0' }}
-                  >
+                  <span className={s.museOverlaySector} style={{ background: SECTOR_COLOR[selectedEntry.sector] ?? '#8AA9F0' }}>
                     {selectedEntry.sector}
                   </span>
-                  <span className={s.museOverlayDate}>
-                    Filed{' '}
-                    {new Date(selectedEntry.date_filed * 1000).toLocaleDateString('en-GB', {
-                      day: 'numeric', month: 'short', year: 'numeric',
-                    })}
+                  <span className={s.museTypeChip}>{ENTRY_TYPES.find(t => t.id === selectedEntry.entry_type)?.label ?? selectedEntry.entry_type}</span>
+                  <span className={s.musePrivacyBadge} title={selectedEntry.privacy_tier === 2 ? 'Server only — never sent to AI' : 'AI can read this'}>
+                    {selectedEntry.privacy_tier === 2 ? '🔒 Locked' : '🟢 Open'}
                   </span>
-                  {!editOpen && (
-                    <button className={s.museEditBtn} onClick={openEdit}>Edit</button>
-                  )}
                 </div>
 
-                <h2 className={s.museOverlayTitle}>{selectedEntry.title}</h2>
-
-                {!editOpen ? (
-                  <>
-                    <p className={s.museOverlaySummary}>{selectedEntry.summary}</p>
-                    <pre className={s.museOverlayBody}>{selectedEntry.content}</pre>
-                  </>
+                {editingTitle ? (
+                  <input
+                    className={s.museTextInput}
+                    autoFocus
+                    defaultValue={selectedEntry.title}
+                    onBlur={e => { setEditingTitle(false); if (e.target.value.trim() && e.target.value !== selectedEntry.title) void saveEntryPatch({ title: e.target.value.trim() }) }}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                  />
                 ) : (
-                  <div className={s.museEditBox}>
-                    <textarea
-                      className={s.museEditTextarea}
-                      value={editContent}
-                      onChange={e => setEditContent(e.target.value)}
-                    />
-                    <div className={s.museEditActions}>
-                      <button className={s.museKeepBtn} disabled={editSaving} onClick={() => void saveEdit()}>
-                        {editSaving ? 'Saving…' : 'Save'}
-                      </button>
-                      <button className={s.museDiscardBtn} disabled={editSaving} onClick={() => setEditOpen(false)}>
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
+                  <h2 className={s.museOverlayTitle} onClick={openTitleEdit} style={{ cursor: 'text' }}>{selectedEntry.title}</h2>
                 )}
 
-                {selectedEntry.changeLog.length > 0 && (
-                  <details className={s.museChangeLog}>
-                    <summary className={s.museChangeLogSummary}>
-                      Change log ({selectedEntry.changeLog.length})
-                    </summary>
-                    {selectedEntry.changeLog.map(c => (
-                      <div key={c.id} className={s.museChangeItem}>
-                        <span className={s.museChangeDate}>
-                          {new Date(c.changed_at * 1000).toLocaleDateString('en-GB')}
-                        </span>
-                        {c.change_summary}
-                      </div>
-                    ))}
-                  </details>
-                )}
-
-                {selectedEntry.links.length > 0 && (
-                  <div className={s.museOverlayLinks}>
-                    <span className={s.eyebrow} style={{ display: 'block', marginBottom: 6 }}>
-                      Linked entries
-                    </span>
-                    <div className={s.museLinksRow}>
-                      {selectedEntry.links.map(l => {
-                        const otherId = l.entry_id_a === selectedEntry.id ? l.entry_id_b : l.entry_id_a
-                        return (
-                          <button
-                            key={l.id}
-                            className={s.museLinkChip}
-                            onClick={() => {
-                              if (l.link_type === 'case') { setSelectedEntryId(null); setSelectedCaseId(otherId) }
-                              else setSelectedEntryId(otherId)
-                            }}
-                          >
-                            {l.link_type}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                <div className={s.museLinkToSection}>
-                  {!entryLinkOpen ? (
-                    <button className={s.museDiscardBtn} onClick={() => setEntryLinkOpen(true)}>Link to…</button>
-                  ) : (
-                    <div className={s.museRefineBox}>
-                      <input
-                        className={s.museRefineInput}
-                        placeholder="Exact title of entry to link…"
-                        value={entryLinkQuery}
-                        onChange={e => setEntryLinkQuery(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') void submitEntryLink() }}
-                      />
-                      <button className={s.museKeepBtn} onClick={() => void submitEntryLink()}>Link</button>
-                    </div>
-                  )}
-                  {entryLinkMsg && <p className={s.museBrainDumpMsg}>{entryLinkMsg}</p>}
+                <div className={s.museLinksRow}>
+                  {parseTags(selectedEntry.tags).map(tag => (
+                    <span key={tag} className={s.museTagChip}>{tag}</span>
+                  ))}
                 </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
-      {/* ── Case overlay ─────────────────────────────────────────────────── */}
-      {selectedCaseId && (
-        <div className={s.museOverlay} onClick={() => setSelectedCaseId(null)}>
-          <div className={s.museOverlayCard} onClick={e => e.stopPropagation()}>
-            <button className={s.museOverlayClose} onClick={() => setSelectedCaseId(null)}>✕</button>
+                {(() => {
+                  const linkedIds = parseTags(selectedEntry.linked_entries)
+                  const linkedFromMuseLinks = selectedEntry.links.map(l => l.entry_id_a === selectedEntry.id ? l.entry_id_b : l.entry_id_a)
+                  const allLinkedIds = Array.from(new Set([...linkedIds, ...linkedFromMuseLinks]))
+                  if (allLinkedIds.length === 0) return null
+                  return (
+                    <div className={s.museOverlayLinks}>
+                      <span className={s.eyebrow} style={{ display: 'block', marginBottom: 6 }}>Linked entries</span>
+                      <div className={s.museLinksRow}>
+                        {allLinkedIds.map(id => {
+                          const target = allEntries.find(e => e.id === id)
+                          return (
+                            <button key={id} className={s.museLinkChip} onClick={() => navigateToEntry(id)}>
+                              {target?.title ?? id.slice(0, 8)}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })()}
 
-            {!selectedCase ? (
+                {selectedEntry.privacy_tier === 1 ? (
+                  editingContent ? (
+                    <div className={s.museEditBox}>
+                      <textarea className={s.museEditTextarea} value={contentDraft} onChange={e => setContentDraft(e.target.value)} />
+                      <div className={s.museEditActions}>
+                        <button className={s.museKeepBtn} disabled={entrySaving} onClick={() => { void saveEntryPatch({ content: contentDraft }); setEditingContent(false) }}>
+                          {entrySaving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button className={s.museDiscardBtn} onClick={() => setEditingContent(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <pre className={s.museOverlayBody} onClick={openContentEdit} style={{ cursor: 'text' }}>{selectedEntry.content}</pre>
+                  )
+                ) : (
+                  <pre className={s.museOverlayBody}>{selectedEntry.content}</pre>
+                )}
+
+                <p className={s.museLastEdited}>Last edited {fmtDateTime(selectedEntry.last_updated)}</p>
+              </div>
+            )
+          ) : selected.type === 'template' ? (
+            !selectedTemplate ? (
               <p className={s.museOverlayLoading}>Loading…</p>
             ) : (
-              <>
+              <div className={s.museEntryView}>
+                <div className={s.museOverlayMeta}>
+                  <span className={s.museTypeChip}>{selectedTemplate.category}</span>
+                  <span className={s.museOverlayDate}>{selectedTemplate.medium}</span>
+                  {selectedTemplate.scenario && <span className={s.museOverlayDate}>Scenario: {selectedTemplate.scenario}</span>}
+                </div>
+                <h2 className={s.museOverlayTitle}>{selectedTemplate.name}</h2>
+                {selectedTemplate.subject && (
+                  <p className={s.museOverlaySummary}><strong>Subject:</strong> {renderWithPlaceholders(selectedTemplate.subject)}</p>
+                )}
+                <pre className={s.museOverlayBody}>{renderWithPlaceholders(selectedTemplate.body)}</pre>
+
+                <div className={s.museEditActions}>
+                  <button className={s.museKeepBtn} onClick={() => copyTemplate(selectedTemplate)}>Copy to clipboard</button>
+                  {selectedTemplate.medium === 'email' && (
+                    <a className={s.museDiscardBtn} href={outlookLink(selectedTemplate)} style={{ textDecoration: 'none', display: 'inline-block' }}>
+                      Open in Outlook
+                    </a>
+                  )}
+                </div>
+                {copyMsg && <p className={s.museBrainDumpMsg}>{copyMsg}</p>}
+              </div>
+            )
+          ) : (
+            !selectedCase ? (
+              <p className={s.museOverlayLoading}>Loading…</p>
+            ) : (
+              <div className={s.museEntryView}>
                 <div className={s.museOverlayMeta}>
                   <span className={s.museOverlaySector} style={{ background: SECTOR_COLOR.Case }}>Case</span>
                   <span className={s.museCaseStatusChip}>{CASE_STATUS_LABEL[selectedCase.status] ?? selectedCase.status}</span>
@@ -1465,46 +1207,265 @@ export default function MuseWorkspace() {
                   </div>
                 )}
 
-                <div className={s.museOverlayLinks}>
-                  <span className={s.eyebrow} style={{ display: 'block', marginBottom: 6 }}>Linked knowledge</span>
-                  {selectedCase.linkedEntries.length === 0 ? (
-                    <p className={s.musePanelEmpty}>No linked entries yet.</p>
-                  ) : (
+                {selectedCase.linkedEntries.length > 0 && (
+                  <div className={s.museOverlayLinks}>
+                    <span className={s.eyebrow} style={{ display: 'block', marginBottom: 6 }}>Linked knowledge</span>
                     <div className={s.museLinksRow}>
                       {selectedCase.linkedEntries.map(le => (
-                        <button
-                          key={le.id}
-                          className={s.museLinkChip}
-                          onClick={() => { setSelectedCaseId(null); setSelectedEntryId(le.id) }}
-                        >
-                          {le.title}
-                        </button>
+                        <button key={le.id} className={s.museLinkChip} onClick={() => navigateToEntry(le.id)}>{le.title}</button>
                       ))}
                     </div>
+                  </div>
+                )}
+              </div>
+            )
+          )}
+        </div>
+      </div>
+
+      {/* ── Right panel — Add & File ─────────────────────────────────────────── */}
+      <div className={s.musePermRight}>
+        <div className={s.museTabRow}>
+          <button className={`${s.museTab} ${rightTab === 'knowledge' ? s.museTabActive : ''}`} onClick={() => setRightTab('knowledge')}>
+            Add Knowledge
+          </button>
+          <button className={`${s.museTab} ${rightTab === 'template' ? s.museTabActive : ''}`} onClick={() => setRightTab('template')}>
+            Add Template
+          </button>
+          <button className={`${s.museTab} ${rightTab === 'pending' ? s.museTabActive : ''}`} onClick={() => setRightTab('pending')}>
+            Pending{pendingItems.length > 0 && <span className={s.museTabBadge}>{pendingItems.length}</span>}
+          </button>
+        </div>
+
+        <div className={s.museTabBody}>
+
+          {/* ── Tab 1: Add Knowledge ─────────────────────────────────────── */}
+          {rightTab === 'knowledge' && (
+            <div className={s.museFileForm}>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Entry type</span>
+                <select className={s.museSelect} value={knowEntryType} onChange={e => setKnowEntryType(e.target.value)}>
+                  {ENTRY_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+              </div>
+
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Privacy tier</span>
+                <div className={s.museFilterChips} style={{ padding: 0, border: 'none' }}>
+                  <button className={`${s.museFilterChip} ${knowPrivacyTier === 1 ? s.museFilterChipActive : ''}`} onClick={() => setKnowPrivacyTier(1)}>🟢 Open (AI)</button>
+                  <button className={`${s.museFilterChip} ${knowPrivacyTier === 2 ? s.museFilterChipActive : ''}`} onClick={() => setKnowPrivacyTier(2)}>🔒 Locked (Server only)</button>
+                </div>
+                {knowPrivacyTier === 2 && (
+                  <p className={s.museLockedWarning}>This entry will never be sent to any AI model.</p>
+                )}
+              </div>
+
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Sector</span>
+                <select className={s.museSelect} value={knowSector} onChange={e => setKnowSector(e.target.value)}>
+                  {SECTORS.filter(sec => !sec.locked).map(sec => (
+                    <option key={sec.id} value={sec.id}>{sec.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Title (optional — MUSE generates if empty)</span>
+                <input className={s.museTextInput} value={knowTitle} onChange={e => setKnowTitle(e.target.value)} placeholder="Leave blank to auto-generate" />
+              </div>
+
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Context</span>
+                <textarea
+                  className={s.museBrainDumpInput}
+                  style={{ height: 60 }}
+                  placeholder="Describe what this is and why you're filing it…"
+                  value={knowContext}
+                  onChange={e => setKnowContext(e.target.value)}
+                />
+              </div>
+
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Content</span>
+                <textarea
+                  className={s.museBrainDumpInput}
+                  style={{ height: 110 }}
+                  placeholder="Paste content, or drop a file below…"
+                  value={knowContent}
+                  onChange={e => setKnowContent(e.target.value)}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button className={`${s.museBrainDumpMic} ${micActive ? s.active : ''}`} onClick={handleKnowMic} aria-label={micActive ? 'Stop listening' : 'Voice input'}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                      <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                      <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v3" />
+                    </svg>
+                  </button>
+                  {micActive && <span className={s.museBrainDumpMsg}>Listening…</span>}
+                  {voiceError && <span className={s.museBrainDumpMsg} style={{ color: 'var(--alert)' }}>{voiceError}</span>}
+                </div>
+                <div
+                  className={s.museDropZone}
+                  style={pdfExtracting ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)', cursor: 'wait' } : knowDragOver ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)' } : undefined}
+                  onDragOver={e => { e.preventDefault(); if (!pdfExtracting) setKnowDragOver(true) }}
+                  onDragLeave={() => setKnowDragOver(false)}
+                  onDrop={e => { e.preventDefault(); if (!pdfExtracting) void handleKnowFileDrop(e) }}
+                >
+                  {pdfExtracting ? 'Extracting text from PDF…' : 'Drop a PDF, .txt, or .md file — combines with content above'}
+                </div>
+              </div>
+
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Tags {knowTagsPreview.length === 0 ? '(auto-generated as you type)' : '(auto-generated — editable)'}</span>
+                <div className={s.museLinksRow}>
+                  {knowTagsPreview.map(tag => (
+                    <span key={tag} className={s.museTagChip}>
+                      {tag}
+                      <button className={s.museTagRemove} onClick={() => removeTagPreview(tag)}>✕</button>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    className={s.museTextInput}
+                    placeholder="Add a tag…"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') addTagPreview() }}
+                  />
+                  <button className={s.museDiscardBtn} onClick={addTagPreview}>Add</button>
+                </div>
+              </div>
+
+              {knowMsg && (
+                <div>
+                  <p className={s.museBrainDumpMsg} style={{ color: knowMsg.ok ? 'var(--online)' : 'var(--alert)' }}>{knowMsg.text}</p>
+                  {knowMsg.ok && knowMsg.tags && knowMsg.tags.length > 0 && (
+                    <div className={s.museLinksRow}>
+                      {knowMsg.tags.map(tag => <span key={tag} className={s.museTagChip}>{tag}</span>)}
+                    </div>
                   )}
-                  <div className={s.museLinkToSection}>
-                    {!caseLinkOpen ? (
-                      <button className={s.museDiscardBtn} onClick={() => setCaseLinkOpen(true)}>Link entry…</button>
-                    ) : (
+                </div>
+              )}
+
+              <button
+                className={s.museBrainDumpBtn}
+                style={{ alignSelf: 'stretch', textAlign: 'center' }}
+                disabled={knowSubmitting || !knowContent.trim()}
+                onClick={() => void handleKnowSubmit()}
+              >
+                {knowSubmitting ? 'Filing…' : 'File to MUSE'}
+              </button>
+            </div>
+          )}
+
+          {/* ── Tab 2: Add Template ──────────────────────────────────────── */}
+          {rightTab === 'template' && (
+            <div className={s.museFileForm}>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Template name</span>
+                <input className={s.museTextInput} value={tplName} onChange={e => setTplName(e.target.value)} />
+              </div>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Category</span>
+                <select className={s.museSelect} value={tplCategory} onChange={e => setTplCategory(e.target.value)}>
+                  {TEMPLATE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Medium</span>
+                <select className={s.museSelect} value={tplMedium} onChange={e => setTplMedium(e.target.value)}>
+                  {TEMPLATE_MEDIUMS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Scenario link</span>
+                <select className={s.museSelect} value={tplScenario} onChange={e => setTplScenario(e.target.value)}>
+                  <option value="">Generic / none</option>
+                  {hermesScenarios.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
+                </select>
+              </div>
+              {tplCategory === 'email' && (
+                <div className={s.fpSection}>
+                  <span className={s.fpSectionLabel}>Subject</span>
+                  <input className={s.museTextInput} value={tplSubject} onChange={e => setTplSubject(e.target.value)} />
+                </div>
+              )}
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Body</span>
+                <textarea className={s.museBrainDumpInput} style={{ height: 100 }} value={tplBody} onChange={e => setTplBody(e.target.value)} />
+                <p className={s.musePlaceholderHelper}>Use [NAME] [COMPANY] [LOCATION] [MEETING_DATE] [MEETING_TIME] [SPECIFIC_DETAIL]</p>
+              </div>
+
+              {tplBody.trim() && (
+                <div className={s.fpSection}>
+                  <span className={s.fpSectionLabel}>Preview</span>
+                  <pre className={s.museOverlayBody}>{renderWithPlaceholders(tplBody)}</pre>
+                </div>
+              )}
+
+              {tplMsg && <p className={s.museBrainDumpMsg} style={{ color: tplMsg.ok ? 'var(--online)' : 'var(--alert)' }}>{tplMsg.text}</p>}
+
+              <button
+                className={s.museBrainDumpBtn}
+                style={{ alignSelf: 'stretch', textAlign: 'center' }}
+                disabled={tplSubmitting || !tplName.trim() || !tplBody.trim()}
+                onClick={() => void handleTemplateSubmit()}
+              >
+                {tplSubmitting ? 'Saving…' : 'Save Template'}
+              </button>
+            </div>
+          )}
+
+          {/* ── Tab 3: Pending Approvals ──────────────────────────────────── */}
+          {rightTab === 'pending' && (
+            <div className={s.museApprovalsQueue} style={{ borderBottom: 'none' }}>
+              {pendingItems.length === 0 ? (
+                <p className={s.musePanelEmpty}>No pending approvals</p>
+              ) : (
+                pendingItems.map(item => (
+                  <div key={item.id} className={s.museApprovalItem}>
+                    <div className={s.museApprovalMeta}>
+                      <span className={s.museApprovalSector} style={{ background: SECTOR_COLOR[item.suggested_sector] ?? '#8AA9F0' }}>
+                        {item.suggested_sector}
+                      </span>
+                      {item.source_agent && <span className={s.museApprovalSource}>{item.source_agent}</span>}
+                    </div>
+                    <div className={s.museApprovalTitle}>{item.suggested_title}</div>
+                    <div className={s.museApprovalActions}>
+                      <button className={s.museKeepBtn} disabled={confirmLoading === item.id} onClick={() => void handleConfirm(item.id, 'keep')}>
+                        {confirmLoading === item.id ? '…' : 'Keep'}
+                      </button>
+                      <button className={s.museDiscardBtn} disabled={confirmLoading === item.id} onClick={() => void handleConfirm(item.id, 'discard')}>
+                        Discard
+                      </button>
+                      <button className={s.museDiscardBtn} disabled={confirmLoading === item.id} onClick={() => toggleRefine(item.id)}>
+                        {refineOpenId === item.id ? 'Cancel' : 'Edit'}
+                      </button>
+                    </div>
+
+                    {refineOpenId === item.id && (
                       <div className={s.museRefineBox}>
                         <input
                           className={s.museRefineInput}
-                          placeholder="Exact title of entry to link…"
-                          value={caseLinkQuery}
-                          onChange={e => setCaseLinkQuery(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') void submitCaseLink() }}
+                          placeholder='Edit instruction, e.g. "make the summary shorter"…'
+                          value={refineText}
+                          onChange={e => setRefineText(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') void handleRefineSubmit(item.id) }}
+                          disabled={refineLoading === item.id}
                         />
-                        <button className={s.museKeepBtn} onClick={() => void submitCaseLink()}>Link</button>
+                        <button className={s.museKeepBtn} disabled={refineLoading === item.id || !refineText.trim()} onClick={() => void handleRefineSubmit(item.id)}>
+                          {refineLoading === item.id ? '…' : 'Send'}
+                        </button>
                       </div>
                     )}
-                    {caseLinkMsg && <p className={s.museBrainDumpMsg}>{caseLinkMsg}</p>}
                   </div>
-                </div>
-              </>
-            )}
-          </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* ── Error toast ──────────────────────────────────────────────────── */}
       {error && (

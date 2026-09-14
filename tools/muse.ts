@@ -1,8 +1,8 @@
 // Pure DB functions for MUSE. No Claude calls, no Slack calls.
 
-import { desc, eq, gte, or, like, and } from 'drizzle-orm'
+import { desc, eq, ne, gte, or, like, and } from 'drizzle-orm'
 import { getDb } from '@/db'
-import { muse_entries, muse_change_log, muse_links, muse_pending } from '@/db/schema'
+import { muse_entries, muse_change_log, muse_links, muse_pending, muse_tags, muse_templates } from '@/db/schema'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,12 @@ export interface MuseEntry {
   date_filed: number
   last_updated: number
   created_at: number
+  privacy_tier: number        // 1 = AI can read, 2 = server only, never sent to AI
+  entry_type: string          // knowledge/adviser_email/linkedin_message/news/other
+  tags: string                // JSON array
+  linked_entries: string      // JSON array of muse_entries.id
+  source_scenario: string | null
+  times_accessed: number
 }
 
 export interface MuseChangeLog {
@@ -59,8 +65,15 @@ export interface MuseEntryFull extends MuseEntry {
 
 // ─── Entries ──────────────────────────────────────────────────────────────────
 
+// Note: the MUSE rebuild brief describes this as living in src/lib/muse.ts —
+// it has always lived here (src/lib/muse.ts has no DB access at all, by design;
+// this file is the pure-DB layer). Documenting the correction rather than
+// duplicating persistence logic across both files. privacy_tier is always
+// respected as given by the caller (default 1/open) — nothing here ever
+// upgrades or downgrades a caller's stated tier.
 export async function saveEntry(
-  entry: Omit<MuseEntry, 'id' | 'created_at'>,
+  entry: Omit<MuseEntry, 'id' | 'created_at' | 'privacy_tier' | 'entry_type' | 'tags' | 'linked_entries' | 'source_scenario' | 'times_accessed'> &
+    Partial<Pick<MuseEntry, 'privacy_tier' | 'entry_type' | 'tags' | 'linked_entries' | 'source_scenario' | 'times_accessed'>>,
 ): Promise<string> {
   const id = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
@@ -77,8 +90,67 @@ export async function saveEntry(
     date_filed: entry.date_filed ?? now,
     last_updated: entry.last_updated ?? now,
     created_at: now,
+    privacy_tier: entry.privacy_tier ?? 1,
+    entry_type: entry.entry_type ?? 'knowledge',
+    tags: entry.tags ?? '[]',
+    linked_entries: entry.linked_entries ?? '[]',
+    source_scenario: entry.source_scenario ?? null,
+    times_accessed: entry.times_accessed ?? 0,
   })
   return id
+}
+
+export async function updateEntryTags(id: string, tags: string[]): Promise<void> {
+  await getDb().update(muse_entries).set({ tags: JSON.stringify(tags) }).where(eq(muse_entries.id, id))
+  await bumpTagCounts(tags)
+}
+
+export async function updateEntryLinkedEntries(id: string, linkedIds: string[]): Promise<void> {
+  await getDb().update(muse_entries).set({ linked_entries: JSON.stringify(linkedIds) }).where(eq(muse_entries.id, id))
+}
+
+// Upserts each tag's row and increments its entry_count. Best-effort/non-fatal —
+// muse_tags is a denormalised browse index, not a source of truth (tags live on
+// the entry itself), so a failure here should never block a filing.
+export async function bumpTagCounts(tags: string[]): Promise<void> {
+  for (const tag of tags) {
+    try {
+      const [existing] = await getDb().select().from(muse_tags).where(eq(muse_tags.tag, tag)).limit(1)
+      if (existing) {
+        await getDb().update(muse_tags).set({ entry_count: existing.entry_count + 1 }).where(eq(muse_tags.id, existing.id))
+      } else {
+        await getDb().insert(muse_tags).values({ id: crypto.randomUUID(), tag, entry_count: 1 })
+      }
+    } catch (err) {
+      console.error('[muse] bumpTagCounts failed for tag', tag, err)
+    }
+  }
+}
+
+// Tier-1-only, scored by tag overlap — used by HERMES's "Related knowledge" panel
+// and anywhere else that needs a quick "what does MUSE know about this topic"
+// lookup without going through a full search. Tier 2 entries never surface here.
+export async function getEntriesByTags(tags: string[], limit = 3): Promise<MuseEntry[]> {
+  if (tags.length === 0) return []
+  const rows = await getDb()
+    .select()
+    .from(muse_entries)
+    .where(and(eq(muse_entries.status, 'active'), eq(muse_entries.privacy_tier, 1)))
+
+  const lowerTags = tags.map(t => t.toLowerCase())
+  const scored = (rows as MuseEntry[])
+    .map(entry => {
+      let entryTags: string[] = []
+      try { entryTags = JSON.parse(entry.tags || '[]') } catch { /* ignore */ }
+      const entryTagsLower = entryTags.map(t => t.toLowerCase())
+      const overlap = lowerTags.filter(t => entryTagsLower.includes(t)).length
+      return { entry, overlap }
+    })
+    .filter(e => e.overlap > 0)
+    .sort((a, b) => b.overlap - a.overlap)
+    .slice(0, limit)
+
+  return scored.map(s => s.entry)
 }
 
 export async function updateEntry(
@@ -389,4 +461,74 @@ export async function getRecentEntriesBySector(
     .where(and(eq(muse_entries.sector, sector), eq(muse_entries.status, 'active'), gte(muse_entries.created_at, since)))
     .orderBy(desc(muse_entries.created_at))
   return rows as MuseEntry[]
+}
+
+// ─── Templates ──────────────────────────────────────────────────────────────
+
+export interface MuseTemplate {
+  id: string
+  name: string
+  category: string
+  scenario: string | null
+  angle: string | null
+  subject: string | null
+  body: string
+  medium: string
+  times_used: number
+  last_used: number | null
+  created_at: number
+  updated_at: number
+}
+
+export interface MuseTemplateInput {
+  name: string
+  category: string
+  scenario?: string | null
+  angle?: string | null
+  subject?: string | null
+  body: string
+  medium?: string
+}
+
+export async function listTemplates(): Promise<MuseTemplate[]> {
+  const rows = await getDb().select().from(muse_templates).orderBy(desc(muse_templates.created_at))
+  return rows as MuseTemplate[]
+}
+
+export async function getTemplate(id: string): Promise<MuseTemplate | null> {
+  const rows = await getDb().select().from(muse_templates).where(eq(muse_templates.id, id)).limit(1)
+  return (rows[0] as MuseTemplate) ?? null
+}
+
+export async function createTemplate(input: MuseTemplateInput): Promise<string> {
+  const id = crypto.randomUUID()
+  await getDb().insert(muse_templates).values({
+    id,
+    name: input.name,
+    category: input.category,
+    scenario: input.scenario ?? null,
+    angle: input.angle ?? null,
+    subject: input.subject ?? null,
+    body: input.body,
+    medium: input.medium ?? 'email',
+  })
+  return id
+}
+
+export async function updateTemplate(id: string, patch: Partial<MuseTemplateInput>): Promise<MuseTemplate | null> {
+  const now = Math.floor(Date.now() / 1000)
+  await getDb().update(muse_templates).set({ ...patch, updated_at: now }).where(eq(muse_templates.id, id))
+  return getTemplate(id)
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  await getDb().delete(muse_templates).where(eq(muse_templates.id, id))
+}
+
+export async function incrementTemplateUsage(id: string): Promise<void> {
+  const existing = await getTemplate(id)
+  if (!existing) return
+  await getDb().update(muse_templates)
+    .set({ times_used: existing.times_used + 1, last_used: Math.floor(Date.now() / 1000) })
+    .where(eq(muse_templates.id, id))
 }

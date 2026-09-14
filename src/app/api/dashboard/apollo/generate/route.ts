@@ -4,8 +4,9 @@ import { askWith } from '@/lib/claude'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
 import { getCall, updateCall } from '../../../../../../tools/apollo'
-import { saveEntry, searchEntries } from '../../../../../../tools/muse'
+import { saveEntry, searchEntries, updateEntryTags, updateEntryLinkedEntries } from '../../../../../../tools/muse'
 import { findCase, createCase, updateCase, addCaseEvent, linkCaseToMuse } from '../../../../../../tools/muse-cases'
+import { autoTag, findRelatedEntries } from '@/lib/muse'
 import type { ApolloIntelligence } from '../analyse/route'
 
 const HAIKU = 'claude-haiku-4-5-20251001'
@@ -166,9 +167,12 @@ export async function POST(req: Request) {
         const now = Math.floor(Date.now() / 1000)
         const company = intelligence.company
 
+        // Both documents name the prospect and (for the client email) their contact
+        // details directly — privacy_tier: 2, never sent to any AI model from here on.
+        const briefTitle = `Advisor Brief — ${prospectName} ${dateStr}`
         const briefEntryId = await saveEntry({
           sector: 'Sales & Prospecting',
-          title: `Advisor Brief — ${prospectName} ${dateStr}`,
+          title: briefTitle,
           summary: `Advisor meeting brief prepared from call on ${dateStr}`,
           content: advisorBrief,
           brief_depth: 'detailed',
@@ -177,11 +181,14 @@ export async function POST(req: Request) {
           status: 'active',
           date_filed: now,
           last_updated: now,
+          privacy_tier: 2,
+          entry_type: 'adviser_email',
         })
 
+        const emailTitle = `Client Email — ${prospectName} ${dateStr}`
         const emailEntryId = await saveEntry({
           sector: 'Sales & Prospecting',
-          title: `Client Email — ${prospectName} ${dateStr}`,
+          title: emailTitle,
           summary: `Client confirmation email drafted from call on ${dateStr}`,
           content: clientEmail,
           brief_depth: 'simple',
@@ -190,7 +197,23 @@ export async function POST(req: Request) {
           status: 'active',
           date_filed: now,
           last_updated: now,
+          privacy_tier: 2,
+          entry_type: 'other',
         })
+
+        // Auto-tag from call content, then auto-link to relevant (Tier 1) training/
+        // product docs via tag overlap — supplements the keyword-search case-linking
+        // below, which links the case itself rather than these two documents.
+        const briefTags = autoTag(advisorBrief, briefTitle)
+        const emailTags = autoTag(clientEmail, emailTitle)
+        await updateEntryTags(briefEntryId, briefTags)
+        await updateEntryTags(emailEntryId, emailTags)
+        const [briefRelated, emailRelated] = await Promise.all([
+          findRelatedEntries(briefEntryId, briefTags, 5),
+          findRelatedEntries(emailEntryId, emailTags, 5),
+        ])
+        if (briefRelated.length > 0) await updateEntryLinkedEntries(briefEntryId, briefRelated)
+        if (emailRelated.length > 0) await updateEntryLinkedEntries(emailEntryId, emailRelated)
 
         // Find-or-create the case for this prospect (matched on anonymised name + company).
         const existing = await findCase(prospectName, company)

@@ -1,6 +1,6 @@
 import { eq, lte, and, gte, sql } from 'drizzle-orm'
 import { getDb } from '@/db'
-import { study_cards, study_reviews, quiz_sessions, mcq_attempts } from '@/db/schema'
+import { study_cards, study_reviews, quiz_sessions, mcq_attempts, muse_entries } from '@/db/schema'
 import { sm2, GRADE_QUALITY } from './sm2'
 
 export type Grade = keyof typeof GRADE_QUALITY
@@ -121,7 +121,30 @@ export async function getMaterialForModule(module: string, track: Track = 'quali
     .select({ front: study_cards.front, back: study_cards.back })
     .from(study_cards)
     .where(and(eq(study_cards.module, module), eq(study_cards.suspended, 0), eq(study_cards.track, track)))
-  return cards.map(c => `Q: ${c.front}\nA: ${c.back}`).join('\n\n')
+  const cardMaterial = cards.map(c => `Q: ${c.front}\nA: ${c.back}`).join('\n\n')
+
+  // MUSE — supplement flashcard material with any active, Tier 1 (AI-readable)
+  // knowledge entry whose title, tags, or content mentions this module. Tier 2
+  // (locked) entries are excluded at the query level — never even fetched here,
+  // let alone sent on to the MCQ-generation prompt.
+  const museRows = await getDb()
+    .select({ title: muse_entries.title, content: muse_entries.content, tags: muse_entries.tags })
+    .from(muse_entries)
+    .where(and(eq(muse_entries.status, 'active'), eq(muse_entries.privacy_tier, 1)))
+
+  const moduleLower = module.toLowerCase()
+  const relevant = museRows.filter(r => {
+    let tags: string[] = []
+    try { tags = JSON.parse(r.tags || '[]') } catch { /* ignore */ }
+    return (
+      r.title.toLowerCase().includes(moduleLower) ||
+      tags.some(t => t.toLowerCase().includes(moduleLower)) ||
+      r.content.toLowerCase().includes(moduleLower)
+    )
+  })
+  const museMaterial = relevant.map(r => `MUSE — ${r.title}:\n${r.content}`).join('\n\n')
+
+  return [cardMaterial, museMaterial].filter(Boolean).join('\n\n')
 }
 
 export async function getModulesWithCards(track: Track = 'qualification'): Promise<string[]> {

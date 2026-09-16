@@ -157,6 +157,21 @@ export const iris_posts = sqliteTable('iris_posts', {
   comments: integer('comments').notNull().default(0),
   reposts: integer('reposts').notNull().default(0),
   created_at: integer('created_at').notNull(),
+  user_edited: integer('user_edited').notNull().default(0),   // 1 if Archie edited the post
+  edit_delta: text('edit_delta'),                              // JSON: { original, edited }
+  edit_notes: text('edit_notes'),                              // auto-generated notes on what the edit reveals about voice
+  approved: integer('approved').notNull().default(0),          // 1 if Archie approved/posted it
+  post_type: text('post_type'),                                // sports_twist / financial_truth / expat_reality / news_angle
+  engagement_signal: text('engagement_signal'),                // e.g. 'good' if Archie marks it as having done well
+})
+
+export const iris_voice_learnings = sqliteTable('iris_voice_learnings', {
+  id: text('id').primaryKey(),
+  learning: text('learning').notNull(),          // what was learned e.g. "prefers shorter hooks"
+  example_before: text('example_before'),        // original version
+  example_after: text('example_after'),          // edited version
+  applied_count: integer('applied_count').notNull().default(0),   // how many posts this learning has been applied to
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
 })
 
 export const voice_preferences = sqliteTable('voice_preferences', {

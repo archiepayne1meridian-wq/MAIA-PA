@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
-import { getRecentPosts, getVoicePreferences, updatePostStatus } from '../../../../../tools/iris'
+import { getRecentPosts, getVoicePreferences, updatePostStatus, getApprovedPosts } from '../../../../../tools/iris'
 
 export async function GET() {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const [posts, preferences] = await Promise.all([
+  const [posts, preferences, approvedPosts] = await Promise.all([
     getRecentPosts(7),
     getVoicePreferences(),
+    getApprovedPosts(7),
   ])
   const draft = posts.find(p => p.status === 'draft') ?? null
-  return NextResponse.json({ posts, draft, preferences })
+  return NextResponse.json({ posts, draft, preferences, approvedPosts })
 }
 
 export async function POST(req: Request) {

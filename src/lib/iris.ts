@@ -1,9 +1,12 @@
 // IRIS draft generation.
 // formatSlackMessage is live — used by all cron/handler paths.
 
+import * as fs from 'fs'
+import * as path from 'path'
 import OpenAI from 'openai'
 import { askWith, askWithWebSearch, type WebSearchTrace } from './claude'
 import type { VoicePref } from '../../tools/iris'
+import { getTopVoiceLearnings } from '../../tools/iris'
 
 let _openai: OpenAI | null = null
 function getOpenAIClient(): OpenAI {
@@ -29,9 +32,55 @@ function buildSvgFallback(prompt: string): string {
 
 const HAIKU = 'claude-haiku-4-5-20251001'
 
+export type PostType = 'sports_twist' | 'financial_truth' | 'expat_reality' | 'news_angle'
+
+export function postTypeToPillar(postType: PostType): 1 | 2 | 3 {
+  switch (postType) {
+    case 'sports_twist': return 3
+    case 'expat_reality': return 2
+    case 'financial_truth':
+    case 'news_angle':
+    default:
+      return 1
+  }
+}
+
+export function pillarToDefaultPostType(pillar: 1 | 2 | 3): PostType {
+  if (pillar === 3) return 'sports_twist'
+  if (pillar === 2) return 'expat_reality'
+  return 'financial_truth'
+}
+
+// ─── Voice profile + learning loop ───────────────────────────────────────────
+// No caching — context/iris-voice.md is small and edited rarely; matches the
+// no-cache convention cassandra-handler.ts's loadConfig() already uses for its
+// own context/*.md file.
+
+export async function readVoiceProfile(): Promise<string> {
+  const filePath = path.join(process.cwd(), 'context', 'iris-voice.md')
+  try {
+    return await fs.promises.readFile(filePath, 'utf-8')
+  } catch (err) {
+    console.error('[iris] readVoiceProfile failed:', err)
+    return ''
+  }
+}
+
+// Formats the top-N learnings (by applied_count) as the bullet block the
+// system prompt reads directly — also reused by the dashboard's voice-profile
+// panel (via the /api/dashboard/iris/voice route), so the two never drift.
+export async function getVoiceLearnings(limit = 10): Promise<string> {
+  const learnings = await getTopVoiceLearnings(limit)
+  if (learnings.length === 0) return 'No learnings yet — this is early days, nothing has been edited yet.'
+  return learnings
+    .map(l => `- ${l.learning} (applied to ${l.applied_count} post${l.applied_count === 1 ? '' : 's'})`)
+    .join('\n')
+}
+
 export interface IrisDraft {
   skip?: false
   pillar: 1 | 2 | 3
+  postType: PostType
   topic: string
   copy: string
   imagePrompt: string
@@ -52,8 +101,31 @@ export interface IrisSkip {
 // (sports & lifestyle) is opportunistic instead: it has its own skip clause below
 // that fires when the day's search doesn't turn up a story with a natural finance
 // angle, rather than being tested against the cross-border-relevance question.
-function buildIrisSystem(pillar: 1 | 2 | 3): string {
+async function buildIrisSystem(pillar: 1 | 2 | 3, postType: PostType, topic: string, todayAngle: string | null): Promise<string> {
   const year = new Date().getFullYear()
+  const [voiceProfile, voiceLearnings] = await Promise.all([readVoiceProfile(), getVoiceLearnings(10)])
+
+  const voiceBlock = `ARCHIE'S VOICE — read this carefully and write exactly like this:
+${voiceProfile}
+
+VOICE LEARNINGS FROM PREVIOUS POSTS:
+${voiceLearnings}
+
+POST TYPE: ${postType}
+TOPIC/ANGLE: ${topic}
+${todayAngle ? `TODAY'S NEWS ANGLE: ${todayAngle}\n` : ''}
+INSTRUCTIONS:
+1. Write in Archie's voice — direct, punchy, conversational, never corporate
+2. Follow the exact format: 3-line hook → bullet points or short lines → one question
+3. The hook MUST make someone stop scrolling. Be specific, be bold.
+4. Both sides of the argument where relevant
+5. End with ONE question that makes people want to comment
+6. If this is a sports twist post — lead with sport, financial angle emerges naturally, never forced
+7. If this is a news angle — reference the real event, connect to expat finance, end with opinion question
+8. NEVER give financial advice
+9. NEVER use corporate language
+10. Target audience: internationally mobile professionals in Switzerland with assets abroad
+`
 
   const relevanceFilterBlock = pillar === 3 ? '' : `
 RELEVANCE FILTER — apply before drafting every post:
@@ -83,7 +155,9 @@ specific reason — and stop. Do not search, do not draft, do not include any ot
 {"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}
 If the topic fails the relevance filter, output ONLY: {"skip": true, "reason": "..."}`
 
-  return `You are IRIS, MAIA's LinkedIn content engine for Archie Payne — a 20-something British expat in Malta, training as a financial adviser.
+  return `You are generating a LinkedIn post for Archie Payne, a BDA at deVere and Partners Switzerland.
+
+${voiceBlock}
 ${relevanceFilterBlock}
 Before writing, search the web for the most recent news on the given topic (last 7 days). Build the search query from the topic — expand abbreviations, add context — then always append ${year} for recency.
 Examples:
@@ -193,7 +267,10 @@ export async function generateDraft(
   topic: string,
   cassandraContext: string | null,
   voicePrefs: VoicePref[],
+  postType?: PostType,
 ): Promise<IrisDraft | IrisSkip> {
+  const resolvedPostType = postType ?? pillarToDefaultPostType(pillar)
+
   const prefsBlock = voicePrefs.length > 0
     ? '\n\nVoice preferences learned from previous edits:\n' +
       voicePrefs.map(p => `- ${p.preference_type}: ${p.value}`).join('\n')
@@ -211,7 +288,8 @@ export async function generateDraft(
 
   const prompt = `Write a LinkedIn post for Archie.\n\nPillar: ${pillar} — ${pillarGuide[pillar]}\nTopic: ${topic}\nSlot: ${slot} (${slot === 'morning' ? '8–9am' : '4–6pm'} CET)${contextBlock}${prefsBlock}\n\nSearch the web for this topic first, per your instructions, then output ONLY valid JSON, no markdown.`
 
-  const { text: raw, search } = await askWithWebSearch(buildIrisSystem(pillar), prompt, 1536, HAIKU)
+  const system = await buildIrisSystem(pillar, resolvedPostType, topic, cassandraContext)
+  const { text: raw, search } = await askWithWebSearch(system, prompt, 1536, HAIKU)
   const cleaned = extractJson(raw)
 
   let parsed: unknown
@@ -240,6 +318,7 @@ export async function generateDraft(
 
   return {
     pillar,
+    postType: resolvedPostType,
     topic: resolvedTopic,
     copy: (obj.copy as string).trim(),
     imagePrompt: typeof obj.imagePrompt === 'string' ? obj.imagePrompt : `Professional LinkedIn image for: ${topic}`,
@@ -296,6 +375,95 @@ Examples: {"type":"tone","value":"more casual, less formal"}, {"type":"length","
         typeof (item as Record<string, unknown>).value === 'string',
     )
   } catch {
+    return []
+  }
+}
+
+// ─── Edit analysis — the voice learning loop ─────────────────────────────────
+// Called by POST /api/dashboard/iris/edit whenever Archie hand-edits a draft.
+// Each learning gets saved to iris_voice_learnings and folded into every
+// subsequent system prompt via getVoiceLearnings() above.
+
+export interface EditLearning {
+  learning: string
+  before: string
+  after: string
+}
+
+export async function analyseEdit(originalContent: string, editedContent: string): Promise<EditLearning[]> {
+  const system = `You are analysing how Archie edits his LinkedIn drafts to learn his real writing voice.
+Respond with valid JSON only. No prose, no markdown fences.`
+
+  const prompt = `Compare these two versions of a LinkedIn post:
+
+ORIGINAL:
+${originalContent}
+
+EDITED:
+${editedContent}
+
+Identify what Archie changed and what each change reveals about his preferred writing style.
+Be specific. Examples:
+- "Shortened the hook from 3 lines to 1 — prefers more punch"
+- "Removed bullet points, made it flow — prefers continuous lines over lists"
+- "Changed 'financial planning' to 'sorting your money out' — prefers casual language"
+- "Added Chelsea reference — wants more personality and sport"
+- "Removed the word 'leverage' — avoids corporate jargon"
+
+Return JSON only:
+{
+  "learnings": [
+    { "learning": string, "before": string, "after": string }
+  ]
+}
+Return { "learnings": [] } if the edit is trivial (typo fixes, punctuation only) with nothing to learn.`
+
+  try {
+    const raw = await askWith(system, prompt, 800, HAIKU)
+    const cleaned = raw.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+    const parsed = JSON.parse(cleaned) as { learnings?: unknown[] }
+    if (!Array.isArray(parsed.learnings)) return []
+    return parsed.learnings.filter(
+      (item): item is EditLearning =>
+        typeof item === 'object' && item !== null &&
+        typeof (item as Record<string, unknown>).learning === 'string' &&
+        typeof (item as Record<string, unknown>).before === 'string' &&
+        typeof (item as Record<string, unknown>).after === 'string',
+    )
+  } catch (err) {
+    console.error('[iris] analyseEdit failed:', err)
+    return []
+  }
+}
+
+// "Use as style reference" — extracts learnings straight from an approved post
+// that worked, rather than from an edit diff. No "before" version exists, so
+// example_before is left null; example_after is the post itself.
+export async function extractStyleReference(copy: string): Promise<Array<{ learning: string; after: string }>> {
+  const system = `You are analysing a LinkedIn post Archie has confirmed represents his voice well.
+Respond with valid JSON only. No prose, no markdown fences.`
+
+  const prompt = `This post is a good example of Archie's voice — identify 1-3 concrete, reusable
+things about its style worth applying to future posts (hook structure, sentence length,
+specific phrasing choices, use of sport/humour, question style). Be specific, not generic.
+
+POST:
+${copy}
+
+Return JSON only:
+{ "learnings": [ { "learning": string } ] }`
+
+  try {
+    const raw = await askWith(system, prompt, 500, HAIKU)
+    const cleaned = raw.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+    const parsed = JSON.parse(cleaned) as { learnings?: unknown[] }
+    if (!Array.isArray(parsed.learnings)) return []
+    return parsed.learnings
+      .filter((item): item is { learning: string } =>
+        typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).learning === 'string')
+      .map(item => ({ learning: item.learning, after: copy }))
+  } catch (err) {
+    console.error('[iris] extractStyleReference failed:', err)
     return []
   }
 }

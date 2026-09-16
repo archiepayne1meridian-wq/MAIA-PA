@@ -2,7 +2,7 @@
 
 import { desc, gte, eq, and } from 'drizzle-orm'
 import { getDb } from '@/db'
-import { iris_posts, voice_preferences, research_briefs } from '@/db/schema'
+import { iris_posts, voice_preferences, research_briefs, iris_voice_learnings } from '@/db/schema'
 
 export interface IrisPost {
   id: string
@@ -16,6 +16,16 @@ export interface IrisPost {
   status: string
   slack_ts: string | null
   created_at: number
+  impressions: number
+  likes: number
+  comments: number
+  reposts: number
+  user_edited: number
+  edit_delta: string | null
+  edit_notes: string | null
+  approved: number
+  post_type: string | null
+  engagement_signal: string | null
 }
 
 export interface VoicePref {
@@ -59,9 +69,10 @@ export async function getLastThreePillars(): Promise<number[]> {
   return rows.map(r => r.pillar)
 }
 
-export async function savePost(
-  post: Omit<IrisPost, 'id' | 'created_at'>,
-): Promise<string> {
+type SavePostInput = Pick<IrisPost, 'slot' | 'pillar' | 'topic' | 'copy' | 'status'> &
+  Partial<Pick<IrisPost, 'image_prompt' | 'image_url' | 'format' | 'slack_ts' | 'post_type'>>
+
+export async function savePost(post: SavePostInput): Promise<string> {
   const id = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
   await getDb().insert(iris_posts).values({
@@ -75,9 +86,101 @@ export async function savePost(
     format: post.format ?? null,
     status: post.status,
     slack_ts: post.slack_ts ?? null,
+    post_type: post.post_type ?? null,
     created_at: now,
   })
   return id
+}
+
+// ─── Voice learning loop ────────────────────────────────────────────────────
+
+export interface VoiceLearning {
+  id: string
+  learning: string
+  example_before: string | null
+  example_after: string | null
+  applied_count: number
+  created_at: number
+}
+
+export async function getTopVoiceLearnings(limit = 10): Promise<VoiceLearning[]> {
+  const rows = await getDb()
+    .select()
+    .from(iris_voice_learnings)
+    .orderBy(desc(iris_voice_learnings.applied_count))
+    .limit(limit)
+  return rows as VoiceLearning[]
+}
+
+export async function saveVoiceLearning(
+  learning: string,
+  exampleBefore: string | null,
+  exampleAfter: string | null,
+): Promise<string> {
+  const id = crypto.randomUUID()
+  await getDb().insert(iris_voice_learnings).values({
+    id,
+    learning,
+    example_before: exampleBefore,
+    example_after: exampleAfter,
+  })
+  return id
+}
+
+// Increments applied_count on the learnings a draft was generated with. There's
+// no column tracking exactly which learning IDs fed a given generation, so this
+// takes the current top-N (the same query generateDraft() itself reads) as the
+// practical proxy — correct in the normal flow where approval follows
+// generation within the same session, before any new learnings are added.
+export async function incrementLearningsApplied(learningIds: string[]): Promise<void> {
+  for (const id of learningIds) {
+    const [existing] = await getDb().select().from(iris_voice_learnings).where(eq(iris_voice_learnings.id, id)).limit(1)
+    if (existing) {
+      await getDb().update(iris_voice_learnings).set({ applied_count: existing.applied_count + 1 }).where(eq(iris_voice_learnings.id, id))
+    }
+  }
+}
+
+export async function resetVoiceLearnings(): Promise<void> {
+  await getDb().delete(iris_voice_learnings)
+}
+
+// ─── Edit tracking, approval, engagement ────────────────────────────────────
+
+export async function saveEditedPost(
+  id: string,
+  editedContent: string,
+  originalContent: string,
+  editNotes: string,
+): Promise<void> {
+  await getDb().update(iris_posts).set({
+    copy: editedContent,
+    user_edited: 1,
+    edit_delta: JSON.stringify({ original: originalContent, edited: editedContent }),
+    edit_notes: editNotes,
+  }).where(eq(iris_posts.id, id))
+}
+
+export async function approvePost(id: string): Promise<void> {
+  await getDb().update(iris_posts).set({ approved: 1, status: 'approved' }).where(eq(iris_posts.id, id))
+}
+
+export async function markPostPosted(id: string): Promise<void> {
+  await getDb().update(iris_posts).set({ status: 'posted' }).where(eq(iris_posts.id, id))
+}
+
+export async function setEngagementSignal(id: string, signal: string | null): Promise<void> {
+  await getDb().update(iris_posts).set({ engagement_signal: signal }).where(eq(iris_posts.id, id))
+}
+
+export async function getApprovedPosts(limit = 7): Promise<IrisPost[]> {
+  const rows = await getDb()
+    .select()
+    .from(iris_posts)
+    .where(eq(iris_posts.approved, 1))
+    .orderBy(desc(iris_posts.created_at))
+    .limit(limit)
+  return rows as IrisPost[]
 }
 
 export async function updatePostStatus(id: string, status: string): Promise<void> {

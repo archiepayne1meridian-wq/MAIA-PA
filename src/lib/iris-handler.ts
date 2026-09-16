@@ -10,6 +10,7 @@ import {
   extractVoicePreferences,
   type IrisDraft,
   type IrisSkip,
+  type PostType,
 } from './iris'
 import {
   getRecentTopics,
@@ -96,7 +97,7 @@ const PILLAR_1_SIGNALS = [
   'uk property abroad', 'property while abroad',
 ]
 
-const PILLAR_1_TOPICS = [
+export const PILLAR_1_TOPICS = [
   'IHT changes — especially pension death benefits from April 2027',
   'Non-dom rule changes and what they mean for long-term expats',
   'Tax residency rules — when does it change, what triggers it, what are the consequences',
@@ -115,7 +116,7 @@ const PILLAR_1_TOPICS = [
   'The cash pile problem — expats holding too much in cash across multiple currencies',
 ]
 
-const PILLAR_2_TOPICS = [
+export const PILLAR_2_TOPICS = [
   'Moving to Switzerland — financial things nobody tells you',
   'Managing money across multiple currencies',
   '"I\'ve got a pension back home I haven\'t looked at in years" — who else?',
@@ -136,6 +137,26 @@ const PILLAR_2_TOPICS = [
 const PILLAR_3_SEARCH_TOPIC = (dateStr: string): string =>
   `sports news finance money lifestyle today ${dateStr} golf football F1 tennis`
 
+// Evergreen banks for the dashboard's manual "post type" generate flow (voice
+// profile's own topic lists — context/iris-voice.md). Unlike the opportunistic
+// Pillar 3 live-search above (which can legitimately skip if nothing's on),
+// a manually-clicked "Generate" button should reliably produce something —
+// these don't depend on a live search turning up a story today.
+export const SPORTS_TWIST_TOPICS = [
+  'Padel: price in Switzerland vs Spain/Portugal → retirement location decisions',
+  'Golf: course fees across Europe → cost of living in retirement',
+  'F1: team valuations, driver salaries → alternative assets, wealth concentration',
+  'Football: transfer fees, player wages, remittances → cross-border money, tax',
+]
+
+export const FINANCIAL_TRUTH_TOPICS = [
+  'Time in market vs timing the market',
+  'Cost of doing nothing (inflation on cash)',
+  'What an accountant does vs what a financial adviser does',
+  'Tax you can avoid vs tax you have to pay',
+  'Why most expats are underadvised',
+]
+
 // ─── Topic selection (deterministic) ─────────────────────────────────────────
 
 export interface SelectedTopic {
@@ -150,6 +171,15 @@ export interface SelectedTopic {
 // posting" in one call; there's no cheaper way to pre-check it).
 export interface PickedTopic extends SelectedTopic {
   pregeneratedDraft?: IrisDraft
+}
+
+// A live CASSANDRA signal driving a Pillar 1 pick is a real news event —
+// 'news_angle'. Pillar 1 from the generic evergreen topic bank (no signal)
+// is 'financial_truth' instead. Pillar 2/3 map straight across.
+export function selectPostType(selected: SelectedTopic): PostType {
+  if (selected.pillar === 3) return 'sports_twist'
+  if (selected.pillar === 2) return 'expat_reality'
+  return selected.cassandraSignal ? 'news_angle' : 'financial_truth'
 }
 
 export async function selectTopic(
@@ -262,7 +292,7 @@ export async function buildScheduledDraft(
     const skipped: { topic: string; reason: string }[] = []
     const excludedTopics = [...recentTopics]
     let result: IrisDraft | IrisSkip = selected.pregeneratedDraft
-      ?? await generateDraft(slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs)
+      ?? await generateDraft(slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs, selectPostType(selected))
 
     while (result.skip && skipped.length < MAX_ATTEMPTS - 1) {
       skipped.push({ topic: selected.topic, reason: result.reason })
@@ -274,7 +304,7 @@ export async function buildScheduledDraft(
       // Pillar 3 already had its one shot this run — don't re-search on retries.
       selected = await selectTopic(brief, excludedTopics, lastThreePillars, slot, voicePrefs, false)
       result = selected.pregeneratedDraft
-        ?? await generateDraft(slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs)
+        ?? await generateDraft(slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs, selectPostType(selected))
     }
 
     if (result.skip) {
@@ -302,6 +332,7 @@ export async function buildScheduledDraft(
       format: draft.format,
       status: 'draft',
       slack_ts: null,
+      post_type: draft.postType,
     })
 
     const slackText = formatSlackMessage(slot, draft.topic, draft.format, draft.postTime, draft.copy)

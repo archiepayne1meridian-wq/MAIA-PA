@@ -2794,3 +2794,98 @@
 }
 .irisEngagementToggle:hover { border-color: var(--idle); color: var(--idle); }
 .irisEngagementToggleActive { border-color: var(--idle); color: var(--idle); background: rgba(224,179,65,0.08); }
+
+/* ═══════════ ORACLE — Pension Estimator ═══════════ */
+
+.oracleScroll { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 24px; }
+
+.oracleInputCard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+.oracleInputTitle { font-family: var(--display); font-weight: 600; font-size: 18px; }
+.oracleInputSub { font-size: 13px; color: var(--text-dim); margin-top: -6px; }
+.oracleTextarea {
+  width: 100%; min-height: 200px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--r); color: var(--text);
+  padding: 14px; resize: vertical;
+}
+.oracleTextarea:focus { border-color: var(--accent-deep); outline: none; }
+.oracleTextarea::placeholder { color: var(--text-dim); }
+.oracleAnalyseBtn {
+  width: 100%; padding: 12px; border-radius: var(--r); border: none; background: var(--accent); color: #05070d;
+  font-family: var(--display); font-weight: 600; font-size: 13px; cursor: pointer; transition: 0.12s;
+}
+.oracleAnalyseBtn:hover:not(:disabled) { opacity: 0.88; }
+.oracleAnalyseBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.oracleResultsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.oraclePanel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px; display: flex; flex-direction: column; gap: 8px; }
+.oracleOverviewName { font-family: var(--display); font-weight: 600; font-size: 15px; margin: 2px 0 6px; }
+.oracleRow { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.oracleRow span:first-child { color: var(--text-dim); }
+.oracleRow span:last-child { color: var(--text); text-align: right; }
+
+.oraclePensionBlock { padding-top: 8px; border-top: 1px solid var(--hairline); }
+.oraclePensionBlock:first-of-type { border-top: none; padding-top: 0; }
+.oraclePensionBlockLabel { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.oraclePensionRange { font-family: var(--mono); font-size: 14px; color: var(--text); margin: 4px 0 2px; }
+.oraclePensionMeta { font-size: 11px; color: var(--text-dim); }
+.oracleDbFlag { font-size: 11px; color: var(--alert); margin: 2px 0; }
+
+.oracleFlagList { display: flex; flex-direction: column; gap: 6px; }
+.oracleFlagChip {
+  font-family: var(--mono); font-size: 10.5px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  color: var(--text); list-style: none;
+}
+.oracleFlagChip summary { cursor: pointer; list-style: none; }
+.oracleFlagChip summary::-webkit-details-marker { display: none; }
+.oracleFlagDetail { font-size: 10.5px; color: inherit; opacity: 0.85; margin-top: 6px; line-height: 1.5; }
+.oracleFlagHigh { background: var(--alert); color: #1a0505; }
+.oracleFlagMedium { background: var(--idle); color: #1a1305; }
+.oracleFlagLow { background: var(--raised); color: var(--text-dim); }
+
+.oracleScenarioBtn {
+  font-family: var(--mono); font-size: 11px; padding: 8px 12px; border-radius: var(--r);
+  border: 1px solid var(--accent); background: rgba(138,169,240,0.08); color: var(--accent); cursor: pointer;
+  text-align: left; margin-top: 4px;
+}
+.oracleScenarioBtn:hover { background: rgba(138,169,240,0.14); }
+
+.oracleOpenerBox {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  font-family: var(--mono); font-size: 11px; color: var(--text-mid); line-height: 1.6;
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; margin-top: 4px;
+}
+.oracleCopyBtn { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 3px 8px; font-family: inherit; font-size: 10px; cursor: pointer; }
+.oracleCopyBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
+
+.oracleAngleList { margin: 4px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px; }
+.oracleAngleList li { font-size: 11.5px; color: var(--text-mid); line-height: 1.5; }
+
+.oracleWorkHistorySection { display: flex; flex-direction: column; gap: 10px; }
+.oracleTable { border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+.oracleTableHead {
+  display: grid; grid-template-columns: 1.2fr 1.2fr 1fr 0.6fr 1fr 1.4fr; gap: 8px; padding: 8px 12px;
+  background: var(--raised); font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim);
+}
+.oracleTableRowWrap { border-top: 1px solid var(--hairline); }
+.oracleTableRow {
+  display: grid; grid-template-columns: 1.2fr 1.2fr 1fr 0.6fr 1fr 1.4fr; gap: 8px; padding: 10px 12px; width: 100%;
+  background: none; border: none; text-align: left; cursor: pointer; font-size: 11.5px; color: var(--text);
+}
+.oracleTableRow:hover { background: var(--raised); }
+.oracleTableRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oracleTableExpand { padding: 4px 12px 12px 12px; font-size: 11px; color: var(--text-dim); display: flex; flex-direction: column; gap: 4px; background: var(--raised); }
+.oracleTableExpand strong { color: var(--text-mid); font-weight: 500; }
+
+.oracleFiledMsg { font-family: var(--mono); font-size: 10px; color: var(--online); }
+.oracleDisclaimer { font-size: 9px; color: var(--text-dim); font-style: italic; }
+.oracleEmptyNote { font-size: 11.5px; color: var(--text-dim); }
+
+.oracleRecentSection { display: flex; flex-direction: column; gap: 10px; }
+.oracleRecentGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.oracleRecentCard {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 12px; cursor: pointer; transition: 0.12s;
+}
+.oracleRecentCard:hover { border-color: var(--accent-deep); }
+.oracleRecentName { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--text); }
+.oracleRecentMeta { font-size: 10.5px; color: var(--text-dim); }

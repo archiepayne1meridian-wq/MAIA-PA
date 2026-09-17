@@ -194,7 +194,13 @@ export default function HermesWorkspace() {
     setScenarioOrder(json.scenarios.map(sc => sc.id))
     setTodayAngle(json.todayAngle)
     setMatchedScenarioId(json.matchedScenarioId)
-    setCurrentScenarioId(prev => (prev && map.has(prev)) ? prev : (json.scenarios[0]?.id ?? null))
+    // ORACLE deep-links here with ?scenario=<id> — honoured only on first load
+    // (prev === null), same read-once approach as MUSE's ?entry= deep link.
+    const deepLinkScenario = new URLSearchParams(window.location.search).get('scenario')
+    setCurrentScenarioId(prev => {
+      if (prev === null && deepLinkScenario && map.has(deepLinkScenario)) return deepLinkScenario
+      return (prev && map.has(prev)) ? prev : (json.scenarios[0]?.id ?? null)
+    })
     setActiveObjIdx(0)
     setSaveState('saved')
     setSavedAt(new Date())

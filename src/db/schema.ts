@@ -385,6 +385,18 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   created_at: integer('created_at').notNull(),
 })
 
+export const oracle_analyses = sqliteTable('oracle_analyses', {
+  id: text('id').primaryKey(),
+  prospect_name: text('prospect_name'),
+  current_employer: text('current_employer'),
+  current_role: text('current_role'),
+  current_location: text('current_location'),
+  raw_linkedin_text: text('raw_linkedin_text'),   // Tier 2 — never sent to AI after the initial analysis call
+  analysis_json: text('analysis_json').notNull(), // full OracleAnalysis JSON
+  muse_case_id: text('muse_case_id'),             // muse_cases.id this analysis was filed against
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
 export const hermes_script = sqliteTable('hermes_script', {
   id: text('id').primaryKey().default('singleton'),
   personas_json: text('personas_json'),

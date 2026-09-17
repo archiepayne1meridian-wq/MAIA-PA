@@ -2,7 +2,7 @@ import { getDb } from '@/db'
 import {
   activity, study_cards, study_reviews, research_briefs,
   reflections, diana_sessions,
-  kpi_logs, kpi_weekly, approvals, iris_posts, apollo_calls,
+  kpi_logs, kpi_weekly, approvals, iris_posts, apollo_calls, oracle_analyses,
 } from '@/db/schema'
 import { desc, eq, gte, lte, and, count } from 'drizzle-orm'
 import type { Agent, Task } from './types'
@@ -215,6 +215,10 @@ export async function buildDashboardData(): Promise<DashboardData> {
   const apolloTotal = apolloResult?.n ?? 0
   const apolloFeed = await agentFeed(db, 'APOLLO')
 
+  // ── ORACLE ───────────────────────────────────────────────────────────────────
+  const [oracleResult] = await db.select({ n: count() }).from(oracle_analyses)
+  const oracleTotal = oracleResult?.n ?? 0
+
   // ── Pending approvals ─────────────────────────────────────────────────────────
   const [pendingResult] = await db
     .select({ n: count() }).from(approvals).where(eq(approvals.status, 'pending'))
@@ -407,6 +411,21 @@ export async function buildDashboardData(): Promise<DashboardData> {
         ['Coming soon', '5', 'Portfolio Bond, Ardan, Liberty VB, AXA Pillar 3, SIPP vs QROPS'],
         ['Calculations', 'Client-side', 'no Claude calls, pure maths'],
         ['Mode', 'Illustrative', 'not a quote or recommendation'],
+      ],
+      feed: [['—', 'Say nothing — open from the nav rail']],
+    },
+    {
+      id: 'ORACLE', role: 'Pension Estimator', badge: 'OR',
+      status: oracleTotal > 0 ? 'online' : 'idle',
+      stat: oracleTotal > 0 ? `${oracleTotal} analysis${oracleTotal !== 1 ? 'es' : ''} run` : 'Ready',
+      statusLabel: 'Paste a LinkedIn work history to estimate pension holdings',
+      prog: 0,
+      progAlert: false,
+      tiles: [
+        ['Analyses run', String(oracleTotal), 'all time'],
+        ['Model', 'Claude Sonnet', 'single structured call'],
+        ['Filing', 'MUSE Tier 2', 'locked prospect case'],
+        ['Mode', 'Internal only', 'never shown to prospect'],
       ],
       feed: [['—', 'Say nothing — open from the nav rail']],
     },

@@ -211,6 +211,13 @@
       "when": 1789628571245,
       "tag": "0029_married_odin",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1789630599976,
+      "tag": "0030_legal_proteus",
+      "breakpoints": true
     }
   ]
 }

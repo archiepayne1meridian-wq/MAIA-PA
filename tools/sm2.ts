@@ -1,3 +1,7 @@
+import { getDb } from '@/db'
+import { study_cards } from '@/db/schema'
+import { eq, and } from 'drizzle-orm'
+
 export interface Card {
   ef: number
   intervalDays: number
@@ -39,4 +43,56 @@ export function sm2(card: Card, quality: number): ReviewResult {
   const dueAt = Math.floor(Date.now() / 1000) + intervalDays * 86400
 
   return { ef, intervalDays, repetitions, dueAt }
+}
+
+// ─── Weak-point tracking ────────────────────────────────────────────────────
+// Ranks modules by average ease factor (lowest EF = weakest — cards that keep
+// getting "again"/"hard" pull the module average down). Drives the dashboard's
+// "Your weak areas this week" panel and the APOLLO → flagWeakArea() connection.
+
+export async function getWeakModules(
+  track: 'qualification' | 'products',
+  exam?: string
+): Promise<{
+  moduleId: string
+  moduleName: string
+  avgEaseFactor: number
+  dueCount: number
+  weakestCards: { front: string; easeFactor: number }[]
+}[]> {
+  const db = getDb()
+  const now = Math.floor(Date.now() / 1000)
+  const conditions = [eq(study_cards.track, track), eq(study_cards.suspended, 0)]
+  if (exam) conditions.push(eq(study_cards.exam, exam))
+
+  const cards = await db
+    .select({ module: study_cards.module, front: study_cards.front, ef: study_cards.ef, due_at: study_cards.due_at })
+    .from(study_cards)
+    .where(and(...conditions))
+
+  const byModule = new Map<string, { front: string; ef: number; due_at: number }[]>()
+  for (const c of cards) {
+    const arr = byModule.get(c.module) ?? []
+    arr.push(c)
+    byModule.set(c.module, arr)
+  }
+
+  const result = Array.from(byModule.entries()).map(([moduleName, moduleCards]) => {
+    const avgEaseFactor = moduleCards.reduce((sum, c) => sum + c.ef, 0) / moduleCards.length
+    const dueCount = moduleCards.filter(c => c.due_at <= now).length
+    const weakestCards = [...moduleCards]
+      .sort((a, b) => a.ef - b.ef)
+      .slice(0, 3)
+      .map(c => ({ front: c.front, easeFactor: Math.round(c.ef * 100) / 100 }))
+
+    return {
+      moduleId: moduleName,
+      moduleName,
+      avgEaseFactor: Math.round(avgEaseFactor * 100) / 100,
+      dueCount,
+      weakestCards,
+    }
+  })
+
+  return result.sort((a, b) => a.avgEaseFactor - b.avgEaseFactor)
 }

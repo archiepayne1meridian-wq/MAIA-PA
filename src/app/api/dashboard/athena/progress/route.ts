@@ -3,15 +3,19 @@ import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { getDb } from '@/db'
 import { quiz_sessions } from '@/db/schema'
 import { desc, isNotNull, and, eq } from 'drizzle-orm'
-import type { Track } from '../../../../../../tools/study-db'
+import type { Track, Exam } from '../../../../../../tools/study-db'
 
 export async function GET(req: Request) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const track = (new URL(req.url).searchParams.get('track') as Track | null) ?? 'qualification'
+  const url = new URL(req.url)
+  const track = (url.searchParams.get('track') as Track | null) ?? 'qualification'
+  const exam = (url.searchParams.get('exam') as Exam | null) ?? undefined
   const db = getDb()
+  const conditions = [isNotNull(quiz_sessions.completed_at), eq(quiz_sessions.track, track)]
+  if (exam) conditions.push(eq(quiz_sessions.exam, exam))
   const rows = await db
     .select({
       id: quiz_sessions.id,
@@ -21,7 +25,7 @@ export async function GET(req: Request) {
       completed_at: quiz_sessions.completed_at,
     })
     .from(quiz_sessions)
-    .where(and(isNotNull(quiz_sessions.completed_at), eq(quiz_sessions.track, track)))
+    .where(and(...conditions))
     .orderBy(desc(quiz_sessions.completed_at))
     .limit(20)
 

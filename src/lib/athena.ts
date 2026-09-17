@@ -1,6 +1,9 @@
 import { askWith } from './claude'
 import type { MCQQuestion } from '../../tools/study-db'
 import type { ProgressStats, WeaknessEntry } from '../../tools/study-db'
+import { getDb } from '@/db'
+import { study_cards } from '@/db/schema'
+import { eq, and } from 'drizzle-orm'
 
 const CARD_SYSTEM = `You are ATHENA, a CISI study coach. Your job is to extract atomic flashcards from study material.
 
@@ -100,6 +103,42 @@ export async function generateMCQs(
     }))
 
   return { questions, skipped: obj.skipped ?? [] }
+}
+
+// ─── APOLLO connection ───────────────────────────────────────────────────────
+// Called when APOLLO flags a product-knowledge gap surfaced on a call — pulls
+// due-date forward for matching cards so the next study session surfaces them.
+
+export async function flagWeakArea(
+  topic: string,
+  exam: 'R01' | 'R06' | 'products'
+): Promise<{ modulesFlagged: string[]; cardsAffected: number }> {
+  const db = getDb()
+  const track = exam === 'products' ? 'products' : 'qualification'
+  const conditions = [eq(study_cards.track, track), eq(study_cards.suspended, 0)]
+  if (exam !== 'products') conditions.push(eq(study_cards.exam, exam))
+
+  const cards = await db
+    .select({ id: study_cards.id, module: study_cards.module, front: study_cards.front, back: study_cards.back })
+    .from(study_cards)
+    .where(and(...conditions))
+
+  const topicLower = topic.toLowerCase()
+  const matching = cards.filter(c =>
+    c.module.toLowerCase().includes(topicLower) ||
+    c.front.toLowerCase().includes(topicLower) ||
+    c.back.toLowerCase().includes(topicLower)
+  )
+
+  const now = Math.floor(Date.now() / 1000)
+  for (const c of matching) {
+    await db.update(study_cards).set({ due_at: now }).where(eq(study_cards.id, c.id))
+  }
+
+  return {
+    modulesFlagged: Array.from(new Set(matching.map(c => c.module))),
+    cardsAffected: matching.length,
+  }
 }
 
 export function progressSummary(stats: ProgressStats, daysToExam: number | null): string {

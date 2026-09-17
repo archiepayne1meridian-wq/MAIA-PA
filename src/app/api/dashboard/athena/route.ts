@@ -3,7 +3,7 @@ import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { getDb } from '@/db'
 import { study_cards, study_reviews, quiz_sessions, mcq_attempts } from '@/db/schema'
 import { desc, gte, lte, and, eq, count } from 'drizzle-orm'
-import type { Track } from '../../../../../tools/study-db'
+import type { Track, Exam } from '../../../../../tools/study-db'
 
 function todayStartSecs() {
   const d = new Date(); d.setHours(0, 0, 0, 0)
@@ -15,17 +15,22 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const track = (new URL(req.url).searchParams.get('track') as Track | null) ?? 'qualification'
+  const url = new URL(req.url)
+  const track = (url.searchParams.get('track') as Track | null) ?? 'qualification'
+  const exam = (url.searchParams.get('exam') as Exam | null) ?? undefined
   const db = getDb()
   const tStart = todayStartSecs()
   const endOfToday = tStart + 86400
   const thirtyAgo = tStart - 30 * 86400
 
-  // All cards by module, scoped to this track
+  const trackCond = exam ? and(eq(study_cards.track, track), eq(study_cards.exam, exam)) : eq(study_cards.track, track)
+  const quizTrackCond = exam ? and(eq(quiz_sessions.track, track), eq(quiz_sessions.exam, exam)) : eq(quiz_sessions.track, track)
+
+  // All cards by module, scoped to this track (and exam, when given)
   const allCards = await db
     .select({ module: study_cards.module, due_at: study_cards.due_at, suspended: study_cards.suspended })
     .from(study_cards)
-    .where(eq(study_cards.track, track))
+    .where(trackCond)
 
   const moduleMap = new Map<string, { total: number; due: number }>()
   for (const c of allCards) {
@@ -46,7 +51,7 @@ export async function GET(req: Request) {
   const cardModuleRows = await db
     .select({ id: study_cards.id, module: study_cards.module })
     .from(study_cards)
-    .where(eq(study_cards.track, track))
+    .where(trackCond)
   const cardModule = new Map(cardModuleRows.map(r => [r.id, r.module]))
 
   const moduleMastery = new Map<string, { total: number; good: number }>()
@@ -93,7 +98,7 @@ export async function GET(req: Request) {
       created_at: quiz_sessions.created_at,
     })
     .from(quiz_sessions)
-    .where(and(lte(quiz_sessions.completed_at, endOfToday), eq(quiz_sessions.track, track)))
+    .where(and(lte(quiz_sessions.completed_at, endOfToday), quizTrackCond))
     .orderBy(desc(quiz_sessions.completed_at))
     .limit(5)
 

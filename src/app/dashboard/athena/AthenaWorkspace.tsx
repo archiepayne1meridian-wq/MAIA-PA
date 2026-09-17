@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import s from '../dashboard.module.css'
 
@@ -58,6 +59,17 @@ type Mode = 'flashcard' | 'mcq'
 type CardPhase = 'loading' | 'front' | 'back' | 'done'
 type QuizPhase = 'loading_modules' | 'idle' | 'starting' | 'question' | 'answered' | 'complete'
 type Track = 'qualification' | 'products'
+type Exam = 'R01' | 'R06' | 'all'
+
+interface WeakModule {
+  moduleId: string
+  moduleName: string
+  avgEaseFactor: number
+  dueCount: number
+  weakestCards: { front: string; easeFactor: number }[]
+}
+
+interface MuseRelated { id: string; title: string; sector: string }
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const
 
@@ -66,11 +78,27 @@ const TRACKS: { key: Track; label: string }[] = [
   { key: 'products', label: 'deVere Products' },
 ]
 
+const EXAMS: { key: Exam; label: string }[] = [
+  { key: 'R01', label: 'R01' },
+  { key: 'R06', label: 'R06' },
+  { key: 'all', label: 'All' },
+]
+
+const SESSION_LENGTH_SECS = 15 * 60
+
+// Rough EF band for the weak-point bar fill — SM2 EF starts at 2.5 and floors at 1.3.
+function efToPct(ef: number): number {
+  return Math.max(0, Math.min(100, Math.round(((ef - 1.3) / (2.8 - 1.3)) * 100)))
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AthenaWorkspace() {
+  const router = useRouter()
+
   // ── Track state ────────────────────────────────────────────────────────────
   const [track, setTrack] = useState<Track>('qualification')
+  const [exam, setExam] = useState<Exam>('all')
 
   // ── Study column state (preserved exactly) ────────────────────────────────
   const [mode, setMode] = useState<Mode>('flashcard')
@@ -110,54 +138,97 @@ export default function AthenaWorkspace() {
   const [progressSessions, setProgressSessions] = useState<SessionPoint[]>([])
   const [modSortKey, setModSortKey] = useState<'mastery' | 'due' | 'name'>('mastery')
 
-  // ── Bootstrap / track switch ─────────────────────────────────────────────
-  useEffect(() => {
-    void loadDueCard(track)
-    void loadModules(track)
-    void loadProgress(track)
-  }, [track])
+  // ── Weak-point panel state ────────────────────────────────────────────────
+  const [weakModules, setWeakModules] = useState<WeakModule[]>([])
 
-  function loadProgress(t: Track) {
+  // ── MUSE connection state ─────────────────────────────────────────────────
+  const [museRelated, setMuseRelated] = useState<MuseRelated[]>([])
+
+  // ── 15 min session state ──────────────────────────────────────────────────
+  const [sessionActive, setSessionActive] = useState(false)
+  const [sessionQueue, setSessionQueue] = useState<StudyCard[]>([])
+  const [sessionIndex, setSessionIndex] = useState(0)
+  const [sessionReviewed, setSessionReviewed] = useState(0)
+  const [sessionSecondsLeft, setSessionSecondsLeft] = useState(SESSION_LENGTH_SECS)
+  const [sessionSummary, setSessionSummary] = useState<{ reviewed: number; weakAreas: string[] } | null>(null)
+  const sessionReviewedRef = useRef(0)
+  const finishSessionRef = useRef<() => void>(() => {})
+
+  // Current exam query param — '' means "All" (no filter), matching the API's undefined-exam = no filter contract.
+  function examParam(t: Track = track, e: Exam = exam): string {
+    return t === 'qualification' && e !== 'all' ? e : ''
+  }
+
+  // ── Bootstrap / track+exam switch ─────────────────────────────────────────
+  useEffect(() => {
+    void loadDueCard(track, exam)
+    void loadModules(track, exam)
+    void loadProgress(track, exam)
+    void loadWeakModules(track, exam)
+  }, [track, exam])
+
+  function loadProgress(t: Track, e: Exam) {
     setProgressData(null)
-    void fetch(`/api/dashboard/athena?track=${t}`).then(r => r.json()).then(d => setProgressData(d as ProgressData))
-    void fetch(`/api/dashboard/athena/progress?track=${t}`).then(r => r.json()).then(d => {
+    const ep = examParam(t, e)
+    void fetch(`/api/dashboard/athena?track=${t}${ep ? `&exam=${ep}` : ''}`).then(r => r.json()).then(d => setProgressData(d as ProgressData))
+    void fetch(`/api/dashboard/athena/progress?track=${t}${ep ? `&exam=${ep}` : ''}`).then(r => r.json()).then(d => {
       setProgressSessions((d as { sessions: SessionPoint[] }).sessions ?? [])
     })
+  }
+
+  function loadWeakModules(t: Track, e: Exam) {
+    const ep = examParam(t, e)
+    void fetch(`/api/dashboard/athena/weak-modules?track=${t}${ep ? `&exam=${ep}` : ''}`)
+      .then(r => r.json())
+      .then(d => setWeakModules((d as { modules: WeakModule[] }).modules ?? []))
+      .catch(() => setWeakModules([]))
   }
 
   function switchTrack(t: Track) {
     if (t === track) return
     setTrack(t)
+    setExam('all')
     // Reset all per-track UI state — the effect above reloads due card / modules / progress for the new track.
     setMode('flashcard')
     resetQuiz()
+    resetSession()
     setBriefModule(null)
     setBrief(null)
     setBriefMsg(null)
   }
 
-  async function loadDueCard(t: Track = track) {
+  function switchExam(e: Exam) {
+    if (e === exam) return
+    setExam(e)
+    setMode('flashcard')
+    resetQuiz()
+    resetSession()
+  }
+
+  async function loadDueCard(t: Track = track, e: Exam = exam) {
     setCardPhase('loading')
     setScheduledDays(null)
     setError(null)
     try {
-      const data = await fetch(`/api/dashboard/athena/cards/due?track=${t}`).then(r => r.json()) as { card: StudyCard | null }
+      const ep = examParam(t, e)
+      const data = await fetch(`/api/dashboard/athena/cards/due?track=${t}${ep ? `&exam=${ep}` : ''}`).then(r => r.json()) as { card: StudyCard | null }
       setCard(data.card)
       setCardPhase(data.card ? 'front' : 'done')
-    } catch (e) {
-      setError(String(e))
+    } catch (e2) {
+      setError(String(e2))
       setCardPhase('done')
     }
   }
 
-  async function loadModules(t: Track = track) {
+  async function loadModules(t: Track = track, e: Exam = exam) {
     try {
-      const data = await fetch(`/api/dashboard/athena/modules?track=${t}`).then(r => r.json()) as { modules: string[] }
+      const ep = examParam(t, e)
+      const data = await fetch(`/api/dashboard/athena/modules?track=${t}${ep ? `&exam=${ep}` : ''}`).then(r => r.json()) as { modules: string[] }
       setModules(data.modules)
       setSelectedModules(data.modules)
       setQuizPhase('idle')
-    } catch (e) {
-      setError(String(e))
+    } catch (e2) {
+      setError(String(e2))
       setQuizPhase('idle')
     }
   }
@@ -170,15 +241,20 @@ export default function AthenaWorkspace() {
     setGrading(true)
     setError(null)
     try {
+      const ep = examParam()
       const data = await fetch('/api/dashboard/athena/grade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cardId: card.id, grade, track }),
+        body: JSON.stringify({ cardId: card.id, grade, track, exam: ep || undefined }),
       }).then(r => r.json()) as { intervalDays: number; nextCard: StudyCard | null }
       setScheduledDays(data.intervalDays)
       setTimeout(() => {
-        setCard(data.nextCard)
-        setCardPhase(data.nextCard ? 'front' : 'done')
+        if (sessionActive) {
+          advanceSession()
+        } else {
+          setCard(data.nextCard)
+          setCardPhase(data.nextCard ? 'front' : 'done')
+        }
         setScheduledDays(null)
         setGrading(false)
       }, 1200)
@@ -186,6 +262,112 @@ export default function AthenaWorkspace() {
       setError(String(e))
       setGrading(false)
     }
+  }
+
+  // ── 15 min session ─────────────────────────────────────────────────────────
+  async function startSession() {
+    setError(null)
+    try {
+      const ep = examParam()
+      const url = `/api/dashboard/athena/cards/due?track=${track}${ep ? `&exam=${ep}` : ''}&limit=20`
+      const data = await fetch(url).then(r => r.json()) as { cards: StudyCard[] }
+      if (!data.cards || data.cards.length === 0) {
+        setError('No cards due for a session right now.')
+        return
+      }
+      setMode('flashcard')
+      setSessionQueue(data.cards)
+      setSessionIndex(0)
+      setSessionReviewed(0)
+      sessionReviewedRef.current = 0
+      setSessionSecondsLeft(SESSION_LENGTH_SECS)
+      setSessionSummary(null)
+      setSessionActive(true)
+      setCard(data.cards[0])
+      setCardPhase('front')
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  function advanceSession() {
+    setSessionReviewed(r => { const next = r + 1; sessionReviewedRef.current = next; return next })
+    setSessionIndex(prev => {
+      const next = prev + 1
+      if (next >= sessionQueue.length) {
+        finishSessionRef.current()
+        return prev
+      }
+      setCard(sessionQueue[next])
+      setCardPhase('front')
+      return next
+    })
+  }
+
+  function finishSession() {
+    setSessionActive(false)
+    void loadWeakModules(track, exam)
+    void fetch(`/api/dashboard/athena/weak-modules?track=${track}${examParam() ? `&exam=${examParam()}` : ''}`)
+      .then(r => r.json())
+      .then((d: { modules: WeakModule[] }) => {
+        setSessionSummary({
+          reviewed: sessionReviewedRef.current,
+          weakAreas: (d.modules ?? []).slice(0, 3).map(m => m.moduleName),
+        })
+      })
+      .catch(() => setSessionSummary({ reviewed: sessionReviewedRef.current, weakAreas: [] }))
+  }
+
+  function resetSession() {
+    setSessionActive(false)
+    setSessionQueue([])
+    setSessionIndex(0)
+    setSessionReviewed(0)
+    sessionReviewedRef.current = 0
+    setSessionSecondsLeft(SESSION_LENGTH_SECS)
+    setSessionSummary(null)
+  }
+
+  function exitSession() {
+    resetSession()
+    void loadDueCard()
+  }
+
+  // Keep the ref pointing at the latest closure so the timer interval (set up once
+  // per session start) always calls a finishSession with current track/exam/refs.
+  useEffect(() => { finishSessionRef.current = finishSession })
+
+  useEffect(() => {
+    if (!sessionActive) return
+    const id = setInterval(() => {
+      setSessionSecondsLeft(sec => {
+        if (sec <= 1) {
+          clearInterval(id)
+          finishSessionRef.current()
+          return 0
+        }
+        return sec - 1
+      })
+    }, 1000)
+    return () => clearInterval(id)
+  }, [sessionActive])
+
+  // ── MUSE connection — related knowledge for the displayed flashcard ───────
+  useEffect(() => {
+    if (mode !== 'flashcard' || !card || cardPhase === 'loading' || cardPhase === 'done') {
+      setMuseRelated([])
+      return
+    }
+    let cancelled = false
+    fetch(`/api/dashboard/muse/related?text=${encodeURIComponent(`${card.module} ${card.front}`)}&limit=1`)
+      .then(r => r.json())
+      .then((data: { entries?: MuseRelated[] }) => { if (!cancelled) setMuseRelated(data.entries ?? []) })
+      .catch(() => { if (!cancelled) setMuseRelated([]) })
+    return () => { cancelled = true }
+  }, [mode, card?.id, cardPhase])
+
+  function openMuseEntry(id: string) {
+    router.push(`/dashboard/muse?entry=${id}`)
   }
 
   // ── MCQ actions ───────────────────────────────────────────────────────────
@@ -197,10 +379,11 @@ export default function AthenaWorkspace() {
     setQuizPhase('starting')
     setError(null)
     try {
+      const ep = examParam()
       const data = await fetch('/api/dashboard/athena/quiz/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modules: selectedModules, track }),
+        body: JSON.stringify({ modules: selectedModules, track, exam: ep || undefined }),
       }).then(r => r.json()) as { sessionId: string; question: MCQQuestion; qIndex: number; total: number }
       setSessionId(data.sessionId)
       setCurrentQ(data.question)
@@ -427,26 +610,108 @@ export default function AthenaWorkspace() {
               ))}
             </div>
 
-            {/* Tab switcher */}
-            <div className={s.athenaTabs}>
-              <button
-                className={`${s.athenaTab} ${mode === 'flashcard' ? s.athenaTabActive : ''}`}
-                onClick={() => setMode('flashcard')}
-              >Flashcards</button>
-              <button
-                className={`${s.athenaTab} ${mode === 'mcq' ? s.athenaTabActive : ''}`}
-                onClick={() => setMode('mcq')}
-              >MCQ Quiz</button>
-            </div>
+            {/* Exam sub-selector — qualification track only */}
+            {track === 'qualification' && (
+              <div className={s.athenaExamTabs}>
+                {EXAMS.map(e => (
+                  <button
+                    key={e.key}
+                    className={`${s.athenaExamTab} ${exam === e.key ? s.athenaExamTabActive : ''}`}
+                    onClick={() => switchExam(e.key)}
+                  >
+                    {e.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Weak point panel — ease-factor ranked, top 3 */}
+            {weakModules.length > 0 && !sessionActive && !sessionSummary && (
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>Your weak areas this week</span>
+                <div className={s.athenaWeakList}>
+                  {weakModules.slice(0, 3).map(m => {
+                    const pct = efToPct(m.avgEaseFactor)
+                    return (
+                      <div key={m.moduleId} className={s.athenaWeakRow}>
+                        <span className={s.athenaWeakLabel}>{m.moduleName}</span>
+                        <div className={s.athenaWeakBarWrap}>
+                          <div
+                            className={s.athenaWeakBarFill}
+                            style={{ width: `${pct}%`, background: pct >= 80 ? 'var(--online)' : pct >= 60 ? 'var(--idle)' : 'var(--alert)' }}
+                          />
+                        </div>
+                        <span
+                          className={s.athenaWeakPct}
+                          style={{ color: pct >= 80 ? 'var(--online)' : pct >= 60 ? 'var(--idle)' : 'var(--alert)' }}
+                        >{pct}%</span>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className={s.athenaFocusRow}>Focus here today: <strong>{weakModules[0].moduleName}</strong></div>
+              </div>
+            )}
+
+            {/* Tab switcher + 15 min session */}
+            {!sessionActive && !sessionSummary && (
+              <div className={s.athenaTabs} style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', gap: 2 }}>
+                  <button
+                    className={`${s.athenaTab} ${mode === 'flashcard' ? s.athenaTabActive : ''}`}
+                    onClick={() => setMode('flashcard')}
+                  >Flashcards</button>
+                  <button
+                    className={`${s.athenaTab} ${mode === 'mcq' ? s.athenaTabActive : ''}`}
+                    onClick={() => setMode('mcq')}
+                  >MCQ Quiz</button>
+                </div>
+                <button className={s.athenaSessionBtn} onClick={() => void startSession()} style={{ marginBottom: 8 }}>
+                  15 min session
+                </button>
+              </div>
+            )}
 
             {error && <p className={s.athenaErrorMsg}>{error}</p>}
 
+            {/* ── 15 MIN SESSION — timer bar ──────────────────────────────── */}
+            {sessionActive && (
+              <div className={s.athenaSessionBar}>
+                <span>Session · card {sessionIndex + 1}/{sessionQueue.length} · {sessionReviewed} reviewed</span>
+                <span className={`${s.athenaSessionTimer} ${sessionSecondsLeft <= 60 ? s.athenaSessionTimerLow : ''}`}>
+                  {String(Math.floor(sessionSecondsLeft / 60)).padStart(2, '0')}:{String(sessionSecondsLeft % 60).padStart(2, '0')}
+                </span>
+                <button className={s.athenaSessionExitBtn} onClick={exitSession}>End session</button>
+              </div>
+            )}
+
+            {/* ── 15 MIN SESSION — summary ────────────────────────────────── */}
+            {sessionSummary && (
+              <div className={s.athenaSessionSummary}>
+                <div>
+                  <div className={s.athenaSessionSummaryNum}>{sessionSummary.reviewed}</div>
+                  <div className={s.athenaSessionSummaryLabel}>cards reviewed</div>
+                </div>
+                {sessionSummary.weakAreas.length > 0 && (
+                  <div>
+                    <span className={s.eyebrow}>Weak areas flagged</span>
+                    <div className={s.athenaWeakList} style={{ marginTop: 8 }}>
+                      {sessionSummary.weakAreas.map(w => (
+                        <div key={w} className={s.athenaFocusRow} style={{ marginTop: 0 }}>{w}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <button className={s.athenaNewQuizBtn} onClick={() => { setSessionSummary(null); void loadDueCard() }}>Done</button>
+              </div>
+            )}
+
             {/* ── FLASHCARD MODE ──────────────────────────────────────────── */}
-            {mode === 'flashcard' && (
+            {mode === 'flashcard' && !sessionSummary && (
               <div className={s.athenaPane}>
                 {cardPhase === 'loading' && <p className={s.athenaLoading}>Loading…</p>}
 
-                {cardPhase === 'done' && (
+                {cardPhase === 'done' && !sessionActive && (
                   <div className={s.athenaNoDue}>
                     <p className={s.athenaNoDueText}>No cards due right now.</p>
                     <p className={s.athenaNoDueSub}>
@@ -492,13 +757,22 @@ export default function AthenaWorkspace() {
                     {scheduledDays !== null && (
                       <p className={s.athenaScheduled}>✓ Next review in {scheduledDays} day{scheduledDays !== 1 ? 's' : ''}</p>
                     )}
+
+                    {museRelated.length > 0 && (
+                      <div className={s.athenaMuseLink}>
+                        <span>Related knowledge in MUSE:</span>
+                        <button className={s.athenaMuseLinkBtn} onClick={() => openMuseEntry(museRelated[0].id)}>
+                          {museRelated[0].title}
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
             )}
 
             {/* ── MCQ MODE ────────────────────────────────────────────────── */}
-            {mode === 'mcq' && (
+            {mode === 'mcq' && !sessionActive && !sessionSummary && (
               <div className={s.athenaPane}>
 
                 {(quizPhase === 'idle' || quizPhase === 'loading_modules' || quizPhase === 'starting') && (

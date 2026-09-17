@@ -579,6 +579,15 @@
 .athenaTrackTab:hover { border-color: var(--accent-deep); color: var(--text); }
 .athenaTrackTabActive { border-color: var(--accent) !important; color: var(--accent) !important; background: rgba(138,169,240,0.08); }
 
+/* Exam sub-selector (Qualification track only) */
+.athenaExamTabs { display: flex; gap: 5px; margin: -10px 0 16px; }
+.athenaExamTab {
+  font-family: var(--mono); font-size: 9.5px; padding: 4px 11px; border-radius: 100px;
+  border: 1px solid var(--hairline); background: none; color: var(--text-dim); cursor: pointer; transition: 0.12s;
+}
+.athenaExamTab:hover { border-color: var(--accent-deep); color: var(--text); }
+.athenaExamTabActive { border-color: var(--accent) !important; color: var(--accent) !important; background: rgba(138,169,240,0.08); }
+
 /* Tab switcher */
 .athenaTabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
 .athenaTab {
@@ -1696,6 +1705,45 @@
 .athenaWeakBarWrap { height: 4px; background: var(--raised-2); border-radius: 4px; overflow: hidden; }
 .athenaWeakBarFill { height: 100%; border-radius: 4px; transition: width 0.4s; }
 .athenaWeakPct { font-family: var(--mono); font-size: 10.5px; text-align: right; }
+
+/* Weak point panel — ease-factor based, Interactive Study column */
+.athenaFocusRow {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-dim);
+  padding: 8px 10px; border: 1px solid var(--hairline); border-radius: var(--r); margin-top: 10px;
+}
+.athenaFocusRow strong { color: var(--accent); font-weight: 600; }
+
+/* 15 min session */
+.athenaSessionBtn {
+  font-family: var(--mono); font-size: 10.5px; padding: 6px 14px; border-radius: 100px;
+  border: 1px solid var(--accent); background: none; color: var(--accent); cursor: pointer; transition: 0.12s;
+}
+.athenaSessionBtn:hover:not(:disabled) { background: rgba(138,169,240,0.08); }
+.athenaSessionBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.athenaSessionBar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-dim);
+  padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  margin-bottom: 14px;
+}
+.athenaSessionTimer { color: var(--accent); font-weight: 600; }
+.athenaSessionTimerLow { color: var(--alert) !important; }
+.athenaSessionExitBtn { background: none; border: none; color: var(--text-dim); cursor: pointer; font-family: inherit; font-size: inherit; }
+.athenaSessionExitBtn:hover { color: var(--text); }
+.athenaSessionSummary { display: flex; flex-direction: column; gap: 18px; text-align: center; padding: 24px; }
+.athenaSessionSummaryNum { font-family: var(--mono); font-size: 32px; color: var(--text); letter-spacing: -1px; }
+.athenaSessionSummaryLabel { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+
+/* MUSE connection — related knowledge under a flashcard */
+.athenaMuseLink {
+  margin-top: 12px; display: flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+}
+.athenaMuseLinkBtn {
+  background: none; border: none; padding: 0; color: var(--accent); cursor: pointer;
+  font-family: inherit; font-size: inherit; text-decoration: underline; text-underline-offset: 2px;
+}
+.athenaMuseLinkBtn:hover { opacity: 0.8; }
 
 .athenaModTable { display: flex; flex-direction: column; }
 .athenaModTableHead {

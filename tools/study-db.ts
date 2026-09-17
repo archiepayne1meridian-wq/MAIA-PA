@@ -5,18 +5,21 @@ import { sm2, GRADE_QUALITY } from './sm2'
 
 export type Grade = keyof typeof GRADE_QUALITY
 export type Track = 'qualification' | 'products'
+export type Exam = 'R01' | 'R06'
 
 export interface CardInput {
   module: string
   front: string
   back: string
   track?: Track
+  exam?: Exam
 }
 
 export interface QuizSessionInput {
   modules: string[]
   questions: MCQQuestion[]
   track?: Track
+  exam?: Exam
 }
 
 export interface MCQQuestion {
@@ -59,16 +62,19 @@ export async function addCards(cards: CardInput[]): Promise<void> {
       suspended: 0,
       created_at: now,
       track: card.track ?? 'qualification',
+      exam: card.exam ?? '',
     }).run()
   }
 }
 
-export async function getDueCards(limit: number, track: Track = 'qualification') {
+export async function getDueCards(limit: number, track: Track = 'qualification', exam?: Exam) {
   const now = Math.floor(Date.now() / 1000)
+  const conditions = [lte(study_cards.due_at, now), eq(study_cards.suspended, 0), eq(study_cards.track, track)]
+  if (exam) conditions.push(eq(study_cards.exam, exam))
   return getDb()
     .select()
     .from(study_cards)
-    .where(and(lte(study_cards.due_at, now), eq(study_cards.suspended, 0), eq(study_cards.track, track)))
+    .where(and(...conditions))
     .orderBy(study_cards.due_at)
     .limit(limit)
 }
@@ -147,11 +153,13 @@ export async function getMaterialForModule(module: string, track: Track = 'quali
   return [cardMaterial, museMaterial].filter(Boolean).join('\n\n')
 }
 
-export async function getModulesWithCards(track: Track = 'qualification'): Promise<string[]> {
+export async function getModulesWithCards(track: Track = 'qualification', exam?: Exam): Promise<string[]> {
+  const conditions = [eq(study_cards.suspended, 0), eq(study_cards.track, track)]
+  if (exam) conditions.push(eq(study_cards.exam, exam))
   const rows = await getDb()
     .selectDistinct({ module: study_cards.module })
     .from(study_cards)
-    .where(and(eq(study_cards.suspended, 0), eq(study_cards.track, track)))
+    .where(and(...conditions))
   return rows.map(r => r.module)
 }
 
@@ -167,6 +175,7 @@ export async function saveQuizSession(input: QuizSessionInput): Promise<string> 
     total: input.questions.length,
     created_at: now,
     track: input.track ?? 'qualification',
+    exam: input.exam ?? '',
   })
   return id
 }

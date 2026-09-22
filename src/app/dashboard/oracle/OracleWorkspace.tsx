@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import s from '../dashboard.module.css'
 
@@ -104,6 +104,7 @@ export default function OracleWorkspace() {
   const [expandedRow, setExpandedRow] = useState<number | null>(null)
   const [openerCopied, setOpenerCopied] = useState(false)
   const [recent, setRecent] = useState<RecentAnalysisRow[]>([])
+  const didConsumePending = useRef(false)
 
   function loadRecent() {
     void fetch('/api/dashboard/oracle/analyses')
@@ -114,15 +115,32 @@ export default function OracleWorkspace() {
 
   useEffect(() => { loadRecent() }, [])
 
-  async function analyse() {
-    if (!linkedinText.trim() || analysing) return
+  // MAIA's chat bar hands off a pasted LinkedIn work history via sessionStorage
+  // (oracle_pending) rather than a URL param — the text can be long enough that
+  // a query string is the wrong carrier. Read once on mount, then clear it so
+  // a later plain visit to /dashboard/oracle doesn't re-trigger the analysis.
+  useEffect(() => {
+    if (didConsumePending.current) return
+    didConsumePending.current = true
+    let pending: string | null = null
+    try { pending = sessionStorage.getItem('oracle_pending') } catch { /* ignore */ }
+    if (!pending) return
+    try { sessionStorage.removeItem('oracle_pending') } catch { /* ignore */ }
+    setLinkedinText(pending)
+    void analyse(pending)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function analyse(overrideText?: string) {
+    const text = overrideText ?? linkedinText
+    if (!text.trim() || analysing) return
     setAnalysing(true)
     setError(null)
     try {
       const data = await fetch('/api/dashboard/oracle/analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ linkedinText: linkedinText.trim() }),
+        body: JSON.stringify({ linkedinText: text.trim() }),
       }).then(r => r.json()) as AnalyseResponse & { error?: string }
       if (data.error) {
         setError(data.error)

@@ -11,6 +11,13 @@ import Orb from './components/Orb'
 import Composer from './components/Composer'
 import TaskList from './components/TaskList'
 import CalendarColumn from './components/CalendarColumn'
+import MorningBrief from './components/MorningBrief'
+import type { MaiaContext } from '@/lib/maia-context'
+
+const LAST_SEEN_KEY = 'maia_last_seen_date'
+function todayDateString(): string {
+  return new Date().toISOString().slice(0, 10)
+}
 
 // Sequential Web Audio API playback — no <audio> element, no overlap
 class AudioQueue {
@@ -56,13 +63,13 @@ class AudioQueue {
 // Agents with a full page at /dashboard/<id>. DEMETER's page still exists (route intact,
 // code preserved) but is deliberately excluded here — removed from the dashboard, unreachable
 // via nav rail or voice routing.
-const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'HERA', 'DIANA', 'MERCURY', 'IRIS', 'MUSE', 'APOLLO', 'ATLAS', 'HERMES', 'ORACLE'])
+export const ROUTABLE_AGENTS = new Set(['ATHENA', 'CASSANDRA', 'HERA', 'DIANA', 'MERCURY', 'IRIS', 'MUSE', 'APOLLO', 'ATLAS', 'HERMES', 'ORACLE'])
 
 // Agent id -> route slug, only where they differ (ATLAS's route folder is
 // still /dashboard/visualizer — the folder/route path is not renamed, only
 // the agent's display name).
-const ROUTE_SLUG_OVERRIDES: Record<string, string> = { ATLAS: 'visualizer' }
-function routeSlugFor(agentId: string): string {
+export const ROUTE_SLUG_OVERRIDES: Record<string, string> = { ATLAS: 'visualizer' }
+export function routeSlugFor(agentId: string): string {
   return ROUTE_SLUG_OVERRIDES[agentId] ?? agentId.toLowerCase()
 }
 
@@ -71,12 +78,18 @@ interface Props {
   tasks: Task[]   // accepted from data spread; TaskList now fetches its own
   onlineCount: number
   needYouCount: number
+  brief: MaiaContext
 }
 
-export default function DashboardClient({ agents, onlineCount, needYouCount }: Props) {
+export default function DashboardClient({ agents, onlineCount, needYouCount, brief }: Props) {
   const router = useRouter()
   const [orbState, setOrbState] = useState<OrbState>('idle')
   const [taskRefreshKey, setTaskRefreshKey] = useState(0)
+  // Defaults to 'normal' for SSR-safe hydration (localStorage isn't available
+  // server-side) — a client-only effect below flips to 'brief' on first open
+  // of a new day. That means one silent frame of 'normal' before the swap,
+  // which only happens once per day.
+  const [briefMode, setBriefMode] = useState<'normal' | 'brief'>('normal')
   const audioQueueRef = useRef<AudioQueue | null>(null)
 
   function getQueue(): AudioQueue {
@@ -134,10 +147,31 @@ export default function DashboardClient({ agents, onlineCount, needYouCount }: P
     }
   }, [speakText, router])
 
-  // Greeting on mount
+  // Morning brief gate — first open of a new day shows the brief instead of
+  // the normal Orb/Composer home. Runs once on mount; localStorage read is
+  // synchronous, so this and the greeting effect below always agree on
+  // whether today is "new" regardless of effect execution order.
+  useEffect(() => {
+    try {
+      const todayStr = todayDateString()
+      const lastSeen = localStorage.getItem(LAST_SEEN_KEY)
+      if (lastSeen !== todayStr) {
+        setBriefMode('brief')
+        localStorage.setItem(LAST_SEEN_KEY, todayStr)
+      }
+    } catch { /* localStorage unavailable — stay in normal mode */ }
+  }, [])
+
+  // Greeting on mount — skipped on a first-open-of-the-day, since the morning
+  // brief covers that visually instead of via spoken greeting.
   useEffect(() => {
     let cancelled = false
     async function greet() {
+      try {
+        const todayStr = todayDateString()
+        const lastSeen = localStorage.getItem(LAST_SEEN_KEY)
+        if (lastSeen !== todayStr) return
+      } catch { /* localStorage unavailable — fall through to greeting */ }
       setOrbState('thinking')
       try {
         const res = await fetch('/api/dashboard/maia/greeting', { method: 'POST' })
@@ -172,59 +206,65 @@ export default function DashboardClient({ agents, onlineCount, needYouCount }: P
         onSelect={handleAgentSelect}
       />
 
-      <div className={s.main}>
-        <TaskList refreshKey={taskRefreshKey} />
+      {briefMode === 'brief' ? (
+        <div className={s.main}>
+          <MorningBrief context={brief} />
+        </div>
+      ) : (
+        <div className={s.main}>
+          <TaskList refreshKey={taskRefreshKey} />
 
-        <section className={`${s.col} ${s.colCentre}`}>
-          <div className={s.centreScroll}>
-            <Orb state={orbState} onChange={setOrbState} />
+          <section className={`${s.col} ${s.colCentre}`}>
+            <div className={s.centreScroll}>
+              <Orb state={orbState} onChange={setOrbState} />
 
-            <div className={s.greet}>
-              <h1>
-                Morning, Archie.{' '}
-                {onlineCount > 0 ? (
-                  <>
-                    <span className={s.hl}>{onlineCount} agent{onlineCount !== 1 ? 's' : ''}</span> active — your command centre is live.
-                  </>
-                ) : (
-                  <>Your agents are standing by.</>
-                )}
-              </h1>
-            </div>
+              <div className={s.greet}>
+                <h1>
+                  Morning, Archie.{' '}
+                  {onlineCount > 0 ? (
+                    <>
+                      <span className={s.hl}>{onlineCount} agent{onlineCount !== 1 ? 's' : ''}</span> active — your command centre is live.
+                    </>
+                  ) : (
+                    <>Your agents are standing by.</>
+                  )}
+                </h1>
+              </div>
 
-            <div className={s.chips}>
-              <button className={s.chip} onClick={() => router.push('/dashboard/cassandra')}>
-                Market brief
-              </button>
-              <button className={s.chip} onClick={() => router.push('/dashboard/athena')}>
-                CISI cards due?
-              </button>
-              <button className={s.chip} onClick={() => router.push('/dashboard/mercury')}>
-                Draft a message
-              </button>
-            </div>
+              <div className={s.chips}>
+                <button className={s.chip} onClick={() => router.push('/dashboard/cassandra')}>
+                  Market brief
+                </button>
+                <button className={s.chip} onClick={() => router.push('/dashboard/athena')}>
+                  CISI cards due?
+                </button>
+                <button className={s.chip} onClick={() => router.push('/dashboard/mercury')}>
+                  Draft a message
+                </button>
+              </div>
 
-            <div className={s.msg}>
-              <div className={s.msgBadge}>M</div>
-              <div className={s.msgBubble}>
-                {needYouCount > 0
-                  ? `${needYouCount} item${needYouCount !== 1 ? 's' : ''} need${needYouCount === 1 ? 's' : ''} your attention. Tap the relevant agent tile to review.`
-                  : onlineCount > 0
-                  ? `All clear — ${onlineCount} agent${onlineCount !== 1 ? 's' : ''} active, nothing pending your approval.`
-                  : 'Agents are standing by. Send a command in Slack or use the mic below.'}
+              <div className={s.msg}>
+                <div className={s.msgBadge}>M</div>
+                <div className={s.msgBubble}>
+                  {needYouCount > 0
+                    ? `${needYouCount} item${needYouCount !== 1 ? 's' : ''} need${needYouCount === 1 ? 's' : ''} your attention. Tap the relevant agent tile to review.`
+                    : onlineCount > 0
+                    ? `All clear — ${onlineCount} agent${onlineCount !== 1 ? 's' : ''} active, nothing pending your approval.`
+                    : 'Agents are standing by. Send a command in Slack or use the mic below.'}
+                </div>
               </div>
             </div>
-          </div>
 
-          <Composer
-            orbState={orbState}
-            onOrbChange={setOrbState}
-            onRoute={handleRoute}
-          />
-        </section>
+            <Composer
+              orbState={orbState}
+              onOrbChange={setOrbState}
+              onRoute={handleRoute}
+            />
+          </section>
 
-        <CalendarColumn events={EVENTS} />
-      </div>
+          <CalendarColumn events={EVENTS} />
+        </div>
+      )}
     </div>
   )
 }

@@ -426,9 +426,10 @@ export default function MuseWorkspace() {
     void fetchHermesScenarios()
   }, [fetchEntries, fetchPending, fetchCases, fetchTemplates, fetchHermesScenarios])
 
-  // Deep link: ?entry=<id> opens that entry in the centre panel on first load —
-  // read via window.location rather than useSearchParams() to avoid needing a
-  // Suspense boundary for what's only ever a one-time initial read.
+  // Deep link: ?entry=<id> opens that entry in the centre panel, ?search=<q>
+  // pre-fills the left search box (used by MAIA's chat bar "what do I know
+  // about X" intent) — both read on first load only, via window.location
+  // rather than useSearchParams() to avoid needing a Suspense boundary.
   useEffect(() => {
     if (didDeepLink.current) return
     didDeepLink.current = true
@@ -436,6 +437,10 @@ export default function MuseWorkspace() {
     const entryId = params.get('entry')
     if (entryId) {
       setSelected({ type: 'entry', id: entryId })
+    }
+    const searchQuery = params.get('search')
+    if (searchQuery) {
+      setLeftSearch(searchQuery)
     }
   }, [])
 

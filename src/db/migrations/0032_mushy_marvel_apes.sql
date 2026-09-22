@@ -1,0 +1,1 @@
+ALTER TABLE `apollo_calls` ADD `coaching_insight` text;

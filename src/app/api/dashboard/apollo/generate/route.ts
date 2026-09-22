@@ -151,7 +151,7 @@ export async function POST(req: Request) {
     ])
     const coachingInsight = coachingInsightRaw.trim().replace(/^["']|["']$/g, '')
 
-    await updateCall(callId, { advisor_brief: advisorBrief, client_email: clientEmail })
+    await updateCall(callId, { advisor_brief: advisorBrief, client_email: clientEmail, coaching_insight: coachingInsight })
 
     // Auto-save to MUSE — fire and forget, never blocks the response.
     // Structured outputs from a known source (APOLLO) — auto-commit, no

@@ -387,6 +387,7 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   muse_brief_id: text('muse_brief_id'),
   muse_email_id: text('muse_email_id'),
   muse_case_id: text('muse_case_id'),               // muse_cases.id this call was filed against
+  coaching_insight: text('coaching_insight'),        // one-sentence APOLLO coaching note, generated alongside advisor_brief — surfaced by MAIA's morning brief / chat context
   created_at: integer('created_at').notNull(),
 })
 

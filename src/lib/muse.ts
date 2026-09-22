@@ -1,7 +1,7 @@
 // MUSE — Second Brain. Claude/Haiku calls for Steps 3+.
 
 import { askWith } from './claude'
-import { getAllEntryTitles, savePending, type MuseEntry } from '../../tools/muse'
+import { getAllEntryTitles, savePending, ENTRY_COLUMNS, type MuseEntry } from '../../tools/muse'
 import { getDb } from '@/db'
 import { muse_entries, muse_templates, muse_cases } from '@/db/schema'
 import { eq, ne, and } from 'drizzle-orm'
@@ -374,7 +374,7 @@ export async function searchKnowledge(query: string, options?: {
   const queryLower = query.toLowerCase()
   const queryWords = queryLower.split(' ').filter(w => w.length > 2)
 
-  let entries = await getDb().select().from(muse_entries)
+  let entries = await getDb().select(ENTRY_COLUMNS).from(muse_entries)
     .where(eq(muse_entries.status, 'active')) as MuseEntry[]
 
   if (tier !== 'all') {

@@ -25,7 +25,41 @@ export interface MuseEntry {
   linked_entries: string      // JSON array of muse_entries.id
   source_scenario: string | null
   times_accessed: number
+  has_file: number            // 1 = original file attached — see getEntryFile() for the binary
+  file_name: string | null
+  file_type: string | null
+  file_size: number | null
+  // Deliberately no file_data here — the binary never travels through the normal
+  // entry list/search/getEntry paths. Only getEntryFile() below selects it.
 }
+
+// Reused by every bulk/select-all query below so file_data (a BLOB, potentially
+// tens of MB) is never pulled into a list of entries, search results, or a single
+// getEntry() response — only the dedicated download route (getEntryFile) selects it.
+export const ENTRY_COLUMNS = {
+  id: muse_entries.id,
+  sector: muse_entries.sector,
+  title: muse_entries.title,
+  summary: muse_entries.summary,
+  content: muse_entries.content,
+  brief_depth: muse_entries.brief_depth,
+  source: muse_entries.source,
+  source_agent: muse_entries.source_agent,
+  status: muse_entries.status,
+  date_filed: muse_entries.date_filed,
+  last_updated: muse_entries.last_updated,
+  created_at: muse_entries.created_at,
+  privacy_tier: muse_entries.privacy_tier,
+  entry_type: muse_entries.entry_type,
+  tags: muse_entries.tags,
+  linked_entries: muse_entries.linked_entries,
+  source_scenario: muse_entries.source_scenario,
+  times_accessed: muse_entries.times_accessed,
+  has_file: muse_entries.has_file,
+  file_name: muse_entries.file_name,
+  file_type: muse_entries.file_type,
+  file_size: muse_entries.file_size,
+} as const
 
 export interface MuseChangeLog {
   id: string
@@ -72,8 +106,11 @@ export interface MuseEntryFull extends MuseEntry {
 // respected as given by the caller (default 1/open) — nothing here ever
 // upgrades or downgrades a caller's stated tier.
 export async function saveEntry(
-  entry: Omit<MuseEntry, 'id' | 'created_at' | 'privacy_tier' | 'entry_type' | 'tags' | 'linked_entries' | 'source_scenario' | 'times_accessed'> &
-    Partial<Pick<MuseEntry, 'privacy_tier' | 'entry_type' | 'tags' | 'linked_entries' | 'source_scenario' | 'times_accessed'>>,
+  entry: Omit<MuseEntry, 'id' | 'created_at' | 'privacy_tier' | 'entry_type' | 'tags' | 'linked_entries' | 'source_scenario' | 'times_accessed' | 'has_file' | 'file_name' | 'file_type' | 'file_size'> &
+    Partial<Pick<MuseEntry, 'privacy_tier' | 'entry_type' | 'tags' | 'linked_entries' | 'source_scenario' | 'times_accessed' | 'has_file' | 'file_name' | 'file_type' | 'file_size'>>,
+  // File binary — kept out of the MuseEntry-shaped `entry` param (see ENTRY_COLUMNS
+  // note above); only Tab 1's manual upload route ever passes this.
+  fileData?: Buffer,
 ): Promise<string> {
   const id = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
@@ -96,8 +133,50 @@ export async function saveEntry(
     linked_entries: entry.linked_entries ?? '[]',
     source_scenario: entry.source_scenario ?? null,
     times_accessed: entry.times_accessed ?? 0,
+    has_file: entry.has_file ?? 0,
+    file_name: entry.file_name ?? null,
+    file_type: entry.file_type ?? null,
+    file_size: entry.file_size ?? null,
+    file_data: fileData ?? null,
   })
   return id
+}
+
+// ─── File attachment (Tab 1 manual filings only) ───────────────────────────
+// CASSANDRA / APOLLO / ORACLE auto-filing never calls these — they call saveEntry()
+// without a fileData argument (has_file defaults to 0), same as before this feature.
+
+export async function attachFileToEntry(
+  id: string,
+  file: { file_name: string; file_type: string; file_size: number; file_data: Buffer },
+): Promise<void> {
+  await getDb().update(muse_entries).set({
+    has_file: 1,
+    file_name: file.file_name,
+    file_type: file.file_type,
+    file_size: file.file_size,
+    file_data: file.file_data,
+  }).where(eq(muse_entries.id, id))
+}
+
+// Dedicated lookup for the download route — the only place file_data is ever
+// selected. Returns null if the entry doesn't exist or has no file stored.
+export async function getEntryFile(
+  id: string,
+): Promise<{ file_name: string; file_type: string; file_data: Buffer } | null> {
+  const rows = await getDb()
+    .select({
+      has_file: muse_entries.has_file,
+      file_name: muse_entries.file_name,
+      file_type: muse_entries.file_type,
+      file_data: muse_entries.file_data,
+    })
+    .from(muse_entries)
+    .where(eq(muse_entries.id, id))
+    .limit(1)
+  const row = rows[0]
+  if (!row || row.has_file !== 1 || !row.file_data || !row.file_name) return null
+  return { file_name: row.file_name, file_type: row.file_type ?? 'application/octet-stream', file_data: row.file_data }
 }
 
 export async function updateEntryTags(id: string, tags: string[]): Promise<void> {
@@ -133,7 +212,7 @@ export async function bumpTagCounts(tags: string[]): Promise<void> {
 export async function getEntriesByTags(tags: string[], limit = 3): Promise<MuseEntry[]> {
   if (tags.length === 0) return []
   const rows = await getDb()
-    .select()
+    .select(ENTRY_COLUMNS)
     .from(muse_entries)
     .where(and(eq(muse_entries.status, 'active'), eq(muse_entries.privacy_tier, 1)))
 
@@ -181,7 +260,7 @@ export async function updateEntryFields(
   id: string,
   fields: { content?: string; title?: string; sector?: string },
 ): Promise<{ changed: boolean }> {
-  const rows = await getDb().select().from(muse_entries).where(eq(muse_entries.id, id)).limit(1)
+  const rows = await getDb().select(ENTRY_COLUMNS).from(muse_entries).where(eq(muse_entries.id, id)).limit(1)
   const existing = rows[0]
   if (!existing) throw new Error(`Entry not found: ${id}`)
 
@@ -216,14 +295,14 @@ export async function getEntries(sector?: string): Promise<MuseEntry[]> {
   const db = getDb()
   if (sector) {
     const rows = await db
-      .select()
+      .select(ENTRY_COLUMNS)
       .from(muse_entries)
       .where(and(eq(muse_entries.status, 'active'), eq(muse_entries.sector, sector)))
       .orderBy(desc(muse_entries.last_updated))
     return rows as MuseEntry[]
   }
   const rows = await db
-    .select()
+    .select(ENTRY_COLUMNS)
     .from(muse_entries)
     .where(eq(muse_entries.status, 'active'))
     .orderBy(desc(muse_entries.last_updated))
@@ -232,7 +311,7 @@ export async function getEntries(sector?: string): Promise<MuseEntry[]> {
 
 export async function getEntry(id: string): Promise<MuseEntryFull | null> {
   const rows = await getDb()
-    .select()
+    .select(ENTRY_COLUMNS)
     .from(muse_entries)
     .where(eq(muse_entries.id, id))
     .limit(1)
@@ -287,7 +366,7 @@ export async function searchEntries(query: string, sector?: string): Promise<Mus
     : and(baseFilter, textMatch)
 
   const rows = await db
-    .select()
+    .select(ENTRY_COLUMNS)
     .from(muse_entries)
     .where(filter)
     .orderBy(desc(muse_entries.last_updated))
@@ -421,7 +500,7 @@ export async function getInsights(): Promise<{
   const [pending, recentEntries] = await Promise.all([
     getPending(),
     getDb()
-      .select()
+      .select(ENTRY_COLUMNS)
       .from(muse_entries)
       .where(eq(muse_entries.status, 'active'))
       .orderBy(desc(muse_entries.last_updated))
@@ -456,7 +535,7 @@ export async function getRecentEntriesBySector(
 ): Promise<MuseEntry[]> {
   const since = Math.floor(Date.now() / 1000) - days * 86400
   const rows = await getDb()
-    .select()
+    .select(ENTRY_COLUMNS)
     .from(muse_entries)
     .where(and(eq(muse_entries.sector, sector), eq(muse_entries.status, 'active'), gte(muse_entries.created_at, since)))
     .orderBy(desc(muse_entries.created_at))

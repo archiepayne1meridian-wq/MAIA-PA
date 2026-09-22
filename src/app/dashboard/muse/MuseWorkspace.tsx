@@ -75,6 +75,12 @@ function fmtDateTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
+function fmtFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function parseTags(json: string): string[] {
   try {
     const parsed = JSON.parse(json)
@@ -98,6 +104,7 @@ interface MuseEntryLite {
   linked_entries: string
   last_updated: number
   date_filed: number
+  has_file: number
 }
 
 interface MuseTemplate {
@@ -208,6 +215,9 @@ function readFileAsText(file: File): Promise<string> {
   })
 }
 
+const UPLOAD_ALLOWED_RE = /\.(pdf|docx|xlsx|pptx|txt|md|png|jpe?g)$/i
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
 async function extractPdfText(file: File): Promise<string> {
   const arrayBuffer = await file.arrayBuffer()
   const pdfjsLib = await import('pdfjs-dist')
@@ -312,7 +322,10 @@ export default function MuseWorkspace() {
   const [knowSubmitting, setKnowSubmitting] = useState(false)
   const [knowMsg, setKnowMsg] = useState<{ text: string; ok: boolean; tags?: string[] } | null>(null)
   const [knowDragOver, setKnowDragOver] = useState(false)
-  const [pdfExtracting, setPdfExtracting] = useState(false)
+  const [knowFileProcessing, setKnowFileProcessing] = useState(false)
+  const [knowDroppedFile, setKnowDroppedFile] = useState<File | null>(null)
+  const [knowFileExtractOk, setKnowFileExtractOk] = useState<boolean | null>(null)
+  const [knowStorageMode, setKnowStorageMode] = useState<'text_only' | 'keep_file'>('keep_file')
   const [micActive, setMicActive] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
 
@@ -526,31 +539,43 @@ export default function MuseWorkspace() {
     setKnowDragOver(false)
     const file = e.dataTransfer.files[0]
     if (!file) return
-    if (!/\.(pdf|txt|md)$/i.test(file.name)) {
-      setKnowMsg({ text: 'Only .pdf, .txt, or .md files are supported.', ok: false })
+    if (!UPLOAD_ALLOWED_RE.test(file.name)) {
+      setKnowMsg({ text: 'Unsupported file type — allowed: PDF, DOCX, XLSX, PPTX, TXT, MD, PNG, JPG.', ok: false })
       return
     }
-    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
-    try {
-      let text: string
-      if (isPdf) {
-        setPdfExtracting(true)
-        setKnowMsg(null)
-        text = await extractPdfText(file)
-        if (!text.trim()) {
-          setKnowMsg({ text: `"${file.name}" has no extractable text — it may be a scanned/image-only PDF.`, ok: false })
-          return
-        }
-      } else {
-        text = await readFileAsText(file)
-      }
-      setKnowContent(prev => prev.trim() ? `${prev.trim()}\n\n${text}` : text)
-      setKnowMsg({ text: `Loaded "${file.name}" — review and submit below.`, ok: true })
-    } catch {
-      setKnowMsg({ text: `Couldn't read "${file.name}".`, ok: false })
-    } finally {
-      setPdfExtracting(false)
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setKnowMsg({ text: `"${file.name}" is too large — max 50MB.`, ok: false })
+      return
     }
+
+    setKnowMsg(null)
+    const isPdf = /\.pdf$/i.test(file.name)
+    const isTextLike = /\.(txt|md)$/i.test(file.name)
+
+    // PDF/TXT/MD can be previewed client-side (same extraction already used by the
+    // paste flow) so the ✓/✗ "text extracted" status is accurate immediately. DOCX/XLSX
+    // are extracted server-side on submit (mammoth/SheetJS aren't client-bundled — no
+    // reason to duplicate those libraries in the browser); PPTX/images never extract.
+    if (isPdf || isTextLike) {
+      setKnowFileProcessing(true)
+      try {
+        const text = isPdf ? await extractPdfText(file) : await readFileAsText(file)
+        setKnowFileExtractOk(text.trim().length > 0)
+      } catch {
+        setKnowFileExtractOk(false)
+      } finally {
+        setKnowFileProcessing(false)
+      }
+    } else {
+      setKnowFileExtractOk(null)
+    }
+
+    setKnowDroppedFile(file)
+  }
+
+  function removeDroppedFile() {
+    setKnowDroppedFile(null)
+    setKnowFileExtractOk(null)
   }
 
   function removeTagPreview(tag: string) {
@@ -564,7 +589,47 @@ export default function MuseWorkspace() {
     setTagInput('')
   }
 
+  async function handleKnowFileSubmit() {
+    if (!knowDroppedFile || !knowSector) return
+    setKnowSubmitting(true)
+    setKnowMsg(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', knowDroppedFile)
+      fd.append('sector', knowSector)
+      if (knowTitle.trim()) fd.append('title', knowTitle.trim())
+      // Anything typed in Context or Content rides along as a hint/fallback —
+      // the file's own extracted text is still the authoritative source.
+      const combinedContext = [knowContext.trim(), knowContent.trim()].filter(Boolean).join('\n\n')
+      if (combinedContext) fd.append('context', combinedContext)
+      fd.append('entryType', knowEntryType)
+      fd.append('privacyTier', String(knowPrivacyTier))
+      fd.append('keepFile', knowStorageMode === 'keep_file' ? 'true' : 'false')
+
+      const res = await fetch('/api/dashboard/muse/upload', { method: 'POST', body: fd })
+      const data = await res.json() as { entryId?: string; title?: string; tags?: string[]; fileStored?: boolean; fileName?: string; error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Upload failed')
+      setKnowMsg({
+        text: `Filed ✓ — "${data.title}"${data.fileStored ? ' — original file saved' : ' — text only'}`,
+        ok: true,
+        tags: data.tags,
+      })
+      setKnowTitle('')
+      setKnowContext('')
+      setKnowContent('')
+      setKnowTagsPreview([])
+      setKnowDroppedFile(null)
+      setKnowFileExtractOk(null)
+      await fetchEntries()
+    } catch (err) {
+      setKnowMsg({ text: err instanceof Error ? err.message : 'Upload failed', ok: false })
+    } finally {
+      setKnowSubmitting(false)
+    }
+  }
+
   async function handleKnowSubmit() {
+    if (knowDroppedFile) { void handleKnowFileSubmit(); return }
     if (!knowContent.trim() || !knowSector) return
     setKnowSubmitting(true)
     setKnowMsg(null)
@@ -864,6 +929,7 @@ export default function MuseWorkspace() {
                     <button key={`k-${k.id}`} className={s.museEntryRow} onClick={() => setSelected({ type: 'entry', id: k.id })}>
                       <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR[k.entry_type === 'news' ? 'news' : 'knowledge'] }} />
                       <span className={s.museEntryTitle}>{k.title}</span>
+                      {k.has_file === 1 && <span title="File attached">📎</span>}
                       {k.privacy_tier === 2 && <span title="Server only — never sent to AI">🔒</span>}
                     </button>
                   ))}
@@ -922,6 +988,7 @@ export default function MuseWorkspace() {
                 <button key={entry.id} className={s.museEntryRow} onClick={() => setSelected({ type: 'entry', id: entry.id })}>
                   <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR.news }} />
                   <span className={s.museEntryTitle}>{entry.title}</span>
+                  {entry.has_file === 1 && <span title="File attached">📎</span>}
                   <span className={s.museEntryDate}>{fmtDate(entry.last_updated)}</span>
                 </button>
               ))
@@ -933,6 +1000,7 @@ export default function MuseWorkspace() {
               <button key={entry.id} className={s.museEntryRow} onClick={() => setSelected({ type: 'entry', id: entry.id })}>
                 <span className={s.museResultDot} style={{ background: RESULT_TYPE_COLOR.knowledge }} />
                 <span className={s.museEntryTitle}>{entry.title}</span>
+                {entry.has_file === 1 && <span title="File attached">📎</span>}
                 {entry.privacy_tier === 2 && <span title="Server only — never sent to AI">🔒</span>}
               </button>
             ))}
@@ -963,6 +1031,7 @@ export default function MuseWorkspace() {
                       sectorEntriesFor(sector.id).map(entry => (
                         <button key={entry.id} className={s.museEntryRow} onClick={() => setSelected({ type: 'entry', id: entry.id })}>
                           <span className={s.museEntryTitle}>{entry.title}</span>
+                          {entry.has_file === 1 && <span title="File attached">📎</span>}
                           {entry.privacy_tier === 2 && <span title="Server only — never sent to AI">🔒</span>}
                           <span className={s.museEntryDate}>{fmtDate(entry.last_updated)}</span>
                         </button>
@@ -1044,6 +1113,13 @@ export default function MuseWorkspace() {
                   />
                 ) : (
                   <h2 className={s.museOverlayTitle} onClick={openTitleEdit} style={{ cursor: 'text' }}>{selectedEntry.title}</h2>
+                )}
+
+                {selectedEntry.has_file === 1 && selectedEntry.file_name && (
+                  <div className={s.museFileStrip}>
+                    <span>📎 {selectedEntry.file_name}{selectedEntry.file_size ? ` (${fmtFileSize(selectedEntry.file_size)})` : ''}</span>
+                    <a className={s.museDownloadBtn} href={`/api/dashboard/muse/download/${selectedEntry.id}`}>⬇ Download original</a>
+                  </div>
                 )}
 
                 <div className={s.museLinksRow}>
@@ -1304,15 +1380,64 @@ export default function MuseWorkspace() {
                   {micActive && <span className={s.museBrainDumpMsg}>Listening…</span>}
                   {voiceError && <span className={s.museBrainDumpMsg} style={{ color: 'var(--alert)' }}>{voiceError}</span>}
                 </div>
-                <div
-                  className={s.museDropZone}
-                  style={pdfExtracting ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)', cursor: 'wait' } : knowDragOver ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)' } : undefined}
-                  onDragOver={e => { e.preventDefault(); if (!pdfExtracting) setKnowDragOver(true) }}
-                  onDragLeave={() => setKnowDragOver(false)}
-                  onDrop={e => { e.preventDefault(); if (!pdfExtracting) void handleKnowFileDrop(e) }}
-                >
-                  {pdfExtracting ? 'Extracting text from PDF…' : 'Drop a PDF, .txt, or .md file — combines with content above'}
-                </div>
+                {!knowDroppedFile && (
+                  <div
+                    className={s.museDropZone}
+                    style={knowFileProcessing ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)', cursor: 'wait' } : knowDragOver ? { borderColor: 'var(--accent-deep)', color: 'var(--accent)' } : undefined}
+                    onDragOver={e => { e.preventDefault(); if (!knowFileProcessing) setKnowDragOver(true) }}
+                    onDragLeave={() => setKnowDragOver(false)}
+                    onDrop={e => { e.preventDefault(); if (!knowFileProcessing) void handleKnowFileDrop(e) }}
+                  >
+                    {knowFileProcessing ? (
+                      'Extracting text…'
+                    ) : (
+                      <>
+                        DROP A FILE OR PASTE CONTENT
+                        <br />
+                        Drop PDF, Word, Excel, or text file here
+                        <br />
+                        <span style={{ fontSize: 10, opacity: 0.7 }}>Supported: PDF · DOCX · XLSX · TXT · MD · Images — Max 50MB</span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {knowDroppedFile && (
+                  <div className={s.museFileStrip}>
+                    <span>
+                      📎 {knowDroppedFile.name} ({fmtFileSize(knowDroppedFile.size)})
+                      {knowFileExtractOk === true && ' ✓ Text extracted'}
+                      {knowFileExtractOk === false && ' — no extractable text'}
+                      {knowFileExtractOk === null && ' — extracts on submit'}
+                    </span>
+                    <button className={s.museTagRemove} onClick={removeDroppedFile}>✕</button>
+                  </div>
+                )}
+
+                {knowDroppedFile && (
+                  <div className={s.fpSection} style={{ marginTop: 4 }}>
+                    <span className={s.fpSectionLabel}>Storage</span>
+                    <div className={s.museFilterChips} style={{ padding: 0, border: 'none' }}>
+                      <button
+                        className={`${s.museFilterChip} ${knowStorageMode === 'text_only' ? s.museFilterChipActive : ''}`}
+                        onClick={() => setKnowStorageMode('text_only')}
+                      >
+                        Text only
+                      </button>
+                      <button
+                        className={`${s.museFilterChip} ${knowStorageMode === 'keep_file' ? s.museFilterChipActive : ''}`}
+                        onClick={() => setKnowStorageMode('keep_file')}
+                      >
+                        Keep file + text ✓
+                      </button>
+                    </div>
+                    {knowStorageMode === 'keep_file' ? (
+                      <p className={s.museBrainDumpMsg} style={{ color: 'var(--online)' }}>Original file saved — downloadable anytime ✓</p>
+                    ) : (
+                      <p className={s.museBrainDumpMsg}>Text extracted, discards the original file — good for news items, CRM notes, templates.</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className={s.fpSection}>
@@ -1351,7 +1476,7 @@ export default function MuseWorkspace() {
               <button
                 className={s.museBrainDumpBtn}
                 style={{ alignSelf: 'stretch', textAlign: 'center' }}
-                disabled={knowSubmitting || !knowContent.trim()}
+                disabled={knowSubmitting || (!knowDroppedFile && !knowContent.trim())}
                 onClick={() => void handleKnowSubmit()}
               >
                 {knowSubmitting ? 'Filing…' : 'File to MUSE'}

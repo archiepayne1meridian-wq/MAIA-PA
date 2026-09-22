@@ -1392,8 +1392,22 @@
 .museDropZone {
   border: 1px dashed var(--border); border-radius: 6px; padding: 12px;
   text-align: center; font-family: var(--mono); font-size: 11px; color: var(--text-dim);
-  transition: border-color 0.12s, color 0.12s;
+  transition: border-color 0.12s, color 0.12s; line-height: 1.7;
 }
+
+/* File attachments — drop-zone info strip (Tab 1) and entry-view download button */
+.museFileStrip {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-family: var(--mono); font-size: 11px; color: var(--text-mid);
+  background: var(--raised); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+}
+.museDownloadBtn {
+  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;
+  font-family: var(--mono); font-size: 11px; padding: 6px 12px; margin: 4px 0 8px;
+  background: var(--raised); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); text-decoration: none; cursor: pointer; transition: 0.12s;
+}
+.museDownloadBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
 .museBrainDumpBtn {
   align-self: flex-start; font-family: var(--mono); font-size: 11px; padding: 7px 16px;
   background: rgba(138,169,240,0.07); border: 1px solid var(--accent-deep);

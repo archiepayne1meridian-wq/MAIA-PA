@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, real, blob } from 'drizzle-orm/sqlite-core'
 import { sql } from 'drizzle-orm'
 
 export const approvals = sqliteTable('approvals', {
@@ -219,6 +219,11 @@ export const muse_entries = sqliteTable('muse_entries', {
   linked_entries: text('linked_entries').notNull().default('[]'),  // JSON array of muse_entries.id
   source_scenario: text('source_scenario'),                 // hermes_scenarios.id, when filed from/for a scenario
   times_accessed: integer('times_accessed').notNull().default(0),
+  has_file: integer('has_file').notNull().default(0),       // 1 = file_data holds the original file
+  file_name: text('file_name'),
+  file_type: text('file_type'),                              // MIME type
+  file_size: integer('file_size'),                            // bytes
+  file_data: blob('file_data', { mode: 'buffer' }),           // original file binary — Tab 1 manual filings only
 })
 
 export const muse_templates = sqliteTable('muse_templates', {

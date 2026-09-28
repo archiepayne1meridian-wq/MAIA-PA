@@ -96,19 +96,43 @@ const HIGH_VALUE_KEYWORDS = [
   'office closure', 'job cut', 'headcount', 'relocat',
   'expanding to switzerland', 'moving to switzerland',
 
-  // Markets (only when significant)
-  'market crash', 'market drop', 'market sell', 'bear market',
-  'rate decision', 'interest rate', 'bank of england',
-  'ecb rate', 'federal reserve', 'snb rate',
-  'tech selloff', 'market correction',
+  // Market intelligence — broad moves only
+  'market crash', 'market rally', 'market correction', 'bear market',
+  'bull market', 'market selloff', 'market volatility',
+  'bond market', 'gilt market', 'yield curve', 'bond yield',
+  'interest rates', 'rate cut', 'rate hike', 'rate decision',
+  'bank of england', 'ecb', 'federal reserve', 'snb',
+  'inflation', 'cpi', 'deflation',
+  'sector rotation', 'tech selloff', 'energy sector', 'financial sector',
+  'property market', 'real estate market', 'housing market',
+
+  // FCA — new rules only
+  'fca rule', 'fca regulation', 'fca policy', 'fca guidance',
+  'new regulation', 'regulatory change', 'rule change',
+  'consumer duty', 'financial promotion', 'advice rules',
 ]
 
 // EXCLUDE these even if they match above
 const EXCLUDE_KEYWORDS = [
-  'stock ban', 'insider trading', 'individual share',
-  'post-trade', 'mifid reporting', 'fca fine',
-  'conduct rules', 'senior manager regime',
-  'esma consultation', 'annex 1',
+  // Crypto
+  'bitcoin', 'crypto', 'cryptocurrency', 'ethereum', 'blockchain',
+  'nft', 'defi', 'web3', 'altcoin', 'token', 'binance', 'coinbase',
+  'digital asset', 'digital currency',
+
+  // Individual stocks and companies (unless Swiss employer cluster)
+  'earnings per share', 'quarterly earnings', 'analyst rating',
+  'price target', 'stock upgrade', 'stock downgrade', 'ipo filing',
+  'sec filing', 'insider trading', 'share buyback',
+
+  // FCA noise — hearings, enforcement, individual cases
+  'fca hearing', 'fca action', 'fca enforcement', 'fca fine',
+  'fca ban', 'fca investigation', 'tribunal', 'upper tribunal',
+  'regulatory sanction', 'conduct hearing', 'banned by fca',
+  'fined by fca', 'senior manager banned',
+
+  // General noise
+  'post-trade', 'mifid reporting', 'annex 1', 'esma consultation',
+  'technical standard', 'rts consultation',
 ]
 
 // FeedItem has no separate description field — title is the only text available,
@@ -275,8 +299,33 @@ Rules:
 
   Do not add "impact" to items in any other section.
 
+- QUOTES — if you find a genuinely useful quote from a credible financial
+  figure (central bank governor, finance minister, well-known economist,
+  senior market commentator) that is relevant to expat finance, markets,
+  or wealth — include it in the top-level "quote" field:
+
+  { "text": "[exact quote, verbatim from the source]", "person": "[name]",
+    "title": "[their title]", "date": "[date, or null if unknown]" }
+
+  Examples of good quotes:
+  - Bank of England Governor on interest rates
+  - Chancellor on pension or tax changes
+  - SNB Governor on Swiss franc policy
+  - Well-known investor on market conditions
+
+  Only include if genuinely useful and directly relevant. Maximum 1 quote
+  per brief. Do not invent quotes — only use verbatim quotes that actually
+  appear in the search findings below. If nothing qualifies, set "quote"
+  to null.
+
 Return this exact JSON shape:
 {
+  "quote": {
+    "text": "exact quote text",
+    "person": "person's name",
+    "title": "their title",
+    "date": "date, or null if unknown"
+  },
   "sections": [
     {
       "label": "Sector Snapshot",
@@ -306,6 +355,9 @@ Return this exact JSON shape:
 
 ("impact" appears only on items inside "Regulatory" and "Tax & Legislation" —
 omit it entirely from items in every other section.)
+
+("quote" is optional — set it to null (not an object) if no genuinely
+relevant, verbatim quote was found in the search findings.)
 
 Sections to include (only if content exists):
 Sector Snapshot, Pensions & Retirement, Tax & Legislation,
@@ -341,8 +393,16 @@ export interface StructuredBriefSection {
   items: StructuredBriefItem[]
 }
 
+export interface BriefQuote {
+  text: string
+  person: string
+  title: string
+  date: string | null
+}
+
 export interface StructuredBriefResult {
   sections: StructuredBriefSection[]
+  quote: BriefQuote | null
   rawJson: string        // exact JSON returned by the Haiku call, pre-guard — for verification
   rawSearches: SectionResearch[]  // raw findings per section, pre-combination — for verification
 }
@@ -373,8 +433,22 @@ export async function generateStructuredBrief(rssRelevant: FeedItem[], rssPerSec
   try { parsed = JSON.parse(cleaned) }
   catch { throw new Error(`[cassandra] generateStructuredBrief returned unparseable JSON: ${raw.slice(0, 300)}`) }
 
-  const obj = parsed as { sections?: unknown }
+  const obj = parsed as { sections?: unknown; quote?: unknown }
   if (!Array.isArray(obj.sections)) throw new Error('[cassandra] generateStructuredBrief missing sections array')
+
+  // Quote is a verbatim third-party attribution, not CASSANDRA's own prose —
+  // not run through guardField/guardProse (see the file-header comment on the
+  // advice-word guard: it applies to generated summary/angle text, never to
+  // attributed facts). Only basic shape validation here.
+  let quote: BriefQuote | null = null
+  if (obj.quote && typeof obj.quote === 'object') {
+    const { text, person, title, date } = obj.quote as Record<string, unknown>
+    if (typeof text === 'string' && text.trim() && typeof person === 'string' && person.trim() && typeof title === 'string' && title.trim()) {
+      quote = { text: text.trim(), person: person.trim(), title: title.trim(), date: typeof date === 'string' && date.trim() ? date.trim() : null }
+    } else {
+      console.error('[cassandra] generateStructuredBrief: malformed quote object — dropping.', obj.quote)
+    }
+  }
 
   const sections: StructuredBriefSection[] = []
   for (const rawSection of obj.sections as unknown[]) {
@@ -424,7 +498,7 @@ export async function generateStructuredBrief(rssRelevant: FeedItem[], rssPerSec
     if (guardedItems.length > 0) sections.push({ key: matched.key, label: matched.label, items: guardedItems })
   }
 
-  return { sections, rawJson: cleaned, rawSearches: searches }
+  return { sections, quote, rawJson: cleaned, rawSearches: searches }
 }
 
 // ─── Step 3 — action angles (call angle / post idea / knowledge update) ───────
@@ -540,12 +614,24 @@ export async function fileActionAnglesToMuse(actionAngles: string): Promise<numb
 
 // ─── Step 4 — deterministic Slack/dashboard rendering ─────────────────────────
 
+// "Quote: '...' — Person, Title (Date)" — parsed back out by CassandraWorkspace.tsx's
+// parseQuoteLine, matching the existing "Call angle:" / "Post idea:" / "Knowledge:"
+// line convention. Date is parenthesised rather than comma-joined with the rest —
+// title itself can legitimately contain a comma ("Governor, Bank of England"), so a
+// flat "person, title, date" chain can't be split back apart unambiguously; a
+// parenthetical is trivial to strip on the way back out regardless of what's inside it.
+function formatQuoteLine(quote: BriefQuote): string {
+  const attribution = [quote.person, quote.title].filter(Boolean).join(', ')
+  return `Quote: '${quote.text}' — ${attribution}${quote.date ? ` (${quote.date})` : ''}`
+}
+
 export function formatStructuredBrief(
   indices: IndexQuote[],
   fx: FxQuote[],
   sections: StructuredBriefSection[],
   skipped: string[],
   actionAngles: string,
+  quote: BriefQuote | null = null,
 ): string {
   const blocks: string[] = []
 
@@ -561,6 +647,12 @@ export function formatStructuredBrief(
     const lines = fx.map(q => `${q.pair} ${q.rate.toFixed(4)} ${fmtPct(q.dayChangePct)}`).join(' · ')
     const guarded = guardProse(`*FX*\n${lines}`, 'FX')
     if (guarded) blocks.push(guarded)
+  }
+
+  // ── Quote of the Day — verbatim third-party attribution, not guarded (see
+  // the note on generateStructuredBrief's quote parsing above). ─────────────
+  if (quote) {
+    blocks.push(`*Quote of the Day*\n${formatQuoteLine(quote)}`)
   }
 
   // ── Today's Angle (call angle / post idea / knowledge update) ──────────────

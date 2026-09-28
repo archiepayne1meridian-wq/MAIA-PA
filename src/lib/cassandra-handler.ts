@@ -206,13 +206,13 @@ async function buildBriefPayload(config: CassandraConfig): Promise<{
   const skippedIrrelevant = feeds.items.length - relevant.length
   console.log(`[cassandra] filtered out ${skippedIrrelevant} irrelevant items from ${feeds.items.length} total.`)
 
-  const { sections, rawJson, rawSearches } = await generateStructuredBrief(relevant, config.itemsPerSection)
-  console.log(`[cassandra] generateStructuredBrief: ${sections.length} sections, raw JSON:`, rawJson)
+  const { sections, quote, rawJson, rawSearches } = await generateStructuredBrief(relevant, config.itemsPerSection)
+  console.log(`[cassandra] generateStructuredBrief: ${sections.length} sections, quote: ${quote ? 'yes' : 'no'}, raw JSON:`, rawJson)
 
   const actionAngles = await generateActionAngles(sections)
   console.log('[cassandra] generateActionAngles raw output:', actionAngles)
 
-  const text = formatStructuredBrief(indices, fx, sections, feeds.skipped, actionAngles)
+  const text = formatStructuredBrief(indices, fx, sections, feeds.skipped, actionAngles, quote)
 
   const marketsJson = JSON.stringify({ indices, fx })
 

@@ -80,22 +80,51 @@ interface ActionAngles {
   knowledgeUpdates: string[]
 }
 
-// Parses the "Call angle: ...", "Post idea: ...", "Knowledge: ..." lines that
-// cassandra.ts's generateActionAngles embeds into brief.summary (under a
-// "Today's Angle" header) — matched by line prefix regardless of exact
-// surrounding formatting, so it degrades gracefully to "nothing found" rather
-// than throwing if the header text ever shifts.
-function parseActionAngles(summary: string): ActionAngles {
+interface ParsedQuote {
+  text: string
+  person: string
+  title: string | null
+}
+
+// Parses cassandra.ts's formatQuoteLine output: "Quote: '<text>' — Person, Title (Date)"
+// (date is parenthesised and optional — not displayed here, so it's simply
+// stripped rather than captured). Only the FIRST comma splits person from
+// title — title itself can legitimately contain its own comma (e.g. "Governor,
+// Bank of England"), so a naive split-into-two-parts would silently truncate
+// it. Returns null if the line doesn't match the expected shape rather than
+// throwing — a malformed quote just means the dashboard shows no quote card,
+// same "degrade gracefully" approach as parseActionAngles below.
+function parseQuoteLine(line: string): ParsedQuote | null {
+  const match = line.match(/^quote:\s*'(.+)'\s*—\s*(.+?)(?:\s*\([^)]*\))?$/i)
+  if (!match) return null
+  const text = match[1]?.trim()
+  const attribution = match[2]?.trim()
+  if (!text || !attribution) return null
+  const commaIdx = attribution.indexOf(',')
+  const person = (commaIdx === -1 ? attribution : attribution.slice(0, commaIdx)).trim()
+  const title = commaIdx === -1 ? null : attribution.slice(commaIdx + 1).trim()
+  if (!person) return null
+  return { text, person, title: title || null }
+}
+
+// Parses the "Call angle: ...", "Post idea: ...", "Knowledge: ...", "Quote: ..."
+// lines that cassandra.ts's generateActionAngles / formatStructuredBrief embed
+// into brief.summary — matched by line prefix regardless of exact surrounding
+// formatting, so it degrades gracefully to "nothing found" rather than throwing
+// if the header text ever shifts.
+function parseActionAngles(summary: string): ActionAngles & { quote: ParsedQuote | null } {
   const callAngles: string[] = []
   const postIdeas: string[] = []
   const knowledgeUpdates: string[] = []
+  let quote: ParsedQuote | null = null
   for (const rawLine of summary.split('\n')) {
     const line = rawLine.trim()
     if (/^call angle:/i.test(line)) callAngles.push(line.replace(/^call angle:\s*/i, ''))
     else if (/^post idea:/i.test(line)) postIdeas.push(line.replace(/^post idea:\s*/i, ''))
     else if (/^knowledge:/i.test(line)) knowledgeUpdates.push(line.replace(/^knowledge:\s*/i, ''))
+    else if (/^quote:/i.test(line)) quote = parseQuoteLine(line)
   }
-  return { callAngles, postIdeas, knowledgeUpdates }
+  return { callAngles, postIdeas, knowledgeUpdates, quote }
 }
 
 // Groups the flat headlines array by section, preserving first-appearance order —
@@ -282,30 +311,42 @@ export default function CassandraWorkspace() {
           {brief && !loading && (
             <>
               {(() => {
-                const { callAngles, postIdeas, knowledgeUpdates } = parseActionAngles(brief.summary)
+                const { callAngles, postIdeas, knowledgeUpdates, quote } = parseActionAngles(brief.summary)
                 const hasAnyAngle = callAngles.length > 0 || postIdeas.length > 0 || knowledgeUpdates.length > 0
-                if (!hasAnyAngle) {
-                  return <p className={s.cassandraAngleNone}>Nothing significant today — standard calls, no specific angle.</p>
-                }
                 return (
                   <>
-                    {callAngles.length > 0 && (
-                      <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--accent)' }}>
-                        <div className={s.cassandraAngleLabel}>📞 CALL ANGLES TODAY</div>
-                        {callAngles.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
+                    {quote && (
+                      <div className={s.cassandraQuoteCard}>
+                        <div className={s.cassandraAngleLabel}>💬 QUOTE OF THE DAY</div>
+                        <p className={s.cassandraQuoteText}>&ldquo;{quote.text}&rdquo;</p>
+                        <p className={s.cassandraQuoteAttribution}>
+                          — {quote.person}{quote.title ? `, ${quote.title}` : ''}
+                        </p>
                       </div>
                     )}
-                    {postIdeas.length > 0 && (
-                      <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--online)' }}>
-                        <div className={s.cassandraAngleLabel}>✍️ POST IDEAS</div>
-                        {postIdeas.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
-                      </div>
-                    )}
-                    {knowledgeUpdates.length > 0 && (
-                      <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--idle)' }}>
-                        <div className={s.cassandraAngleLabel}>📚 KNOWLEDGE UPDATE</div>
-                        {knowledgeUpdates.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
-                      </div>
+                    {!hasAnyAngle ? (
+                      <p className={s.cassandraAngleNone}>Nothing significant today — standard calls, no specific angle.</p>
+                    ) : (
+                      <>
+                        {callAngles.length > 0 && (
+                          <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--accent)' }}>
+                            <div className={s.cassandraAngleLabel}>📞 CALL ANGLES TODAY</div>
+                            {callAngles.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
+                          </div>
+                        )}
+                        {postIdeas.length > 0 && (
+                          <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--online)' }}>
+                            <div className={s.cassandraAngleLabel}>✍️ POST IDEAS</div>
+                            {postIdeas.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
+                          </div>
+                        )}
+                        {knowledgeUpdates.length > 0 && (
+                          <div className={s.cassandraAngleSection} style={{ borderLeftColor: 'var(--idle)' }}>
+                            <div className={s.cassandraAngleLabel}>📚 KNOWLEDGE UPDATE</div>
+                            {knowledgeUpdates.map((a, i) => <p key={i} className={s.cassandraAngleText}>{a}</p>)}
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 )

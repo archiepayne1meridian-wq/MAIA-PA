@@ -6,7 +6,8 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from 'recharts'
 import s from '../../dashboard.module.css'
-import { calculatePillar3, formatCHF, type Pillar3Params, type YearlySnapshot } from '@/lib/axa-pillar3-calc'
+import { calculatePillar3, type Pillar3Params, type YearlySnapshot } from '@/lib/axa-pillar3-calc'
+import { formatCHF, fmtPct } from '@/lib/format'
 import ProductProfile from '@/components/atlas/ProductProfile'
 
 // ── Types & defaults ─────────────────────────────────────────────────────────
@@ -36,9 +37,6 @@ const DEFAULT_PILLAR3_FORM: Pillar3FormState = {
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
 
-function fmtPct(n: number, dp = 1): string {
-  return `${n >= 0 ? '+' : ''}${n.toFixed(dp)}%`
-}
 function formatAxisCHF(v: number): string {
   if (Math.abs(v) >= 1_000_000) return `CHF ${(v / 1_000_000).toFixed(1)}m`
   if (Math.abs(v) >= 1000) return `CHF ${Math.round(v / 1000)}k`

@@ -6,7 +6,8 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import s from '../../dashboard.module.css'
-import { calculateLiberty, formatCHF, type LibertyParams, type YearlySnapshot } from '@/lib/liberty-vb-calc'
+import { calculateLiberty, type LibertyParams, type YearlySnapshot } from '@/lib/liberty-vb-calc'
+import { formatCHF, fmtPct } from '@/lib/format'
 import ProductProfile from '@/components/atlas/ProductProfile'
 
 // ── Types & defaults ─────────────────────────────────────────────────────────
@@ -29,9 +30,6 @@ const DEFAULT_LIBERTY_FORM: LibertyFormState = {
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
 
-function fmtPct(n: number, dp = 1): string {
-  return `${n >= 0 ? '+' : ''}${n.toFixed(dp)}%`
-}
 function formatAxisCHF(v: number): string {
   if (Math.abs(v) >= 1_000_000) return `CHF ${(v / 1_000_000).toFixed(1)}m`
   if (Math.abs(v) >= 1000) return `CHF ${Math.round(v / 1000)}k`

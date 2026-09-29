@@ -12,7 +12,6 @@ export interface ApolloCall {
   intelligence_json: string | null
   advisor_brief: string | null
   client_email: string | null
-  muse_transcript_id: string | null
   muse_brief_id: string | null
   muse_email_id: string | null
   muse_case_id: string | null

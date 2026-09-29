@@ -13,6 +13,7 @@
 
 import { askWith, askWithWebSearch } from './claude'
 import type { IndexQuote, FxQuote } from '../../tools/market-data'
+import { extractJson } from './format'
 import type { FeedItem } from '../../tools/feeds'
 import { saveEntry, updateEntryTags } from '../../tools/muse'
 import { autoTag } from './muse'
@@ -369,15 +370,6 @@ Markets and FX are handled separately — do not include them in sections.`
 // Claude sometimes prefaces its final answer with a sentence of reasoning before
 // the JSON — extract a fenced block anywhere in the text, or fall back to
 // brace-matching, rather than requiring the JSON at the very start.
-function extractJson(raw: string): string {
-  const fenced = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-  if (fenced?.[1]) return fenced[1].trim()
-  const first = raw.indexOf('{')
-  const last = raw.lastIndexOf('}')
-  if (first !== -1 && last > first) return raw.slice(first, last + 1)
-  return raw.trim()
-}
-
 export type ImpactLevel = 'direct' | 'watch' | 'awareness'
 
 export interface StructuredBriefItem {

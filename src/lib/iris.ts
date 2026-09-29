@@ -8,6 +8,7 @@ import { askWith, askWithWebSearch, type WebSearchTrace } from './claude'
 import type { VoicePref } from '../../tools/iris'
 import { getTopVoiceLearnings } from '../../tools/iris'
 import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
+import { extractJson } from './format'
 
 let _openai: OpenAI | null = null
 function getOpenAIClient(): OpenAI {
@@ -236,15 +237,6 @@ UNIVERSAL RULES:
 // Claude sometimes prefaces its final answer with a sentence of reasoning
 // ("the search shows... I'll use an evergreen angle") before the JSON — strip
 // that rather than requiring the JSON to be the very first thing in the text.
-function extractJson(raw: string): string {
-  const fenced = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-  if (fenced?.[1]) return fenced[1].trim()
-  const first = raw.indexOf('{')
-  const last = raw.lastIndexOf('}')
-  if (first !== -1 && last > first) return raw.slice(first, last + 1)
-  return raw.trim()
-}
-
 export function formatSlackMessage(
   slot: 'morning' | 'evening',
   topic: string,

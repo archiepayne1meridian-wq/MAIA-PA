@@ -4,6 +4,7 @@
 import { askWith } from './claude'
 import type { DianaTranscriptTurn } from '../../tools/diana-db'
 import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
+import { extractJson } from './format'
 
 const HAIKU = 'claude-haiku-4-5-20251001'
 
@@ -840,15 +841,6 @@ no prose outside the JSON, matching this exact shape:
 
 // Robust JSON extraction — same pattern used elsewhere in this codebase (cassandra.ts, muse.ts):
 // fenced-code-block-anywhere regex, fallback to first-`{`-to-last-`}` brace matching.
-function extractJson(raw: string): string {
-  const fenced = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-  if (fenced?.[1]) return fenced[1].trim()
-  const first = raw.indexOf('{')
-  const last = raw.lastIndexOf('}')
-  if (first !== -1 && last > first) return raw.slice(first, last + 1)
-  return raw.trim()
-}
-
 function clamp(n: unknown, max: number): number {
   const v = typeof n === 'number' && Number.isFinite(n) ? n : 0
   return Math.max(0, Math.min(max, Math.round(v)))

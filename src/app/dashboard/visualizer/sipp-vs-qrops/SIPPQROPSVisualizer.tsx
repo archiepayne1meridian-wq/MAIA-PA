@@ -6,7 +6,8 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from 'recharts'
 import s from '../../dashboard.module.css'
-import { calculateSIPPvsQROPS, formatGBP, type SIPPQROPSParams, type YearlyComparison } from '@/lib/sipp-qrops-calc'
+import { calculateSIPPvsQROPS, type SIPPQROPSParams, type YearlyComparison } from '@/lib/sipp-qrops-calc'
+import { formatGBP } from '@/lib/format'
 import ProductProfile from '@/components/atlas/ProductProfile'
 
 // ── Types & defaults ─────────────────────────────────────────────────────────

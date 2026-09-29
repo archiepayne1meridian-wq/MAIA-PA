@@ -109,9 +109,3 @@ export function calculatePillar3(params: Pillar3Params): Pillar3Result {
     trueAnnualCost: Math.round(trueAnnualCost),
   }
 }
-
-export function formatCHF(amount: number): string {
-  return new Intl.NumberFormat('de-CH', {
-    style: 'currency', currency: 'CHF', maximumFractionDigits: 0,
-  }).format(amount)
-}

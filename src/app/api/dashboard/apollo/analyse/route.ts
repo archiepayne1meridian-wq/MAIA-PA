@@ -4,6 +4,7 @@ import { askWith } from '@/lib/claude'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
 import { getCall, updateCall } from '../../../../../../tools/apollo'
+import { extractJson } from '@/lib/format'
 
 const OPUS = 'claude-opus-4-6'
 
@@ -142,17 +143,6 @@ function analyseFillerWords(transcript: string): FillerWordAnalysis {
   const total = totalFillerCount(counts)
   const worstOffender = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
   return { total, breakdown: counts, worst_offender: worstOffender }
-}
-
-// Robust JSON extraction — Opus is instructed to return JSON only, but models
-// occasionally wrap it in a fenced code block anyway.
-function extractJson(raw: string): string {
-  const fenced = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-  if (fenced?.[1]) return fenced[1].trim()
-  const first = raw.indexOf('{')
-  const last = raw.lastIndexOf('}')
-  if (first !== -1 && last > first) return raw.slice(first, last + 1)
-  return raw.trim()
 }
 
 export async function POST(req: Request) {

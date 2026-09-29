@@ -16,8 +16,6 @@ export interface DianaSession {
   slack_user: string
   scenario: string | null
   difficulty: string
-  prospect_profile: string | null    // legacy fixed-profile key — no longer written
-  prospect_name: string | null       // legacy fixed-profile name — no longer written
   generated_prospect: string | null  // JSON GeneratedProspect (src/lib/diana.ts) — one per session
   score_total: number | null         // set on exit once the call is scored
   transcript_json: string
@@ -78,8 +76,6 @@ export async function startSession(opts: {
     slack_user: opts.slackUser,
     scenario: opts.scenario ?? null,
     difficulty: opts.difficulty ?? 'neutral',
-    prospect_profile: null,
-    prospect_name: null,
     generated_prospect: opts.generatedProspect ?? null,
     score_total: null,
     transcript_json: '[]',

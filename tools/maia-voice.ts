@@ -3,7 +3,7 @@
 
 import { getDb } from '@/db'
 import {
-  maia_tasks, maia_weekly_intentions, maia_daily_log, maia_config,
+  maia_tasks, maia_weekly_intentions, maia_config,
   iris_posts, diana_sessions, quiz_sessions,
 } from '@/db/schema'
 import { eq, asc, desc, gte, and } from 'drizzle-orm'
@@ -26,25 +26,10 @@ export interface WeeklyIntentions {
   created_at: number
 }
 
-export interface DailyLog {
-  id: string
-  date: string
-  linkedin_posts: number
-  diana_sessions_count: number
-  athena_sessions: number
-  tasks_completed: number
-  tasks_total: number
-  created_at: number
-}
-
 export interface DailyNonNegotiables {
   linkedinToday: number
   dianaToday: number
   athenaToday: number
-}
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10)
 }
 
 function todayStartSecs(): number {
@@ -119,37 +104,6 @@ export async function getThisWeekIntentions(): Promise<WeeklyIntentions | null> 
     .orderBy(desc(maia_weekly_intentions.created_at))
     .limit(1)
   return row ?? null
-}
-
-export async function getTodayLog(): Promise<DailyLog | null> {
-  const db = getDb()
-  const [row] = await db
-    .select()
-    .from(maia_daily_log)
-    .where(eq(maia_daily_log.date, todayStr()))
-    .limit(1)
-  return row ?? null
-}
-
-export async function upsertDailyLog(data: Partial<Omit<DailyLog, 'id' | 'date' | 'created_at'>>): Promise<void> {
-  const db = getDb()
-  const date = todayStr()
-  const now = Math.floor(Date.now() / 1000)
-  const existing = await getTodayLog()
-  if (existing) {
-    await db.update(maia_daily_log).set(data).where(eq(maia_daily_log.date, date))
-  } else {
-    await db.insert(maia_daily_log).values({
-      id: crypto.randomUUID(),
-      date,
-      linkedin_posts: data.linkedin_posts ?? 0,
-      diana_sessions_count: data.diana_sessions_count ?? 0,
-      athena_sessions: data.athena_sessions ?? 0,
-      tasks_completed: data.tasks_completed ?? 0,
-      tasks_total: data.tasks_total ?? 0,
-      created_at: now,
-    })
-  }
 }
 
 export async function getDailyNonNegotiables(): Promise<DailyNonNegotiables> {

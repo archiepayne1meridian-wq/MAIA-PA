@@ -189,8 +189,6 @@ export const diana_sessions = sqliteTable('diana_sessions', {
   slack_user: text('slack_user').notNull(),
   scenario: text('scenario'),                                       // objection label / persona being drilled (Slack legacy path only)
   difficulty: text('difficulty').notNull().default('neutral'),      // 'warm' | 'neutral' | 'tough'
-  prospect_profile: text('prospect_profile'),                       // legacy fixed-profile key — no longer written, kept for old rows
-  prospect_name: text('prospect_name'),                             // legacy fixed-profile name — no longer written, kept for old rows
   generated_prospect: text('generated_prospect'),                   // JSON GeneratedProspect — one Haiku call per session, null on old rows
   score_total: integer('score_total'),                              // final scoreCall() total, set on exit — null until scored
   transcript_json: text('transcript_json').notNull().default('[]'), // DianaTranscriptTurn[]
@@ -344,17 +342,6 @@ export const maia_weekly_intentions = sqliteTable('maia_weekly_intentions', {
   created_at: integer('created_at').notNull(),
 })
 
-export const maia_daily_log = sqliteTable('maia_daily_log', {
-  id: text('id').primaryKey(),
-  date: text('date').notNull().unique(),      // YYYY-MM-DD — unique per day for upsert
-  linkedin_posts: integer('linkedin_posts').notNull().default(0),
-  diana_sessions_count: integer('diana_sessions_count').notNull().default(0),
-  athena_sessions: integer('athena_sessions').notNull().default(0),
-  tasks_completed: integer('tasks_completed').notNull().default(0),
-  tasks_total: integer('tasks_total').notNull().default(0),
-  created_at: integer('created_at').notNull(),
-})
-
 export const maia_config = sqliteTable('maia_config', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
@@ -383,7 +370,6 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   intelligence_json: text('intelligence_json'),
   advisor_brief: text('advisor_brief'),
   client_email: text('client_email'),
-  muse_transcript_id: text('muse_transcript_id'),   // legacy — no longer written; case events replace this
   muse_brief_id: text('muse_brief_id'),
   muse_email_id: text('muse_email_id'),
   muse_case_id: text('muse_case_id'),               // muse_cases.id this call was filed against

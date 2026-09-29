@@ -10,7 +10,7 @@ MAIA orchestrates a small team of specialist sub-agents, each named after a myth
 
 **Nothing client-facing, money-facing, or public goes out without explicit human approval.**
 
-Every outbound action — a LinkedIn post, a message draft, anything that leaves the system — is written to the `approvals` table and surfaced in Slack as a pending item with Approve / Reject buttons *first*. It executes only after the human taps Approve. Agents propose; the human decides. If you are ever unsure whether something needs approval, it does.
+Outbound actions are reviewed by Archie before sending. The `approvals` table exists in schema but is not currently wired to any agent output. Agents propose; the human decides. If you are ever unsure whether something needs approval, it does.
 
 ---
 

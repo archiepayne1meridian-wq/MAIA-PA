@@ -7,6 +7,7 @@ import {
 } from 'recharts'
 import s from '../../dashboard.module.css'
 import { calculateArdan, formatMoney, type ArdanParams, type ArdanYearlySnapshot } from '@/lib/ardan-calc'
+import { fmtPct } from '@/lib/format'
 import ProductProfile from '@/components/atlas/ProductProfile'
 
 // ── Types & defaults ─────────────────────────────────────────────────────────
@@ -45,9 +46,6 @@ const DEFAULT_ARDAN_FORM: ArdanFormState = {
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
 
-function fmtPct(n: number, dp = 1): string {
-  return `${n >= 0 ? '+' : ''}${n.toFixed(dp)}%`
-}
 function formatAxisGBP(v: number): string {
   if (Math.abs(v) >= 1_000_000) return `£${(v / 1_000_000).toFixed(1)}m`
   if (Math.abs(v) >= 1000) return `£${Math.round(v / 1000)}k`

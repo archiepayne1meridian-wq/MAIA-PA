@@ -6,7 +6,8 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import s from '../../dashboard.module.css'
-import { calculateBond, formatGBP, type BondParams, type YearlySnapshot } from '@/lib/portfolio-bond-calc'
+import { calculateBond, type BondParams, type YearlySnapshot } from '@/lib/portfolio-bond-calc'
+import { formatGBP, fmtPct } from '@/lib/format'
 import ProductProfile from '@/components/atlas/ProductProfile'
 
 // ── Types & defaults ─────────────────────────────────────────────────────────
@@ -85,10 +86,6 @@ const PROFILE_DATA = {
 }
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
-
-function fmtPct(n: number, dp = 1): string {
-  return `${n >= 0 ? '+' : ''}${n.toFixed(dp)}%`
-}
 
 function formatAxisGBP(v: number): string {
   if (Math.abs(v) >= 1_000_000) return `£${(v / 1_000_000).toFixed(1)}m`

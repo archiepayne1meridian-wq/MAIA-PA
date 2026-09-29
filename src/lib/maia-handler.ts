@@ -3,7 +3,7 @@
 
 import { postMessage } from './slack'
 import { askWith } from './claude'
-import { getConfig, setConfig, saveWeeklyIntentions, getDailyNonNegotiables, getActiveTasks, saveTasks } from '../../tools/maia-voice'
+import { setConfig, saveWeeklyIntentions, getDailyNonNegotiables, getActiveTasks, saveTasks } from '../../tools/maia-voice'
 import { getDb } from '@/db'
 import { maia_tasks } from '@/db/schema'
 import { gte } from 'drizzle-orm'

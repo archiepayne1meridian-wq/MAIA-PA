@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { getDb } from '@/db'
-import { study_cards, study_reviews, quiz_sessions, mcq_attempts } from '@/db/schema'
-import { desc, gte, lte, and, eq, count } from 'drizzle-orm'
+import { study_cards, study_reviews, quiz_sessions } from '@/db/schema'
+import { desc, gte, lte, and, eq } from 'drizzle-orm'
 import type { Track, Exam } from '../../../../../tools/study-db'
 
 function todayStartSecs() {

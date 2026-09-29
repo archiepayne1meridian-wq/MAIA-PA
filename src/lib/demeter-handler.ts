@@ -9,9 +9,8 @@ import {
   saveSnapshot,
   getLastSnapshot,
   seedRealHoldings,
-  type HoldingRow,
 } from '../../tools/demeter-db'
-import { computePortfolio, round2, type Holding } from '../../tools/portfolio'
+import { computePortfolio, type Holding } from '../../tools/portfolio'
 import { getPricedHoldings } from '../../tools/market-data'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'

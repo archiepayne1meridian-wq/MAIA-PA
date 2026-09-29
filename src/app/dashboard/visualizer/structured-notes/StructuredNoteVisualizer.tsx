@@ -10,6 +10,7 @@ import {
   calculateNote, periodsPerYearFor, generatePresetPath, resizeIndexPath,
   type NoteParams, type ObservationResult, type PresetScenario,
 } from '@/lib/structured-note-calc'
+import { fmtPct } from '@/lib/format'
 import ProductProfile from '@/components/atlas/ProductProfile'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -224,9 +225,6 @@ function detectWorstOf(text: string): boolean {
 
 function fmtGBP(n: number): string {
   return `£${Math.round(n).toLocaleString('en-GB')}`
-}
-function fmtPct(n: number, dp = 1): string {
-  return `${n >= 0 ? '+' : ''}${n.toFixed(dp)}%`
 }
 function obsLabel(o: ObservationResult, freq: ObservationFrequency): string {
   if (freq === 'annual') return `Year ${o.year}`

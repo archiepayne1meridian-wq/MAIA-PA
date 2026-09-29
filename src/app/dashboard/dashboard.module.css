@@ -3010,3 +3010,80 @@
 .morningBriefFocusItem:last-child { border-bottom: none; }
 .morningBriefFocusTitle { font-size: 12.5px; color: var(--text); font-weight: 500; }
 .morningBriefFocusDetail { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+
+/* ── Preferences workspace ───────────────────────────────────────────────── */
+.prefsScroll { flex: 1; overflow-y: auto; padding: 28px 32px 90px; max-width: 720px; margin: 0 auto; width: 100%; }
+.prefsHead { margin-bottom: 24px; }
+.prefsTitle { font-family: var(--display); font-weight: 600; font-size: 18px; color: var(--text); }
+.prefsSubtitle { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; }
+.prefsFlash {
+  background: var(--raised-2); border: 1px solid var(--accent-deep); border-radius: 8px;
+  padding: 8px 14px; font-size: 12px; color: var(--text); margin-bottom: 16px;
+}
+.prefsEmpty { font-size: 12.5px; color: var(--text-dim); padding: 20px 0; }
+
+.prefsProposalsSection { margin-bottom: 28px; }
+.prefsSectionLabel {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--idle); margin-bottom: 10px;
+}
+.prefsProposalCard {
+  background: rgba(224,179,65,0.06); border: 1px solid rgba(224,179,65,0.3); border-radius: var(--r);
+  padding: 14px 16px; margin-bottom: 10px;
+}
+.prefsProposalText { font-size: 13px; color: var(--text); line-height: 1.6; }
+.prefsProposalActions { display: flex; gap: 8px; margin-top: 10px; }
+.prefsProposalYes, .prefsProposalNo {
+  padding: 7px 14px; border-radius: 100px; font-size: 12px; cursor: pointer; border: 1px solid var(--border);
+  background: var(--raised); color: var(--text); transition: 0.15s;
+}
+.prefsProposalYes:hover { border-color: var(--online); color: var(--online); }
+.prefsProposalNo:hover { border-color: var(--alert); color: var(--alert); }
+
+.prefsSection { margin-bottom: 26px; }
+.prefsSectionHead { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+.prefsColorChip { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.prefsSectionTitle { font-family: var(--display); font-weight: 600; font-size: 13.5px; color: var(--text); }
+.prefsSectionCount { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
+
+.prefsCard {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 11px 14px; margin-bottom: 8px;
+}
+.prefsCardType {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-dim); display: inline-block; margin-bottom: 5px;
+}
+.prefsCardText { font-size: 13px; color: var(--text); line-height: 1.55; cursor: text; }
+.prefsCardEdit {
+  width: 100%; min-height: 54px; background: var(--raised); border: 1px solid var(--accent-deep);
+  border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--body); padding: 7px 9px;
+  resize: vertical;
+}
+.prefsCardActions { display: flex; gap: 8px; margin-top: 8px; }
+.prefsCardBtn, .prefsCardBtnDelete {
+  font-family: var(--mono); font-size: 10.5px; padding: 4px 10px; border-radius: 100px;
+  background: var(--raised); border: 1px solid var(--border); color: var(--text-mid); cursor: pointer; transition: 0.12s;
+}
+.prefsCardBtn:hover { border-color: var(--accent-deep); color: var(--text); }
+.prefsCardBtnDelete:hover { border-color: var(--alert); color: var(--alert); }
+
+.prefsAddBtn {
+  font-size: 12px; color: var(--text-mid); background: none; border: 1px dashed var(--border);
+  border-radius: 8px; padding: 8px 14px; cursor: pointer; transition: 0.15s; width: 100%; text-align: center;
+}
+.prefsAddBtn:hover:not(:disabled) { border-color: var(--accent-deep); color: var(--text); }
+.prefsAddBtn:disabled { opacity: 0.5; cursor: default; }
+
+.prefsFormSection { margin-top: 12px; }
+.prefsForm { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.prefsFormRow { display: flex; gap: 8px; }
+.prefsSelect {
+  flex: 1; background: var(--raised); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font-size: 12.5px; padding: 7px 9px;
+}
+.prefsFormTextarea {
+  width: 100%; min-height: 64px; background: var(--raised); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--body); padding: 9px;
+  resize: vertical;
+}

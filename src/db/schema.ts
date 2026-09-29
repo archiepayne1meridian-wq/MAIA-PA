@@ -411,6 +411,30 @@ export const hermes_script = sqliteTable('hermes_script', {
   updated_at: integer('updated_at').default(sql`(unixepoch())`),
 })
 
+export const maia_preferences = sqliteTable('maia_preferences', {
+  id: text('id').primaryKey(),
+  category: text('category').notNull(),      // cassandra/iris/diana/hermes/general/all
+  rule_type: text('rule_type').notNull(),     // exclude/include/style/behaviour
+  rule_key: text('rule_key').notNull(),       // short identifier, e.g. "crypto", "fca_hearings"
+  rule_value: text('rule_value').notNull(),   // the actual rule, e.g. "never include crypto news"
+  confirmed: integer('confirmed').notNull().default(1),   // 1 = confirmed by user, 0 = proposed/pending
+  source: text('source').notNull().default('manual'),     // manual/pattern/suggested
+  times_applied: integer('times_applied').notNull().default(0),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
+})
+
+export const maia_preference_proposals = sqliteTable('maia_preference_proposals', {
+  id: text('id').primaryKey(),
+  rule_key: text('rule_key').notNull(),
+  rule_value: text('rule_value').notNull(),
+  category: text('category').notNull(),
+  reason: text('reason'),                     // why MAIA is proposing this
+  rejection_count: integer('rejection_count').notNull().default(0),
+  status: text('status').notNull().default('pending'),   // pending/confirmed/declined
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
 export const hermes_scenarios = sqliteTable('hermes_scenarios', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

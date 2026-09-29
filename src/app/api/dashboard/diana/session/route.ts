@@ -15,6 +15,7 @@ import {
   type DianaSession,
 } from '../../../../../../tools/diana-db'
 import { generateProspect, parseGeneratedProspect, prospectDisplay } from '@/lib/diana'
+import { trackRejection } from '@/lib/preferences'
 
 const WEB_USER = 'web'
 
@@ -96,12 +97,21 @@ export async function POST(req: Request) {
   })
 }
 
-// DELETE — force-end the web session without feedback (reset).
+// DELETE — force-end the web session without feedback (reset). No dedicated
+// "reject this scenario" action exists in the UI — a reset-before-scoring
+// (as opposed to /exit, which always scores) is the closest available signal
+// that the prospect/scenario wasn't wanted, so it's what feeds the rejection
+// tracker here.
 export async function DELETE() {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const session = await getActiveSession(WEB_USER)
-  if (session) await endSession(session.id)
+  if (session) {
+    await endSession(session.id)
+    void trackRejection('prospect_reset', 'diana', 'Reset a DIANA session before scoring — scenario likely not wanted').catch(
+      err => console.error('[diana] trackRejection failed:', err),
+    )
+  }
   return NextResponse.json({ ok: true })
 }

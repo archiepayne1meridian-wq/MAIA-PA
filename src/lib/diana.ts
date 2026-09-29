@@ -3,6 +3,7 @@
 
 import { askWith } from './claude'
 import type { DianaTranscriptTurn } from '../../tools/diana-db'
+import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
 
 const HAIKU = 'claude-haiku-4-5-20251001'
 
@@ -630,9 +631,15 @@ export async function roleplayTurn(
 ): Promise<string> {
   const prospect = parseGeneratedProspect(generatedProspectJson ?? null)
 
-  const systemPrompt = prospect
+  const basePrompt = prospect
     ? buildDeVereSystem(prospect, difficulty, voiceMode)
     : buildLegacySystem(difficulty, voiceMode)
+
+  const prefs = await getPreferences('diana')
+  const prefText = formatPreferencesForPrompt(prefs)
+  const systemPrompt = prefText ? `${prefText}\n\n${basePrompt}` : basePrompt
+  console.log(`[diana] roleplayTurn: ${prefs.length} confirmed preference(s) injected`)
+  if (prefs.length > 0) void incrementTimesApplied(prefs.map(p => p.id)).catch(err => console.error('[diana] incrementTimesApplied failed:', err))
 
   // The legacy scenario-injection line only applies to the old generic prompt —
   // the new deVere prompt already fully specifies objection behaviour via the prospect.

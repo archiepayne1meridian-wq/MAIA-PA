@@ -18,6 +18,7 @@ import {
 } from '../../tools/muse'
 import { CASSANDRA_SIGNALS, getTodaysBrief, savePost, getRecentPosts } from '../../tools/iris'
 import { processInput, searchKnowledge } from './muse'
+import { trackRejection } from './preferences'
 import { env } from './env'
 import { getDb } from '@/db'
 import { activity, mcq_attempts, quiz_sessions, muse_pending } from '@/db/schema'
@@ -321,6 +322,19 @@ export async function handleMuseConfirm(
       threadTs,
     )
     await insertActivity('muse_confirm', `${pendingId}: discard`, 'status: discarded', slackUser)
+
+    // Feeds MAIA's pattern-detection tracker — scoped to items sourced from
+    // CASSANDRA specifically, per the "discard a CASSANDRA item" trigger. In
+    // practice source_agent is currently always null here: CASSANDRA auto-files
+    // straight to muse_entries via saveEntry (bypassing muse_pending/this confirm
+    // flow entirely — see src/lib/cassandra.ts's fileActionAnglesToMuse), so this
+    // never fires today. Left wired correctly rather than removed, so it starts
+    // working the moment CASSANDRA content ever does flow through the pending queue.
+    if (pending.source_agent === 'CASSANDRA') {
+      void trackRejection('cassandra_pending_item', 'cassandra', `Discarded a CASSANDRA-sourced MUSE pending item: "${pending.suggested_title}"`).catch(
+        err => console.error('[muse] trackRejection failed:', err),
+      )
+    }
     return
   }
 

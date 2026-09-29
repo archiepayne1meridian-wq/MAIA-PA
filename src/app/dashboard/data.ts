@@ -3,6 +3,7 @@ import {
   activity, study_cards, study_reviews, research_briefs,
   reflections, diana_sessions,
   kpi_logs, kpi_weekly, approvals, iris_posts, apollo_calls, oracle_analyses,
+  maia_preferences,
 } from '@/db/schema'
 import { desc, eq, gte, lte, and, count } from 'drizzle-orm'
 import type { Agent, Task } from './types'
@@ -218,6 +219,10 @@ export async function buildDashboardData(): Promise<DashboardData> {
   // ── ORACLE ───────────────────────────────────────────────────────────────────
   const [oracleResult] = await db.select({ n: count() }).from(oracle_analyses)
   const oracleTotal = oracleResult?.n ?? 0
+
+  // ── PREFERENCES ──────────────────────────────────────────────────────────────
+  const [prefsResult] = await db.select({ n: count() }).from(maia_preferences).where(eq(maia_preferences.confirmed, 1))
+  const prefsTotal = prefsResult?.n ?? 0
 
   // ── Pending approvals ─────────────────────────────────────────────────────────
   const [pendingResult] = await db
@@ -441,6 +446,21 @@ export async function buildDashboardData(): Promise<DashboardData> {
         ['Objections', '8', 'reflex vs real, with variants'],
         ['Mode', 'Editable', 'inline edits, autosave'],
         ['Storage', 'hermes_script', 'DB-backed, no localStorage'],
+      ],
+      feed: [['—', 'Say nothing — open from the nav rail']],
+    },
+    {
+      id: 'PREFERENCES', role: 'My Preferences', badge: 'PR',
+      status: prefsTotal > 0 ? 'online' : 'idle',
+      stat: prefsTotal > 0 ? `${prefsTotal} confirmed` : 'None yet',
+      statusLabel: 'Confirmed rules applied across every agent, every time',
+      prog: 0,
+      progAlert: false,
+      tiles: [
+        ['Confirmed rules', String(prefsTotal), 'applied to every prompt'],
+        ['Categories', '5', 'CASSANDRA, IRIS, DIANA, HERMES, General'],
+        ['Pattern detection', 'Active', '3+ rejections surface a proposal'],
+        ['Mode', 'Confirm once', 'remembered forever'],
       ],
       feed: [['—', 'Say nothing — open from the nav rail']],
     },

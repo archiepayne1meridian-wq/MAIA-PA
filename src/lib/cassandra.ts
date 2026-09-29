@@ -16,6 +16,7 @@ import type { IndexQuote, FxQuote } from '../../tools/market-data'
 import type { FeedItem } from '../../tools/feeds'
 import { saveEntry, updateEntryTags } from '../../tools/muse'
 import { autoTag } from './muse'
+import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
 
 // Haiku for search + structuring — cheap and fast, matches IRIS's model choice.
 const DIGEST_MODEL = 'claude-haiku-4-5-20251001'
@@ -411,7 +412,11 @@ export interface StructuredBriefResult {
 // one combining Haiku call. rssRelevant should already be filtered via
 // isRelevantToDeVere — bucketed here by section as supplementary context.
 export async function generateStructuredBrief(rssRelevant: FeedItem[], rssPerSection = 3): Promise<StructuredBriefResult> {
-  const [searches, rssBuckets] = [await gatherSectionResearch(), bucketRssBySection(rssRelevant, rssPerSection)]
+  const [searches, rssBuckets, prefs] = [
+    await gatherSectionResearch(),
+    bucketRssBySection(rssRelevant, rssPerSection),
+    await getPreferences('cassandra'),
+  ]
 
   const today = new Date().toISOString().split('T')[0]
 
@@ -426,7 +431,11 @@ export async function generateStructuredBrief(rssRelevant: FeedItem[], rssPerSec
 
   const userMessage = `Today's date: ${today}\n\n${sectionBlocks}\n\nWrite the structured morning brief now, following the schema and rules exactly.`
 
-  const raw = await askWith(STRUCTURED_SYSTEM, userMessage, 3072, DIGEST_MODEL)
+  const prefText = formatPreferencesForPrompt(prefs)
+  const systemWithPrefs = prefText ? `${prefText}\n\n${STRUCTURED_SYSTEM}` : STRUCTURED_SYSTEM
+  console.log(`[cassandra] generateStructuredBrief: ${prefs.length} confirmed preference(s) injected`)
+
+  const raw = await askWith(systemWithPrefs, userMessage, 3072, DIGEST_MODEL)
   const cleaned = extractJson(raw)
 
   let parsed: unknown
@@ -497,6 +506,8 @@ export async function generateStructuredBrief(rssRelevant: FeedItem[], rssPerSec
 
     if (guardedItems.length > 0) sections.push({ key: matched.key, label: matched.label, items: guardedItems })
   }
+
+  if (prefs.length > 0) void incrementTimesApplied(prefs.map(p => p.id)).catch(err => console.error('[cassandra] incrementTimesApplied failed:', err))
 
   return { sections, quote, rawJson: cleaned, rawSearches: searches }
 }

@@ -90,6 +90,7 @@ export default function IrisWorkspace() {
   const [saving, setSaving] = useState(false)
   const [approving, setApproving] = useState(false)
   const [approveMsg, setApproveMsg] = useState<string | null>(null)
+  const [dismissing, setDismissing] = useState(false)
   const [editLearnings, setEditLearnings] = useState<string[] | null>(null)
 
   // Legacy refine (kept — Slack-style feedback redraft, unrelated to the edit-tracking loop)
@@ -275,6 +276,26 @@ export default function IrisWorkspace() {
       setApproveMsg(e instanceof Error ? e.message : 'Approve failed')
     } finally {
       setApproving(false)
+    }
+  }
+
+  async function handleDismiss() {
+    if (!activeDraft) return
+    setDismissing(true)
+    setApproveMsg(null)
+    try {
+      const res = await fetch('/api/dashboard/iris/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: activeDraft.id }),
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      setApproveMsg('Dismissed — not relevant.')
+      load()
+    } catch (e) {
+      setApproveMsg(e instanceof Error ? e.message : 'Dismiss failed')
+    } finally {
+      setDismissing(false)
     }
   }
 
@@ -545,6 +566,9 @@ export default function IrisWorkspace() {
                 </button>
                 <button className={s.irisRegenBtn} onClick={handleChangeType}>Change type</button>
                 <button className={s.irisRegenBtn} onClick={() => void copyDraft()}>Copy</button>
+                <button className={s.irisRegenBtn} onClick={() => void handleDismiss()} disabled={dismissing}>
+                  {dismissing ? 'Dismissing…' : '✕ Not relevant'}
+                </button>
               </div>
             ) : (
               <div className={s.irisDraftActions}>

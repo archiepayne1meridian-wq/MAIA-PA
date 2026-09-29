@@ -7,6 +7,7 @@ import OpenAI from 'openai'
 import { askWith, askWithWebSearch, type WebSearchTrace } from './claude'
 import type { VoicePref } from '../../tools/iris'
 import { getTopVoiceLearnings } from '../../tools/iris'
+import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
 
 let _openai: OpenAI | null = null
 function getOpenAIClient(): OpenAI {
@@ -103,7 +104,10 @@ export interface IrisSkip {
 // angle, rather than being tested against the cross-border-relevance question.
 async function buildIrisSystem(pillar: 1 | 2 | 3, postType: PostType, topic: string, todayAngle: string | null): Promise<string> {
   const year = new Date().getFullYear()
-  const [voiceProfile, voiceLearnings] = await Promise.all([readVoiceProfile(), getVoiceLearnings(10)])
+  const [voiceProfile, voiceLearnings, prefs] = await Promise.all([readVoiceProfile(), getVoiceLearnings(10), getPreferences('iris')])
+  const prefText = formatPreferencesForPrompt(prefs)
+  console.log(`[iris] buildIrisSystem: ${prefs.length} confirmed preference(s) injected`)
+  if (prefs.length > 0) void incrementTimesApplied(prefs.map(p => p.id)).catch(err => console.error('[iris] incrementTimesApplied failed:', err))
 
   const voiceBlock = `ARCHIE'S VOICE — read this carefully and write exactly like this:
 ${voiceProfile}
@@ -155,7 +159,7 @@ specific reason — and stop. Do not search, do not draft, do not include any ot
 {"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}
 If the topic fails the relevance filter, output ONLY: {"skip": true, "reason": "..."}`
 
-  return `You are generating a LinkedIn post for Archie Payne, a BDA at deVere and Partners Switzerland.
+  return `${prefText ? `${prefText}\n\n` : ''}You are generating a LinkedIn post for Archie Payne, a BDA at deVere and Partners Switzerland.
 
 ${voiceBlock}
 ${relevanceFilterBlock}

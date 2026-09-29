@@ -5,8 +5,21 @@ import { getAllEntryTitles, savePending, ENTRY_COLUMNS, type MuseEntry } from '.
 import { getDb } from '@/db'
 import { muse_entries, muse_templates, muse_cases } from '@/db/schema'
 import { eq, ne, and } from 'drizzle-orm'
+import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
 
 const HAIKU = 'claude-haiku-4-5-20251001'
+
+const MUSE_SYSTEM_BASE = 'You are MUSE, a precise knowledge-management agent. Respond with valid JSON only. No prose, no markdown fences.'
+
+// General cross-agent preferences (anonymisation, privacy-tier handling, advice
+// language) — applied whenever MUSE generates a summary or files content.
+async function museSystemWithPrefs(): Promise<string> {
+  const prefs = await getPreferences('general')
+  const prefText = formatPreferencesForPrompt(prefs)
+  console.log(`[muse] museSystemWithPrefs: ${prefs.length} confirmed preference(s) injected`)
+  if (prefs.length > 0) void incrementTimesApplied(prefs.map(p => p.id)).catch(err => console.error('[muse] incrementTimesApplied failed:', err))
+  return prefText ? `${prefText}\n\n${MUSE_SYSTEM_BASE}` : MUSE_SYSTEM_BASE
+}
 
 const SECTORS = [
   'Training',
@@ -105,7 +118,7 @@ Value rules:
 - Regulations entries: MFSA/Malta jurisdiction by default.`
 
   const raw = await askWith(
-    'You are MUSE, a precise knowledge-management agent. Respond with valid JSON only. No prose, no markdown fences.',
+    await museSystemWithPrefs(),
     prompt,
     1200,
     HAIKU,
@@ -536,7 +549,7 @@ only, not a format to imitate in your own output.
 Link rules: only use exact titles from the existing entries list above. Empty array [] if none apply.`
 
   const raw = await askWith(
-    'You are MUSE, a precise knowledge-management agent. Respond with valid JSON only. No prose, no markdown fences.',
+    await museSystemWithPrefs(),
     prompt,
     400,
     HAIKU,

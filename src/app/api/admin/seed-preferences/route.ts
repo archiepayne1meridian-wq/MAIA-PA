@@ -8,7 +8,7 @@ import { env } from '@/lib/env'
 import { getDb } from '@/db'
 import { maia_preferences } from '@/db/schema'
 import { eq, and, count } from 'drizzle-orm'
-import { preferences } from '../../../../../scripts/seed-preferences'
+import { PREFERENCES_SEED } from '@/lib/preferences-seed-data'
 
 export async function POST(request: Request) {
   const authHeader = request.headers.get('Authorization') ?? ''
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   let skipped = 0
   const perCategory: Record<string, number> = {}
 
-  for (const pref of preferences) {
+  for (const pref of PREFERENCES_SEED) {
     const existing = await db.select({ id: maia_preferences.id }).from(maia_preferences)
       .where(and(eq(maia_preferences.category, pref.category), eq(maia_preferences.rule_key, pref.rule_key)))
       .limit(1)

@@ -8,13 +8,13 @@ import type { MuseEntryFull } from '../../../../tools/muse'
 // ─── Sector definitions ───────────────────────────────────────────────────────
 
 const SECTORS = [
-  { id: 'Training',                      label: 'Training',                      color: '#5B9FE0', locked: false },
+  { id: 'Training',                      label: 'Training',                      color: '#D4738A', locked: false },
   { id: 'Products',                      label: 'Products',                      color: '#B87FD4', locked: false },
   { id: 'Regulations',                   label: 'Regulations',                   color: '#E07A5F', locked: false },
   { id: 'Sales & Prospecting',           label: 'Sales & Prospecting',           color: '#E0B341', locked: false },
   { id: 'Expat Knowledge',               label: 'Expat Knowledge',               color: '#5BC0C0', locked: false },
   { id: 'Funds & Macro',                 label: 'Funds & Macro',                 color: '#7BC99A', locked: false },
-  { id: 'Client Psychology & Profiles',  label: 'Client Psychology & Profiles',  color: '#8AA9F0', locked: false },
+  { id: 'Client Psychology & Profiles',  label: 'Client Psychology & Profiles',  color: '#C9A66B', locked: false },
   { id: 'Client Intelligence',           label: 'Client Intelligence',           color: '#59616D', locked: true  },
 ] as const
 
@@ -1099,7 +1099,7 @@ export default function MuseWorkspace() {
             ) : (
               <div className={s.museEntryView}>
                 <div className={s.museOverlayMeta}>
-                  <span className={s.museOverlaySector} style={{ background: SECTOR_COLOR[selectedEntry.sector] ?? '#8AA9F0' }}>
+                  <span className={s.museOverlaySector} style={{ background: SECTOR_COLOR[selectedEntry.sector] ?? '#E8721C' }}>
                     {selectedEntry.sector}
                   </span>
                   <span className={s.museTypeChip}>{ENTRY_TYPES.find(t => t.id === selectedEntry.entry_type)?.label ?? selectedEntry.entry_type}</span>
@@ -1556,7 +1556,7 @@ export default function MuseWorkspace() {
                 pendingItems.map(item => (
                   <div key={item.id} className={s.museApprovalItem}>
                     <div className={s.museApprovalMeta}>
-                      <span className={s.museApprovalSector} style={{ background: SECTOR_COLOR[item.suggested_sector] ?? '#8AA9F0' }}>
+                      <span className={s.museApprovalSector} style={{ background: SECTOR_COLOR[item.suggested_sector] ?? '#E8721C' }}>
                         {item.suggested_sector}
                       </span>
                       {item.source_agent && <span className={s.museApprovalSource}>{item.source_agent}</span>}

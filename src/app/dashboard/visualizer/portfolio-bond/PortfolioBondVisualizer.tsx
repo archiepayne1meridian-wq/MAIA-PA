@@ -115,7 +115,7 @@ function renderBondDot(props: DotRenderProps, data: ChartRow[]) {
   if (withdrew) {
     return (
       <polygon key={`bd-${index}`} points={`${cx - 5},${cy - 5} ${cx + 5},${cy - 5} ${cx},${cy + 5}`}
-        fill="var(--idle)" stroke="#0D1014" strokeWidth={1} />
+        fill="var(--idle)" stroke="#0D0906" strokeWidth={1} />
     )
   }
   return <circle key={`bd-${index}`} cx={cx} cy={cy} r={2.5} fill="var(--accent)" />

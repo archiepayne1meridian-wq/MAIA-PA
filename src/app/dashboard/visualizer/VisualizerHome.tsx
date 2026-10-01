@@ -17,7 +17,7 @@ const products: ProductCard[] = [
     name: 'Structured Notes',
     description: 'Visualize autocall barriers, coupon payments, memory function and capital protection',
     status: 'active',
-    accent: '#8AA9F0',
+    accent: '#E8721C',
   },
   {
     id: 'portfolio-bond',

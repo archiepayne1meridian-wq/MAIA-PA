@@ -452,3 +452,22 @@ export const hermes_scenarios = sqliteTable('hermes_scenarios', {
   created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })
+
+// ── New dashboard shell — conversation threads + goals ───────────────────────
+
+export const maia_conversations = sqliteTable('maia_conversations', {
+  id: text('id').primaryKey(),
+  agent: text('agent').notNull().unique(),   // 'hub' | 'news' | 'calls' | 'linkedin' | 'social' | 'practice' | 'outreach' | 'study' | 'prospects' | 'pipeline'
+  messages: text('messages').notNull().default('[]'),   // JSON array of message objects
+  last_updated: integer('last_updated').notNull().default(sql`(unixepoch())`),
+})
+
+export const maia_goals = sqliteTable('maia_goals', {
+  id: text('id').primaryKey(),
+  goal_text: text('goal_text').notNull(),
+  goal_type: text('goal_type').notNull(),   // 'short_term' | 'long_term'
+  completed: integer('completed').notNull().default(0),
+  sort_order: integer('sort_order').notNull().default(0),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
+})

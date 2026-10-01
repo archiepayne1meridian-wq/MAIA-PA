@@ -272,9 +272,9 @@ function dotColor(payload: ObservationResult): string {
   if (payload.afterAutocall) return '#555E6B'
   if (payload.autocalled) return '#5BC08A'
   if (payload.memoryPaid) return '#B87FD4'
-  if (payload.couponPaid) return '#8AA9F0'
+  if (payload.couponPaid) return '#E8721C'
   if (payload.couponMissed) return '#E0B341'
-  return '#8AA9F0'
+  return '#E8721C'
 }
 
 function renderDraggableDot(props: DotProps, onDragStart: (index: number, clientY: number) => void) {
@@ -287,7 +287,7 @@ function renderDraggableDot(props: DotProps, onDragStart: (index: number, client
       key={`dot-${index}`}
       cx={cx} cy={cy} r={8}
       fill={fill} fillOpacity={opacity}
-      stroke="#0D1014" strokeWidth={1.5}
+      stroke="#0D0906" strokeWidth={1.5}
       style={{ cursor: 'ns-resize' }}
       onMouseDown={e => { e.stopPropagation(); onDragStart(index, e.clientY) }}
       onTouchStart={e => { e.stopPropagation(); e.preventDefault(); onDragStart(index, e.touches[0].clientY) }}

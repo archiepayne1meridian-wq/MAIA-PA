@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import s from '../dashboard.module.css'
 import { ROUTABLE_AGENTS, routeSlugFor } from '../DashboardClient'
 
@@ -52,6 +52,7 @@ const GENERATE_AGENT_MAP: Record<string, string> = { iris: 'iris', hermes: 'herm
 
 export default function MaiaChatBar() {
   const router = useRouter()
+  const pathname = usePathname()
   const inputRef = useRef<HTMLInputElement>(null)
   const recogRef = useRef<SpeechRecognitionInstance | null>(null)
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -232,6 +233,11 @@ export default function MaiaChatBar() {
     if (!response) return
     navigator.clipboard?.writeText(response.message).catch(() => { /* ignore */ })
   }
+
+  // The new three-column dashboard home has its own chat input bar — this
+  // global floating one would sit directly on top of it with no scroll
+  // clearance (that shell is height:100vh, overflow:hidden by design).
+  if (pathname === '/dashboard') return null
 
   return (
     <div className={s.maiaChatBarWrap}>

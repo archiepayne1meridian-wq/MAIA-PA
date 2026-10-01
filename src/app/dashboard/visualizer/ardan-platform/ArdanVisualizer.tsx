@@ -71,7 +71,7 @@ function renderArdanDot(props: DotRenderProps, data: ChartRow[], savingsEnabled:
   if (savingsEnabled) {
     return (
       <polygon key={`ad-${index}`} points={`${cx - 4},${cy + 5} ${cx + 4},${cy + 5} ${cx},${cy - 4}`}
-        fill="var(--online)" stroke="#0D1014" strokeWidth={1} />
+        fill="var(--online)" stroke="#0D0906" strokeWidth={1} />
     )
   }
   return <circle key={`ad-${index}`} cx={cx} cy={cy} r={2.5} fill="var(--accent)" />

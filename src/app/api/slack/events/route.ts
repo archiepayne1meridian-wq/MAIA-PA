@@ -69,8 +69,6 @@ import {
   getPendingTally,
   isPendingConfirm,
 } from '@/lib/victoria-handler'
-import { getActiveIrisDraft } from '../../../../../tools/iris'
-import { detectIrisIntent, handleIrisStatus, handleIrisThread } from '@/lib/iris-handler'
 import { getConfig } from '../../../../../tools/maia-voice'
 import { detectWeeklyPlanReply, handleWeeklyPlanReply } from '@/lib/maia-handler'
 
@@ -162,22 +160,8 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
   })
 
   try {
-    // ── IRIS: thread reply detection — catches replies in IRIS draft threads ──────
-    // Runs before DIANA session check because thread_ts is mutually exclusive
-    // with DIANA roleplay turns (DIANA uses the main channel, not threads).
+    // ── MERCURY: thread reply detection ──────────────────────────────────
     if (event.thread_ts) {
-      const irisDraft = await getActiveIrisDraft(event.thread_ts)
-      if (irisDraft) {
-        await getDb().update(activity).set({ agent: 'IRIS' }).where(eq(activity.id, rowId))
-        await handleIrisThread(irisDraft, text, channel, event.ts!)
-        await getDb()
-          .update(activity)
-          .set({ status: 'success', duration_ms: Date.now() - startMs })
-          .where(eq(activity.id, rowId))
-        return
-      }
-
-      // ── MERCURY: thread reply detection ──────────────────────────────────
       const mercuryDraft = await getActiveMercuryDraft(event.thread_ts)
       if (mercuryDraft) {
         await getDb().update(activity).set({ agent: 'MERCURY' }).where(eq(activity.id, rowId))
@@ -439,18 +423,6 @@ async function handleEvent(payload: SlackPayload): Promise<void> {
           break
       }
 
-      await getDb()
-        .update(activity)
-        .set({ status: 'success', duration_ms: Date.now() - startMs })
-        .where(eq(activity.id, rowId))
-      return
-    }
-
-    // ── IRIS intent routing ───────────────────────────────────────────────────
-    const irisIntent = detectIrisIntent(text)
-    if (irisIntent) {
-      await getDb().update(activity).set({ agent: 'IRIS' }).where(eq(activity.id, rowId))
-      if (irisIntent.type === 'status') await handleIrisStatus(channel)
       await getDb()
         .update(activity)
         .set({ status: 'success', duration_ms: Date.now() - startMs })

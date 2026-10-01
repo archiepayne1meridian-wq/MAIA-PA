@@ -9,7 +9,7 @@ import { postMessage } from './slack'
 import { formatStructuredBrief, generateStructuredBrief, generateActionAngles, isRelevantToDeVere, fileActionAnglesToMuse } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { fetchAllFeeds } from '../../tools/feeds'
-import { flagIrisTopics, savePost } from '../../tools/iris'
+import { savePost } from '../../tools/iris'
 import { checkMuseHarvest } from './muse-handler'
 import { getDb } from '@/db'
 import { activity, research_briefs } from '@/db/schema'
@@ -256,8 +256,7 @@ export async function buildScheduledBrief(channel: string): Promise<void> {
       created_at: Math.floor(Date.now() / 1000),
     })
 
-    // Fire-and-forget: flag LinkedIn moments + harvest MUSE signals
-    void flagIrisTopics(text)
+    // Fire-and-forget: harvest MUSE signals
     void checkMuseHarvest('CASSANDRA', 'brief_saved', { briefText: text })
     void fileActionAnglesToMuse(actionAngles).catch(err => console.error('[cassandra] fileActionAnglesToMuse failed:', err))
 

@@ -25,7 +25,7 @@ export default function AgentPageShell({ agent, children }: Props) {
       <div className={s.drawerHead}>
         <div className={s.drawerBadge}>{agent.badge}</div>
         <div>
-          <div className={s.drawerName}>{agent.id}</div>
+          <div className={s.drawerName}>{agent.displayName ?? agent.id}</div>
           <div className={s.drawerRole}>{agent.role}</div>
         </div>
       </div>

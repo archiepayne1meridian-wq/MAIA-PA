@@ -4,6 +4,7 @@ export type DotStyle = 'done' | 'now' | 'pending' | ''
 
 export interface Agent {
   id: string
+  displayName?: string   // user-facing label, when different from the internal agent id (e.g. IRIS -> "LinkedIn")
   role: string
   badge: string
   status: AgentStatus

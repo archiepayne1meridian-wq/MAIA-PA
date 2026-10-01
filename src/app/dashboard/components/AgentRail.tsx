@@ -27,12 +27,12 @@ export default function AgentRail({ agents, activeId, onSelect }: Props) {
             a.inactive ? s.agentInactive : '',
           ].filter(Boolean).join(' ')}
           onClick={() => { if (!a.inactive) onSelect(a.id) }}
-          aria-label={a.inactive ? `${a.id} — coming soon` : a.id}
+          aria-label={a.inactive ? `${a.displayName ?? a.id} — coming soon` : a.displayName ?? a.id}
         >
           <div className={s.agentTop}>
             <div className={s.monoBadge}>{a.badge}</div>
             <div>
-              <div className={s.agentName}>{a.id}</div>
+              <div className={s.agentName}>{a.displayName ?? a.id}</div>
               <div className={s.agentRole}>{a.role}</div>
             </div>
           </div>

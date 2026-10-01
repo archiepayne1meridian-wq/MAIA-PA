@@ -46,6 +46,10 @@ export const PREFERENCES_SEED: PreferenceSeed[] = [
     rule_value: 'Never give financial advice. Always create discussion. Always present both sides.' },
   { category: 'iris', rule_type: 'behaviour', rule_key: 'target_audience',
     rule_value: 'Target: people living in Switzerland with assets in another country. Every post should make them think it affects them.' },
+  // Config value, not a voice rule — excluded from the generation prompt by
+  // key (see generateDraft's prefs filter in src/lib/iris.ts).
+  { category: 'iris', rule_type: 'behaviour', rule_key: 'morning_generation_time',
+    rule_value: '07:00' },
 
   // DIANA preferences
   { category: 'diana', rule_type: 'behaviour', rule_key: 'resistance',

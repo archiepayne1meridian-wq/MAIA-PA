@@ -341,14 +341,14 @@ export async function buildDashboardData(): Promise<DashboardData> {
       feed: dianaFeed,
     },
     {
-      id: 'IRIS', role: 'LinkedIn content engine', badge: 'I',
+      id: 'IRIS', displayName: 'LinkedIn', role: 'LinkedIn content engine', badge: 'I',
       status: irisDraft ? 'online' : irisTotal > 0 ? 'idle' : 'idle',
       stat: irisDraft ? 'Draft pending review' : irisTotal > 0 ? `${irisApproved}/${irisTotal} approved` : 'No drafts this week',
       statusLabel: irisDraft
-        ? 'Draft ready — approve in dashboard or reply in Slack'
+        ? 'Draft ready — review in the LinkedIn chat'
         : irisTotal > 0
         ? `${irisApproved} approved · ${irisTotal} drafted this week`
-        : 'Cron runs Mon–Fri 6am and 12pm CET',
+        : 'Morning draft lands at 7am daily',
       prog: irisTotal > 0 ? Math.min(Math.round(irisApproved / Math.max(irisTotal, 1) * 100), 100) : 0,
       progAlert: false,
       tiles: [

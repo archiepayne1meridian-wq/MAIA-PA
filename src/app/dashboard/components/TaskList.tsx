@@ -87,8 +87,8 @@ export default function TaskList({ refreshKey }: Props) {
   }
 
   const pinnedTasks: PinnedTask[] = [
-    { key: 'linkedin-1', label: 'LinkedIn post 1', agent: 'IRIS', done: nonNeg.linkedinToday >= 1 },
-    { key: 'linkedin-2', label: 'LinkedIn post 2', agent: 'IRIS', done: nonNeg.linkedinToday >= 2 },
+    { key: 'linkedin-1', label: 'LinkedIn post 1', agent: 'LinkedIn', done: nonNeg.linkedinToday >= 1 },
+    { key: 'linkedin-2', label: 'LinkedIn post 2', agent: 'LinkedIn', done: nonNeg.linkedinToday >= 2 },
     { key: 'athena',     label: 'ATHENA study',    agent: 'ATHENA', done: nonNeg.athenaToday > 0 },
     { key: 'diana',      label: 'DIANA practice',  agent: 'DIANA', done: nonNeg.dianaToday > 0 },
   ]

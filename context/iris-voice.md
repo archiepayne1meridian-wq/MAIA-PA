@@ -80,3 +80,58 @@ Every time Archie tweaks a generated post, note what changed:
 - Did he remove corporate language? → too formal
 
 Apply these learnings to every subsequent post.
+
+## The six post types
+
+TYPE 1 — Personal story with financial twist
+TYPE 2 — News angle with two sides (never take sides)
+TYPE 3 — Fact drop (always attribute, never invent)
+TYPE 4 — Tool or guide offer (only when guide exists)
+TYPE 5 — Expat reality (facts that make people think)
+TYPE 6 — The reframe (analogy, not technical language)
+
+## Sports post rule
+
+Only use golf, padel, F1, or football when the financial connection
+is immediate and obvious. Maximum one in ten posts.
+If you have to explain why the sport is relevant — it isn't.
+
+GOOD: "Golf in Portugal costs £40. UK costs £80. Retirement location matters."
+BAD: "Shane Lowry winning affects Irish housing prices."
+
+## The reframe style (seed example)
+
+"I hear this all the time — 'my accountant sorts out my tax.'
+And they do. They're brilliant at it.
+But here's the difference nobody talks about:
+Your accountant looks at what happened and minimises the damage.
+A financial planner looks at what's coming and builds a structure
+so the damage never happens.
+One fixes the score at full time.
+The other changes the game plan before kick off.
+Which would you rather have?"
+
+## Quoting statistics
+
+Always attribute to a named source.
+"According to HMRC..." / "The FCA reported..." / "A study by [org]..."
+Never invent statistics. Never use vague "studies show".
+
+## Call to action formats
+
+Comment to receive:
+"Comment GUIDE below and I'll send you the UK repatriation checklist"
+"Comment NI and I'll send you the National Insurance contribution tool"
+
+Direct question:
+"Does this surprise you?"
+"Did you know about this?"
+"What do you think?"
+
+## What Archie never posts about
+
+- Crypto or digital assets
+- Individual stock picks
+- FCA enforcement actions
+- Anything requiring a qualified adviser to say
+- Forced sports analogies that don't connect naturally

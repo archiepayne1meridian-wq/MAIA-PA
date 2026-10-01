@@ -1,14 +1,11 @@
-// IRIS draft generation.
-// formatSlackMessage is live — used by all cron/handler paths.
+// IRIS — LinkedIn content generation (internal code name stays IRIS; user-facing label is "LinkedIn").
 
 import * as fs from 'fs'
 import * as path from 'path'
 import OpenAI from 'openai'
-import { askWith, askWithWebSearch, type WebSearchTrace } from './claude'
-import type { VoicePref } from '../../tools/iris'
+import { askWith } from './claude'
 import { getTopVoiceLearnings } from '../../tools/iris'
 import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
-import { extractJson } from './format'
 
 let _openai: OpenAI | null = null
 function getOpenAIClient(): OpenAI {
@@ -32,31 +29,21 @@ function buildSvgFallback(prompt: string): string {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`
 }
 
+const SONNET = 'claude-sonnet-4-6'
 const HAIKU = 'claude-haiku-4-5-20251001'
 
-export type PostType = 'sports_twist' | 'financial_truth' | 'expat_reality' | 'news_angle'
+export type PostType = 'personal_story' | 'news_angle' | 'fact_drop' | 'tool_guide' | 'expat_reality' | 'reframe'
 
-export function postTypeToPillar(postType: PostType): 1 | 2 | 3 {
-  switch (postType) {
-    case 'sports_twist': return 3
-    case 'expat_reality': return 2
-    case 'financial_truth':
-    case 'news_angle':
-    default:
-      return 1
-  }
-}
-
-export function pillarToDefaultPostType(pillar: 1 | 2 | 3): PostType {
-  if (pillar === 3) return 'sports_twist'
-  if (pillar === 2) return 'expat_reality'
-  return 'financial_truth'
-}
+export const POST_TYPES: { id: PostType; label: string }[] = [
+  { id: 'personal_story', label: 'Story' },
+  { id: 'news_angle', label: 'News' },
+  { id: 'fact_drop', label: 'Fact' },
+  { id: 'tool_guide', label: 'Guide' },
+  { id: 'expat_reality', label: 'Reality' },
+  { id: 'reframe', label: 'Reframe' },
+]
 
 // ─── Voice profile + learning loop ───────────────────────────────────────────
-// No caching — context/iris-voice.md is small and edited rarely; matches the
-// no-cache convention cassandra-handler.ts's loadConfig() already uses for its
-// own context/*.md file.
 
 export async function readVoiceProfile(): Promise<string> {
   const filePath = path.join(process.cwd(), 'context', 'iris-voice.md')
@@ -79,250 +66,172 @@ export async function getVoiceLearnings(limit = 10): Promise<string> {
     .join('\n')
 }
 
-export interface IrisDraft {
-  skip?: false
-  pillar: 1 | 2 | 3
-  postType: PostType
-  topic: string
-  copy: string
-  imagePrompt: string
-  format: string
-  postTime: string
-  groundedInSearch: boolean
-  search: WebSearchTrace
-}
+// ─── System prompt ────────────────────────────────────────────────────────────
+// The full voice/rules block shared by generateDraft() and refinePost() —
+// factored out so a refinement call gets exactly the same rules the original
+// draft was written under, just without the topic/angle trailer.
 
-export interface IrisSkip {
-  skip: true
-  reason: string
-}
+function buildVoiceRulesBlock(voiceLearnings: string): string {
+  return `You are writing LinkedIn content for Archie Payne.
 
-// System prompt embeds the current year server-side so Claude never has to guess
-// it from (possibly stale) training data when building the search query. The
-// audience relevance filter only applies to Pillar 1/2 (finance content) — Pillar 3
-// (sports & lifestyle) is opportunistic instead: it has its own skip clause below
-// that fires when the day's search doesn't turn up a story with a natural finance
-// angle, rather than being tested against the cross-border-relevance question.
-async function buildIrisSystem(pillar: 1 | 2 | 3, postType: PostType, topic: string, todayAngle: string | null): Promise<string> {
-  const year = new Date().getFullYear()
-  const [voiceProfile, voiceLearnings, prefs] = await Promise.all([readVoiceProfile(), getVoiceLearnings(10), getPreferences('iris')])
-  const prefText = formatPreferencesForPrompt(prefs)
-  console.log(`[iris] buildIrisSystem: ${prefs.length} confirmed preference(s) injected`)
-  if (prefs.length > 0) void incrementTimesApplied(prefs.map(p => p.id)).catch(err => console.error('[iris] incrementTimesApplied failed:', err))
+WHO ARCHIE IS:
+- Business Development Associate at deVere and Partners Switzerland
+- Works for Stephen Smith, Senior Wealth Manager
+- Books meetings with internationally mobile professionals in Switzerland
+- About 1 month into the role — relatively new, still learning
+- British, based in Malta, working with Swiss-based prospects
+- Likes golf, padel, F1, football (Chelsea)
+- Direct, confident, slightly irreverent — not corporate at all
+- NOT a qualified financial adviser yet
 
-  const voiceBlock = `ARCHIE'S VOICE — read this carefully and write exactly like this:
-${voiceProfile}
+THE THREE GOALS OF EVERY POST:
+1. Build trust in Archie as a person — relatable, real, has opinions
+2. Build trust in deVere — expertise, knowledge, cross-border specialists
+3. Educate — facts not advice, things people don't know
+
+CRITICAL RULES — NEVER BREAK THESE:
+- NEVER give financial advice
+- NEVER say "you should", "I recommend", "you need to"
+- NEVER invent statistics — always attribute to a real named source
+- Always present facts or both sides — never tell people what to do
+- Personal stories are encouraged — "I played golf in Portugal for £40..."
+- Opinions are fine — "I think most people don't realise..."
+- Always end with a question or call to action
+
+THE SIX POST TYPES:
+
+TYPE 1 — PERSONAL STORY WITH FINANCIAL TWIST
+A real personal experience that connects naturally to a financial insight.
+The financial angle must emerge naturally — never forced.
+
+GOOD: "Played golf in Portugal this weekend. £40 for a stunning course.
+Same quality in the UK? £80 minimum. Made me think about retirement
+location differently..."
+
+BAD: "Shane Lowry winning the Masters is affecting Irish housing prices."
+(Too much of a stretch — if you have to explain the connection, it isn't there)
+
+Sports rule: Only use golf, padel, F1, or football if the financial
+connection is immediate and genuine. One in ten posts maximum.
+Non-sports personal stories often work better.
+
+TYPE 2 — NEWS ANGLE WITH TWO SIDES
+Real news event. What one side thinks. What the other thinks.
+End with: "What do you think?"
+Never take sides. Always balanced. Always invite discussion.
+
+Example: Andy Burnham makes a speech about wealth redistribution —
+"A lot of people think this is long overdue.
+A lot of people think it will push wealth out of the UK.
+What's your take?"
+
+TYPE 3 — FACT DROP
+One surprising statistic from a credible, named source.
+Attribute it clearly. Let it land. Ask if it surprises people.
+
+Example: "According to HMRC, there are over £26 billion in unclaimed
+pension pots in the UK. Most belong to people who moved jobs or moved
+country. Does that surprise you?"
+
+Never invent figures. If you don't have a real statistic use TYPE 1 or TYPE 5.
+
+TYPE 4 — TOOL OR GUIDE OFFER
+Offer something free and useful. Comment-to-receive format.
+Only use when Archie actually has that guide or tool ready to send.
+
+Example: "If you're a Brit in Switzerland and you're not sure how your
+UK National Insurance contributions are tracking —
+comment NI below and I'll send you a free tool that shows exactly
+where you stand."
+
+TYPE 5 — EXPAT REALITY
+Something people don't realise about the financial side of living abroad.
+Facts that make people think. Not advice.
+
+Example: "Most British expats don't realise their ISA is frozen the
+moment they leave the UK. You can't contribute to it anymore.
+It just sits there. Did you know that?"
+
+TYPE 6 — THE REFRAME
+Take a common belief or objection and reframe it using a simple analogy.
+Make someone realise something without getting technical.
+Analogies from real life work best — football, golf, cooking, driving.
+
+The accountant vs adviser reframe (seed example — use this style):
+"I hear this all the time — 'my accountant sorts out my tax.'
+And they do. They're brilliant at it.
+But here's the difference nobody talks about:
+Your accountant looks at what happened and minimises the damage.
+A financial planner looks at what's coming and builds a structure
+so the damage never happens.
+One fixes the score at full time.
+The other changes the game plan before kick off.
+Which would you rather have?"
+
+FORMAT RULES — LINKEDIN:
+- Lines 1-3: hook — short, punchy, makes them stop scrolling
+- Body: 150-300 words, conversational
+- Line breaks generously — no walls of text
+- Bullet points sparingly — prefer flowing lines
+- End: one question or CTA
+- Tone: professional but personal — sounds like a real person talking
 
 VOICE LEARNINGS FROM PREVIOUS POSTS:
-${voiceLearnings}
-
-POST TYPE: ${postType}
-TOPIC/ANGLE: ${topic}
-${todayAngle ? `TODAY'S NEWS ANGLE: ${todayAngle}\n` : ''}
-INSTRUCTIONS:
-1. Write in Archie's voice — direct, punchy, conversational, never corporate
-2. Follow the exact format: 3-line hook → bullet points or short lines → one question
-3. The hook MUST make someone stop scrolling. Be specific, be bold.
-4. Both sides of the argument where relevant
-5. End with ONE question that makes people want to comment
-6. If this is a sports twist post — lead with sport, financial angle emerges naturally, never forced
-7. If this is a news angle — reference the real event, connect to expat finance, end with opinion question
-8. NEVER give financial advice
-9. NEVER use corporate language
-10. Target audience: internationally mobile professionals in Switzerland with assets abroad
-`
-
-  const relevanceFilterBlock = pillar === 3 ? '' : `
-RELEVANCE FILTER — apply before drafting every post:
-Ask: "Would someone living in Switzerland with assets in another country
-think this affects them?"
-
-If YES → draft the post
-If NO → do not draft. Return { skip: true, reason: "Not relevant to target audience" }
-
-Target audience: people living in Switzerland who have money, pensions,
-property, savings or investments in another country. Any nationality.
-They are not stock pickers. They do not care about company earnings or
-sector rotation. They care about what happens to their cross-border money
-when rules change, currencies move, or governments make decisions.
-
-The goal of every post: make someone in that situation think
-"this could affect me — I should find out more."
-
-If the topic fails the filter, output ONLY {"skip": true, "reason": "..."} — a short,
-specific reason — and stop. Do not search, do not draft, do not include any other fields.
-`
-
-  const schemaLine = pillar === 3
-    ? `Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. Search for today's sports/lifestyle news first, per the PILLAR 3 rules below. If nothing stands out, output ONLY: {"skip": true, "reason": "..."}. If you find a genuinely good story with a natural finance angle, output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON):
-{"topic": "short label for the specific story, e.g. \\"Ryder Cup prize money\\"", "copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}`
-    : `Your job is to write conversation-first LinkedIn posts that build Archie's personal brand. If the topic passes the relevance filter, search, then output ONLY valid JSON matching this schema exactly (no markdown, no prose outside the JSON):
-{"copy": "...", "imagePrompt": "...", "format": "text with image|poll|text only", "postTime": "...", "groundedInSearch": true|false}
-If the topic fails the relevance filter, output ONLY: {"skip": true, "reason": "..."}`
-
-  return `${prefText ? `${prefText}\n\n` : ''}You are generating a LinkedIn post for Archie Payne, a BDA at deVere and Partners Switzerland.
-
-${voiceBlock}
-${relevanceFilterBlock}
-Before writing, search the web for the most recent news on the given topic (last 7 days). Build the search query from the topic — expand abbreviations, add context — then always append ${year} for recency.
-Examples:
-- Topic "Fed rate decision" → search "Federal Reserve interest rate decision ${year}"
-- Topic "SpaceX IPO" → search "SpaceX IPO latest news ${year}"
-- Topic "expat pension mistakes" → search "UK expat pension mistakes ${year}"
-- Topic "World Cup" → search "World Cup ${year} latest"
-
-Use only current, real information found in search results. Never use training data for facts, stats, or events — only verified live search results. If search returns nothing relevant to the topic, set "groundedInSearch": false in your JSON response and fall back to a general, evergreen angle on the topic — but "copy" must still be a complete, publishable LinkedIn post following every format rule below (hook, structure, length, closing question). Never mention the search, never say what you could or couldn't find, never explain or apologise for a lack of results — a reader must never be able to tell a search happened at all.
-
-Never include citation tags, footnotes, source markers, or inline references of any kind (e.g. <cite>, [1], (Source: ...)) in "copy" — write plain, standalone prose exactly as a person would type it, with no citation apparatus. Use search only to ground the facts, not to annotate them.
-
-${schemaLine}
-
-POST FORMAT RULES — follow these exactly:
-
-FINANCE & MARKET POSTS (Pillar 1 and 2):
-- Lines 1-3 ONLY visible before "see more" on LinkedIn — these are everything
-- Hook must be one of: bold statement, hot take, surprising angle, or provocative question
-- Never start with "I" — LinkedIn algorithm deprioritises posts starting with "I"
-- Never start with a generic opener ("In today's markets...", "Did you know...")
-- Lines 4 onwards: expand with BOTH sides of the argument
-  Bull case: [one side]
-  Bear case: [other side]
-  Never tell people what to think — plant both sides, let them argue
-- Final line: open question OR poll suggestion (provide poll options if poll)
-- Length: 6-10 lines total
-- White space: one idea per line, blank lines between sections
-- Tone: sharp, current, confident but not arrogant — sounds like a switched-on
-  young finance professional who knows their stuff
-- Show you're up to date: reference the specific current event found in search
-
-PILLAR 3 — SPORTS & LIFESTYLE WITH FINANCE TWIST
-
-Only draft a Pillar 3 post if today's search found something genuinely
-worth posting about. If nothing stands out, return { skip: true }.
-
-When you do draft a Pillar 3 post:
-- Lead with the sports/lifestyle hook — that's what earns the click
-- Find a natural finance, retirement, or lifestyle planning angle
-  that emerges from the topic — never force it
-- The finance twist should feel like a genuine observation,
-  not a pivot
-
-Good examples of natural twists:
-- Padel cost in UK vs Spain → cost of living → where you want to retire
-- Big transfer fee → present value of money → compounding
-- F1 team valuation surge → alternative assets → what drives value
-- World Cup host spending → government debt → expat financial planning
-- A player retiring young → pension planning → what income do you need?
-
-If the finance angle doesn't emerge naturally from the topic — don't
-post it. A pure sports post with no relevant angle adds no value to
-the target audience (people in Switzerland with assets abroad).
-
-Always end with a question that connects sport to the financial theme.
-
-Length: 3-5 lines max, same hook discipline as Pillar 1/2 posts.
-
-UNIVERSAL RULES:
-- Never sound AI-generated
-- Never use: "In today's fast-paced world", "It's no secret that", "Game changer",
-  "Dive into", "Landscape", "Leverage", "Unlock", "Delve"
-- Emojis: 1-2 max, only where they add energy not decoration
-- No bullet points in the post itself
-- No hashtags unless 1-2 highly relevant ones at the very end
-- Always end with a question or poll — comments beat likes for reach
-- No price targets, no predictions stated as fact
-- No financial advice, no recommendations — observations and questions only`
+${voiceLearnings}`
 }
 
-// Claude sometimes prefaces its final answer with a sentence of reasoning
-// ("the search shows... I'll use an evergreen angle") before the JSON — strip
-// that rather than requiring the JSON to be the very first thing in the text.
-export function formatSlackMessage(
-  slot: 'morning' | 'evening',
-  topic: string,
-  format: string,
-  postTime: string,
-  copy: string,
-): string {
-  const slotLabel = slot === 'morning' ? 'Morning' : 'Evening'
-  return [
-    `📝 *IRIS — ${slotLabel} Draft*`,
-    `*Topic:* ${topic}`,
-    `*Format:* ${format}`,
-    `*Post time:* ${postTime}`,
-    '',
-    copy,
-    '',
-    '_Reply to refine, or say "done" when ready._',
-  ].join('\n')
+export interface IrisDraft {
+  copy: string
+  postType: PostType | 'auto'
+  topic: string
 }
 
-export async function generateDraft(
-  slot: 'morning' | 'evening',
-  pillar: 1 | 2 | 3,
-  topic: string,
-  cassandraContext: string | null,
-  voicePrefs: VoicePref[],
-  postType?: PostType,
-): Promise<IrisDraft | IrisSkip> {
-  const resolvedPostType = postType ?? pillarToDefaultPostType(pillar)
+export async function generateDraft(params: {
+  topic?: string
+  postType?: PostType | 'auto'
+  todayAngle?: string | null
+}): Promise<IrisDraft> {
+  const { topic, postType, todayAngle } = params
 
-  const prefsBlock = voicePrefs.length > 0
-    ? '\n\nVoice preferences learned from previous edits:\n' +
-      voicePrefs.map(p => `- ${p.preference_type}: ${p.value}`).join('\n')
-    : ''
+  const voiceLearnings = await getVoiceLearnings(10)
+  console.log(`[iris] generateDraft: voice learnings block injected (${voiceLearnings.slice(0, 80)}${voiceLearnings.length > 80 ? '…' : ''})`)
+  const prefs = (await getPreferences('iris')).filter(p => p.rule_key !== 'morning_generation_time')
+  const prefText = formatPreferencesForPrompt(prefs)
+  console.log(`[iris] generateDraft: ${prefs.length} confirmed preference(s) injected`)
+  if (prefs.length > 0) void incrementTimesApplied(prefs.map(p => p.id)).catch(err => console.error('[iris] incrementTimesApplied failed:', err))
 
-  const pillarGuide: Record<number, string> = {
-    1: 'MARKETS post — FINANCE & MARKET format rules apply.',
-    2: 'EXPAT FINANCE post — FINANCE & MARKET format rules apply. Archie moved to Malta; personal expat angle where relevant.',
-    3: 'SPORTS & LIFESTYLE post — PILLAR 3 format rules apply. Archie follows golf, football (PL/World Cup), F1. Only draft if a natural finance, retirement, or lifestyle-planning angle emerges from today\'s search — otherwise return skip.',
-  }
+  const systemPrompt = `${prefText ? `${prefText}\n\n` : ''}${buildVoiceRulesBlock(voiceLearnings)}
 
-  const contextBlock = cassandraContext
-    ? `\n\nToday's market context (CASSANDRA brief excerpt):\n${cassandraContext.slice(0, 800)}`
-    : ''
+TODAY'S NEWS ANGLE (if available):
+${todayAngle ?? 'No specific news angle today — use evergreen content'}
 
-  const prompt = `Write a LinkedIn post for Archie.\n\nPillar: ${pillar} — ${pillarGuide[pillar]}\nTopic: ${topic}\nSlot: ${slot} (${slot === 'morning' ? '8–9am' : '4–6pm'} CET)${contextBlock}${prefsBlock}\n\nSearch the web for this topic first, per your instructions, then output ONLY valid JSON, no markdown.`
+POST TYPE REQUESTED: ${postType ?? 'auto — choose the most relevant for today'}
+ROUGH IDEA OR TOPIC: ${topic ?? 'choose the most relevant topic for today'}
 
-  const system = await buildIrisSystem(pillar, resolvedPostType, topic, cassandraContext)
-  const { text: raw, search } = await askWithWebSearch(system, prompt, 1536, HAIKU)
-  const cleaned = extractJson(raw)
+Return the post text only.
+No hashtags unless they feel completely natural.
+No preamble. No explanation. Just the post.`
 
-  let parsed: unknown
-  try { parsed = JSON.parse(cleaned) }
-  catch { throw new Error(`[IRIS] generateDraft returned unparseable JSON: ${raw.slice(0, 200)}`) }
-
-  const obj = parsed as Record<string, unknown>
-
-  if (obj.skip === true) {
-    const reason = typeof obj.reason === 'string' && obj.reason.trim() ? obj.reason.trim() : 'Not relevant to target audience'
-    console.log(`[iris] generateDraft(${topic}): skipped — ${reason}`)
-    return { skip: true, reason }
-  }
-
-  if (typeof obj.copy !== 'string') throw new Error('[IRIS] generateDraft missing copy field')
-
-  const groundedInSearch = typeof obj.groundedInSearch === 'boolean' ? obj.groundedInSearch : search.results.length > 0
-
-  console.log(`[iris] generateDraft(${topic}): search query="${search.query ?? 'none'}" results=${search.results.length} groundedInSearch=${groundedInSearch}`)
-
-  // Pillar 3 doesn't know its story in advance — the topic bank passes a generic
-  // search-guidance string, so prefer the specific label Claude found on the day.
-  const resolvedTopic = pillar === 3 && typeof obj.topic === 'string' && obj.topic.trim()
-    ? obj.topic.trim()
-    : topic
+  console.log(`[iris] generateDraft: model=${SONNET} postType=${postType ?? 'auto'} topic=${topic ?? '(unset — model will choose)'}`)
+  const raw = await askWith(systemPrompt, 'Write the post now.', 1200, SONNET)
 
   return {
-    pillar,
-    postType: resolvedPostType,
-    topic: resolvedTopic,
-    copy: (obj.copy as string).trim(),
-    imagePrompt: typeof obj.imagePrompt === 'string' ? obj.imagePrompt : `Professional LinkedIn image for: ${topic}`,
-    format: typeof obj.format === 'string' ? obj.format : 'text with image',
-    postTime: typeof obj.postTime === 'string' ? obj.postTime : slot === 'morning' ? '8:00–9:00am CET' : '4:00–6:00pm CET',
-    groundedInSearch,
-    search,
+    copy: raw.trim(),
+    postType: postType ?? 'auto',
+    topic: topic ?? (todayAngle ? "today's news angle" : 'evergreen'),
   }
+}
+
+export async function refinePost(params: {
+  currentDraft: string
+  instruction: string
+  voiceLearnings: string
+}): Promise<string> {
+  const system = buildVoiceRulesBlock(params.voiceLearnings)
+  const userMessage = `Here is the current draft: ${params.currentDraft}\n\nInstruction: ${params.instruction}\n\nReturn the full refined post text only — no preamble, no explanation.`
+  console.log(`[iris] refinePost: model=${SONNET} instruction="${params.instruction}"`)
+  const raw = await askWith(system, userMessage, 1200, SONNET)
+  return raw.trim()
 }
 
 export async function generateImage(prompt: string): Promise<string> {
@@ -347,31 +256,6 @@ export async function generateImage(prompt: string): Promise<string> {
   } catch (err) {
     console.error('[IRIS] generateImage failed, using SVG fallback:', err)
     return buildSvgFallback(prompt)
-  }
-}
-
-export async function extractVoicePreferences(
-  refinementExchange: string,
-): Promise<Array<{ type: string; value: string }>> {
-  const system = `Extract concrete stylistic preferences from LinkedIn post feedback.
-Output ONLY a valid JSON array: [{"type":"...","value":"..."}]
-Capture tone, structure, length, emoji use, vocabulary shifts.
-Return [] if no clear preference is present. Never invent preferences.
-Examples: {"type":"tone","value":"more casual, less formal"}, {"type":"length","value":"shorter paragraphs"}`
-
-  try {
-    const raw = await askWith(system, `Feedback:\n${refinementExchange}`, 512, HAIKU)
-    const cleaned = raw.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-    const parsed: unknown = JSON.parse(cleaned)
-    if (!Array.isArray(parsed)) return []
-    return (parsed as unknown[]).filter(
-      (item): item is { type: string; value: string } =>
-        typeof item === 'object' && item !== null &&
-        typeof (item as Record<string, unknown>).type === 'string' &&
-        typeof (item as Record<string, unknown>).value === 'string',
-    )
-  } catch {
-    return []
   }
 }
 
@@ -415,7 +299,7 @@ Return JSON only:
 Return { "learnings": [] } if the edit is trivial (typo fixes, punctuation only) with nothing to learn.`
 
   try {
-    const raw = await askWith(system, prompt, 800, HAIKU)
+    const raw = await askWith(system, prompt, 800, SONNET)
     const cleaned = raw.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     const parsed = JSON.parse(cleaned) as { learnings?: unknown[] }
     if (!Array.isArray(parsed.learnings)) return []
@@ -450,7 +334,7 @@ Return JSON only:
 { "learnings": [ { "learning": string } ] }`
 
   try {
-    const raw = await askWith(system, prompt, 500, HAIKU)
+    const raw = await askWith(system, prompt, 500, SONNET)
     const cleaned = raw.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     const parsed = JSON.parse(cleaned) as { learnings?: unknown[] }
     if (!Array.isArray(parsed.learnings)) return []
@@ -460,6 +344,90 @@ Return JSON only:
       .map(item => ({ learning: item.learning, after: copy }))
   } catch (err) {
     console.error('[iris] extractStyleReference failed:', err)
+    return []
+  }
+}
+
+// ─── Chat message classification ─────────────────────────────────────────────
+// Cheap Sonnet call classifying free-text chat input into one of the actions
+// the LinkedIn chat UI understands. Deliberately not Haiku — this needs to
+// reliably tell "a rough idea" apart from "an instruction to refine the
+// current draft", which can both be short, casual phrases.
+
+export type ChatAction =
+  | { action: 'idea'; topic: string }
+  | { action: 'refine'; instruction: string }
+  | { action: 'suggest' }
+  | { action: 'news_angle' }
+  | { action: 'restart' }
+  | { action: 'show_history' }
+
+export async function classifyChatMessage(message: string, hasActiveDraft: boolean): Promise<ChatAction> {
+  const system = `You classify a message Archie just typed into a LinkedIn content chat assistant.
+
+Return ONLY valid JSON, one of these exact shapes:
+{"action":"idea","topic":"<cleaned rough idea or topic text>"}
+{"action":"refine","instruction":"<the refinement instruction, cleaned up>"}
+{"action":"suggest"}
+{"action":"news_angle"}
+{"action":"restart"}
+{"action":"show_history"}
+
+Rules:
+- "suggest" — Archie is asking what he should post about (e.g. "what should I post today?", "any ideas?")
+- "news_angle" — Archie wants today's CASSANDRA news angle used (e.g. "use today's news angle", "today's angle")
+- "restart" — Archie wants a fresh draft on the same topic (e.g. "start again", "try again", "redo")
+- "show_history" — Archie wants to see his post history (e.g. "show me my post history", "show history")
+- "refine" — ${hasActiveDraft ? 'there is an active draft on screen, and the message reads as an instruction to change it (e.g. "make the hook punchier", "shorter", "more personal", "change the sport to golf", "add a fact about X", "add a call to action")' : 'never pick this — there is no active draft right now'}
+- "idea" — anything else: a rough idea, a topic, a specific angle to write about (e.g. "something about golf in Portugal", "the accountant vs adviser thing")
+
+When in doubt between "refine" and "idea": if there's an active draft and the message is a short imperative tweak rather than a new topic, pick "refine".`
+
+  try {
+    const raw = await askWith(system, message, 200, SONNET)
+    const cleaned = raw.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+    const parsed = JSON.parse(cleaned) as Record<string, unknown>
+    switch (parsed.action) {
+      case 'idea':
+        return { action: 'idea', topic: typeof parsed.topic === 'string' && parsed.topic.trim() ? parsed.topic.trim() : message.trim() }
+      case 'refine':
+        if (hasActiveDraft) return { action: 'refine', instruction: typeof parsed.instruction === 'string' && parsed.instruction.trim() ? parsed.instruction.trim() : message.trim() }
+        return { action: 'idea', topic: message.trim() }
+      case 'suggest': return { action: 'suggest' }
+      case 'news_angle': return { action: 'news_angle' }
+      case 'restart': return { action: 'restart' }
+      case 'show_history': return { action: 'show_history' }
+      default:
+        return { action: 'idea', topic: message.trim() }
+    }
+  } catch (err) {
+    console.error('[iris] classifyChatMessage failed, defaulting to idea:', err)
+    return { action: 'idea', topic: message.trim() }
+  }
+}
+
+// Three evergreen-but-fresh topic suggestions — used by the "what should I
+// post today?" chat command. Cheap Haiku call: this is a suggestion list, not
+// generated content, so it doesn't need Sonnet's quality.
+export async function suggestTopics(recentTopics: string[], todayAngle: string | null): Promise<string[]> {
+  const voiceProfile = await readVoiceProfile()
+  const system = `You suggest LinkedIn post topics for Archie, a BDA at deVere Switzerland. Return ONLY a JSON array of exactly 3 short topic strings, each a concrete, specific idea (not generic). Avoid anything in the recent-topics list. Base suggestions on his usual topic areas below.
+
+${voiceProfile}`
+
+  const prompt = `Recent topics already posted (avoid repeating): ${recentTopics.length > 0 ? recentTopics.join('; ') : 'none'}
+${todayAngle ? `Today's CASSANDRA news angle: ${todayAngle}` : 'No specific news angle today.'}
+
+Return JSON array only: ["...", "...", "..."]`
+
+  try {
+    const raw = await askWith(system, prompt, 300, HAIKU)
+    const cleaned = raw.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+    const parsed = JSON.parse(cleaned) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((t): t is string => typeof t === 'string').slice(0, 3)
+  } catch (err) {
+    console.error('[iris] suggestTopics failed:', err)
     return []
   }
 }

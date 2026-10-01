@@ -2633,6 +2633,65 @@
 .irisEngagementToggle:hover { border-color: var(--idle); color: var(--idle); }
 .irisEngagementToggleActive { border-color: var(--idle); color: var(--idle); background: rgba(224,179,65,0.08); }
 
+/* ── IRIS — LinkedIn chat workspace ──────────────────────────────────────── */
+
+.irisChatLayout { display: grid; grid-template-columns: 1fr 300px; gap: 24px; align-items: start; margin-bottom: 90px; }
+@media (max-width: 900px) { .irisChatLayout { grid-template-columns: 1fr; } }
+
+.irisChatCentre { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.irisChatThread {
+  display: flex; flex-direction: column; gap: 16px; min-height: 320px; max-height: 62vh; overflow-y: auto;
+  padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+}
+.irisChatEmpty { font-family: var(--mono); font-size: 11px; color: var(--text-dim); padding: 20px 0; text-align: center; }
+
+.irisChatRow { display: flex; flex-direction: column; max-width: 86%; }
+.irisChatRowArchie { align-self: flex-end; align-items: flex-end; }
+.irisChatRowMaia { align-self: flex-start; align-items: flex-start; }
+.irisChatLabel { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+.irisChatBubble { padding: 9px 13px; border-radius: 12px; font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; }
+.irisChatBubbleArchie { background: var(--accent); color: #0D1014; border-radius: 12px 12px 2px 12px; }
+.irisChatBubbleMaia { background: var(--raised); border: 1px solid var(--border); color: var(--text); border-radius: 12px 12px 12px 2px; }
+
+.irisChatDraftCard {
+  width: 100%; margin-top: 8px; display: flex; flex-direction: column; gap: 10px;
+  padding: 16px; background: var(--raised); border: 1px solid var(--border); border-radius: 10px;
+}
+.irisChatDraftCardSuperseded { opacity: 0.55; }
+.irisChatDraftHead {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim);
+  padding-bottom: 10px; border-bottom: 1px solid var(--hairline);
+}
+.irisChatDraftCopy { font-size: 13px; color: var(--text); line-height: 1.6; white-space: pre-wrap; }
+.irisChatDraftMeta { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.irisChatDraftActions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.irisChatInputRow { display: flex; gap: 8px; align-items: flex-end; }
+.irisChatTextarea {
+  flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 10px 13px; font-size: 13px; color: var(--text); font-family: inherit; outline: none;
+  resize: none; min-height: 42px; max-height: 140px; transition: border-color 0.12s;
+}
+.irisChatTextarea:focus { border-color: var(--accent-deep); }
+.irisChatSendBtn {
+  padding: 10px 18px; background: var(--accent); color: #0D1014; border: none; border-radius: var(--r);
+  font-family: var(--mono); font-size: 11px; font-weight: 600; cursor: pointer; transition: opacity 0.12s; white-space: nowrap;
+}
+.irisChatSendBtn:hover:not(:disabled) { opacity: 0.85; }
+.irisChatSendBtn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.irisRightPanel { display: flex; flex-direction: column; gap: 22px; }
+.irisRightSection { display: flex; flex-direction: column; gap: 10px; }
+
+.irisTrackerRow { display: flex; gap: 10px; }
+.irisTrackerStat {
+  flex: 1; padding: 12px 14px; background: var(--raised); border: 1px solid var(--border); border-radius: 10px;
+}
+.irisTrackerVal { font-family: var(--display); font-weight: 600; font-size: 18px; color: var(--text); }
+.irisTrackerLabel { font-family: var(--mono); font-size: 9.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+
 /* ═══════════ ORACLE — Pension Estimator ═══════════ */
 
 .oracleScroll { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 24px; }

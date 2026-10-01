@@ -1,0 +1,17 @@
+name: LinkedIn Morning Draft
+
+on:
+  schedule:
+    # 7:00am UTC daily
+    - cron: '0 7 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  morning-draft:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger IRIS morning draft
+        run: |
+          curl -f -X GET \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            "https://maia-pa-production.up.railway.app/api/cron/iris/morning-draft"

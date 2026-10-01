@@ -2,7 +2,7 @@
 
 import { desc, gte, eq, and } from 'drizzle-orm'
 import { getDb } from '@/db'
-import { iris_posts, voice_preferences, research_briefs, iris_voice_learnings } from '@/db/schema'
+import { iris_posts, voice_preferences, research_briefs, iris_voice_learnings, iris_chat_messages, maia_preferences } from '@/db/schema'
 
 export interface IrisPost {
   id: string
@@ -58,15 +58,6 @@ export async function getPillarBalance(): Promise<Record<number, number>> {
     counts[p] = (counts[p] ?? 0) + 1
   }
   return counts
-}
-
-export async function getLastThreePillars(): Promise<number[]> {
-  const rows = await getDb()
-    .select({ pillar: iris_posts.pillar })
-    .from(iris_posts)
-    .orderBy(desc(iris_posts.created_at))
-    .limit(3)
-  return rows.map(r => r.pillar)
 }
 
 type SavePostInput = Pick<IrisPost, 'slot' | 'pillar' | 'topic' | 'copy' | 'status'> &
@@ -202,17 +193,6 @@ export async function getPostById(id: string): Promise<IrisPost | null> {
   return row as IrisPost
 }
 
-export async function getActiveIrisDraft(slack_ts: string): Promise<IrisPost | null> {
-  const rows = await getDb()
-    .select()
-    .from(iris_posts)
-    .where(eq(iris_posts.slack_ts, slack_ts))
-    .limit(1)
-  const row = rows[0]
-  if (!row) return null
-  return row as IrisPost
-}
-
 export async function getVoicePreferences(): Promise<VoicePref[]> {
   const rows = await getDb()
     .select()
@@ -260,48 +240,10 @@ export const CASSANDRA_SIGNALS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bcrypto\b|\bbitcoin\b|\bbtc\b|\bethereum\b|\beth\b/i,                 label: 'Crypto' },
 ]
 
-// Scan the CASSANDRA brief and save up to 3 strong signals as 'suggested' iris_posts.
-// Never throws — errors are logged and swallowed.
-export async function flagIrisTopics(brief: string): Promise<void> {
-  try {
-    const now = Math.floor(Date.now() / 1000)
-    let flagCount = 0
-
-    for (const signal of CASSANDRA_SIGNALS) {
-      if (flagCount >= 3) break
-      const m = signal.pattern.exec(brief)
-      if (!m) continue
-
-      const snippet = brief
-        .slice(Math.max(0, m.index - 30), Math.min(brief.length, m.index + 120))
-        .replace(/\n/g, ' ')
-        .trim()
-      const topic = `${signal.label}: ${snippet.slice(0, 100)}`
-
-      await getDb().insert(iris_posts).values({
-        id: crypto.randomUUID(),
-        slot: '',
-        pillar: 1,
-        topic,
-        copy: '',
-        image_prompt: null,
-        image_url: null,
-        format: null,
-        status: 'suggested',
-        slack_ts: null,
-        created_at: now,
-      })
-
-      console.log(`[iris] flagged topic: ${topic}`)
-      flagCount++
-    }
-  } catch (err) {
-    console.error('[iris] flagIrisTopics failed:', err)
-  }
-}
-
 // Return the earliest 'suggested' iris_post from today, or null if none.
-// Called by buildScheduledDraft before falling back to the topic bank.
+// Read by MAIA's voice status summary (src/lib/maia-voice.ts). Nothing writes
+// 'suggested' rows automatically any more — only the Slack "flag_iris_topic"
+// command (src/lib/cassandra-handler.ts's handleFlagIrisTopic) still can.
 export async function getSuggestedTopic(): Promise<IrisPost | null> {
   const d = new Date()
   d.setHours(0, 0, 0, 0)
@@ -327,4 +269,70 @@ export async function getRecentPosts(days: number): Promise<IrisPost[]> {
     .where(gte(iris_posts.created_at, since))
     .orderBy(desc(iris_posts.created_at))
   return rows as IrisPost[]
+}
+
+// ─── LinkedIn chat thread ─────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  id: string
+  role: 'maia' | 'archie'
+  content: string
+  draft_post_id: string | null
+  created_at: number
+}
+
+export async function saveChatMessage(
+  role: 'maia' | 'archie',
+  content: string,
+  draftPostId?: string | null,
+): Promise<string> {
+  const id = crypto.randomUUID()
+  await getDb().insert(iris_chat_messages).values({
+    id,
+    role,
+    content,
+    draft_post_id: draftPostId ?? null,
+    created_at: Math.floor(Date.now() / 1000),
+  })
+  return id
+}
+
+export async function getChatMessages(limit = 50): Promise<ChatMessage[]> {
+  const rows = await getDb()
+    .select()
+    .from(iris_chat_messages)
+    .orderBy(desc(iris_chat_messages.created_at))
+    .limit(limit)
+  return (rows as ChatMessage[]).reverse()
+}
+
+// The most recent iris_posts row still in 'draft' status — refinements create a
+// new row and mark the previous one 'superseded', so there is at most one live
+// draft at a time; everything older stays in the thread as read-only history.
+export async function getCurrentDraft(): Promise<IrisPost | null> {
+  const rows = await getDb()
+    .select()
+    .from(iris_posts)
+    .where(eq(iris_posts.status, 'draft'))
+    .orderBy(desc(iris_posts.created_at))
+    .limit(1)
+  const row = rows[0]
+  if (!row) return null
+  return row as IrisPost
+}
+
+export async function supersedeDraft(id: string): Promise<void> {
+  await getDb().update(iris_posts).set({ status: 'superseded' }).where(eq(iris_posts.id, id))
+}
+
+// Reads the configured morning-draft time directly (bypassing getPreferences'
+// confirmed-only prompt-injection path — this is a schedule config value, not a
+// voice rule, and must never be formatted into the generation system prompt).
+export async function getMorningGenerationTime(): Promise<string> {
+  const rows = await getDb()
+    .select({ value: maia_preferences.rule_value })
+    .from(maia_preferences)
+    .where(and(eq(maia_preferences.category, 'iris'), eq(maia_preferences.rule_key, 'morning_generation_time')))
+    .limit(1)
+  return rows[0]?.value ?? '07:00'
 }

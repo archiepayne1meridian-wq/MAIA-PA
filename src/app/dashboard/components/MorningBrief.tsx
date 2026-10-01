@@ -109,7 +109,7 @@ export default function MorningBrief({ context }: Props) {
           </div>
 
           <div className={s.morningBriefFocusItem}>
-            <div className={s.morningBriefFocusTitle}>✍️ {irisDraft ? `IRIS post ready — ${irisDraft.topic}` : 'IRIS — no draft pending'}</div>
+            <div className={s.morningBriefFocusTitle}>✍️ {irisDraft ? `LinkedIn post ready — ${irisDraft.topic}` : 'LinkedIn — no draft pending'}</div>
             {irisDraft && <button className={s.morningBriefBtn} onClick={() => router.push('/dashboard/iris')}>Review post</button>}
           </div>
         </div>

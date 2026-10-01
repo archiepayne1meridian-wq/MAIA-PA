@@ -1,489 +1,179 @@
-// IRIS handler — topic selection (deterministic) + Slack thread handler + scheduled brief builder.
-// Logs all actions to `activity` with agent='IRIS'.
+// IRIS handler — the LinkedIn chat thread: morning auto-draft + chat message dispatch.
+// Logs scheduled generation to `activity` with agent='IRIS'.
 
 import { eq } from 'drizzle-orm'
-import { postMessage, updateMessage } from './slack'
 import {
-  formatSlackMessage,
   generateDraft,
-  generateImage,
-  extractVoicePreferences,
-  type IrisDraft,
-  type IrisSkip,
+  refinePost,
+  suggestTopics,
+  classifyChatMessage,
+  getVoiceLearnings,
   type PostType,
 } from './iris'
 import {
   getRecentTopics,
-  getLastThreePillars,
   savePost,
-  updatePostStatus,
-  updatePostSlackTs,
-  getVoicePreferences,
-  saveVoicePreference,
+  getCurrentDraft,
+  supersedeDraft,
+  saveChatMessage,
   getTodaysBrief,
-  getSuggestedTopic,
   type IrisPost,
-  type VoicePref,
 } from '../../tools/iris'
 import { getDb } from '@/db'
-import { activity, iris_posts } from '@/db/schema'
+import { activity } from '@/db/schema'
 
-// Upload image to Slack (v2 files API) and share in channel/thread.
-// Returns silently on any failure — never blocks post delivery.
-async function postSlackImageInThread(
-  imageDataUrl: string,
-  channel: string,
-  threadTs: string,
-): Promise<void> {
-  try {
-    const token = process.env.SLACK_BOT_TOKEN
-    if (!token) return
+// ─── Morning auto-draft (called by GET /api/cron/iris/morning-draft) ─────────
 
-    const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/)
-    if (!match) return
-    const [, mime, b64] = match
-    const buf = Buffer.from(b64!, 'base64')
-    const ext = mime === 'image/svg+xml' ? 'svg' : 'png'
-
-    // Step 1 — get upload URL
-    const urlRes = await fetch(
-      `https://slack.com/api/files.getUploadURLExternal?filename=iris-post.${ext}&length=${buf.length}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-    const urlData = await urlRes.json() as { ok: boolean; upload_url?: string; file_id?: string }
-    if (!urlData.ok || !urlData.upload_url || !urlData.file_id) return
-
-    // Step 2 — upload bytes
-    await fetch(urlData.upload_url, {
-      method: 'POST',
-      headers: { 'Content-Type': mime! },
-      body: buf,
-    })
-
-    // Step 3 — complete + share to thread
-    await fetch('https://slack.com/api/files.completeUploadExternal', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        files: [{ id: urlData.file_id }],
-        channel_id: channel,
-        thread_ts: threadTs,
-      }),
-    })
-  } catch (err) {
-    console.error('[iris] postSlackImageInThread failed:', err)
-  }
-}
-
-// ─── Topic banks (from context/iris.md) ──────────────────────────────────────
-// Relevance test for every signal and topic below: "Would someone living in
-// Switzerland with assets in another country think this affects them?"
-
-const PILLAR_1_SIGNALS = [
-  'inheritance tax', 'iht', 'pension death benefit',
-  'non-dom', 'non-domicile',
-  'tax residency', 'residency rules', 'residency status',
-  'double taxation', 'double tax treaty', 'tax treaty',
-  'qrops', 'annual allowance', 'pension access age', 'pension transfer',
-  'state pension', 'frozen abroad', 'triple lock', 'qualifying years',
-  'isa rules', 'isa non-resident',
-  'offshore bond',
-  'gbp/chf', 'gbp/eur', 'eur/chf', 'swiss franc', 'exchange rate',
-  'swiss tax', 'switzerland tax', 'finma',
-  'fatca', 'crs', 'common reporting standard',
-  'budget', 'autumn statement', 'spring statement',
-  'forced heirship', 'succession rules', 'estate planning', 'inheritance rules',
-  'cost of living', 'inflation',
-  'uk property abroad', 'property while abroad',
-]
-
-export const PILLAR_1_TOPICS = [
-  'IHT changes — especially pension death benefits from April 2027',
-  'Non-dom rule changes and what they mean for long-term expats',
-  'Tax residency rules — when does it change, what triggers it, what are the consequences',
-  'Double taxation treaties — updates, new agreements, what they mean practically',
-  'Pension changes — QROPS rules, annual allowance, access age (55→57 in 2028)',
-  'State pension — frozen abroad rules, qualifying years, triple lock updates',
-  'ISA rules for non-UK residents — frozen, can\'t contribute, still tax-free',
-  'Offshore bond regulation changes',
-  'Currency moves — GBP/CHF, GBP/EUR, EUR/CHF — when significant enough to matter',
-  'Swiss tax changes affecting residents with foreign assets',
-  'EU/FATCA/CRS reporting changes affecting cross-border money',
-  'Political changes with direct financial implications — budgets, autumn statements, new government policies on tax or pensions',
-  'Inheritance and estate planning — forced heirship, succession rules across borders',
-  'Cost of living/inflation where it hits purchasing power of foreign-held assets',
-  'What happens to your UK property when you live abroad',
-  'The cash pile problem — expats holding too much in cash across multiple currencies',
-]
-
-export const PILLAR_2_TOPICS = [
-  'Moving to Switzerland — financial things nobody tells you',
-  'Managing money across multiple currencies',
-  '"I\'ve got a pension back home I haven\'t looked at in years" — who else?',
-  'What does your adviser actually do — and can they follow you if you move again?',
-  'The wrapper problem — your ISA, GIA, pension sitting in the wrong structure',
-  'Estate planning across borders — does your will hold up in Switzerland?',
-  'The IHT tail — leaving the UK doesn\'t mean leaving the UK tax system',
-  'Swiss banking vs offshore — what\'s the difference and does it matter?',
-  'Retiring abroad — what does that actually cost and where does the money come from?',
-  '"What are you waiting for?" — the cash sitting doing nothing for years',
-  'Protection abroad — life cover, health cover, what follows you and what doesn\'t',
-  'Currency risk — earning in CHF, thinking in GBP, retiring somewhere else',
-]
-
-// Pillar 3 is opportunistic, not a fixed topic bank — this is the search
-// guidance handed to generateDraft() once per run to see if anything's worth
-// posting today. Claude reports back its own specific story label (or skips).
-const PILLAR_3_SEARCH_TOPIC = (dateStr: string): string =>
-  `sports news finance money lifestyle today ${dateStr} golf football F1 tennis`
-
-// Evergreen banks for the dashboard's manual "post type" generate flow (voice
-// profile's own topic lists — context/iris-voice.md). Unlike the opportunistic
-// Pillar 3 live-search above (which can legitimately skip if nothing's on),
-// a manually-clicked "Generate" button should reliably produce something —
-// these don't depend on a live search turning up a story today.
-export const SPORTS_TWIST_TOPICS = [
-  'Padel: price in Switzerland vs Spain/Portugal → retirement location decisions',
-  'Golf: course fees across Europe → cost of living in retirement',
-  'F1: team valuations, driver salaries → alternative assets, wealth concentration',
-  'Football: transfer fees, player wages, remittances → cross-border money, tax',
-]
-
-export const FINANCIAL_TRUTH_TOPICS = [
-  'Time in market vs timing the market',
-  'Cost of doing nothing (inflation on cash)',
-  'What an accountant does vs what a financial adviser does',
-  'Tax you can avoid vs tax you have to pay',
-  'Why most expats are underadvised',
-]
-
-// ─── Topic selection (deterministic) ─────────────────────────────────────────
-
-export interface SelectedTopic {
-  pillar: 1 | 2 | 3
-  topic: string
-  cassandraSignal: string | null
-}
-
-// Pillar 3 requires an actual web search to know if it's even in play today, so
-// selection is async and — when Pillar 3 fires — already carries the fully
-// generated draft (generateDraft() both searches and judges "is this worth
-// posting" in one call; there's no cheaper way to pre-check it).
-export interface PickedTopic extends SelectedTopic {
-  pregeneratedDraft?: IrisDraft
-}
-
-// A live CASSANDRA signal driving a Pillar 1 pick is a real news event —
-// 'news_angle'. Pillar 1 from the generic evergreen topic bank (no signal)
-// is 'financial_truth' instead. Pillar 2/3 map straight across.
-export function selectPostType(selected: SelectedTopic): PostType {
-  if (selected.pillar === 3) return 'sports_twist'
-  if (selected.pillar === 2) return 'expat_reality'
-  return selected.cassandraSignal ? 'news_angle' : 'financial_truth'
-}
-
-export async function selectTopic(
-  brief: string | null,
-  recentTopics: string[],
-  lastThreePillars: number[],
-  slot: 'morning' | 'evening',
-  voicePrefs: VoicePref[],
-  attemptPillar3 = true,
-): Promise<PickedTopic> {
-  const recentLower = new Set(recentTopics.map(t => t.toLowerCase()))
-
-  // Pillar balance override: if last 3 posts all Pillar 1, force 2
-  const last3AllP1 = lastThreePillars.length >= 3 && lastThreePillars.every(p => p === 1)
-
-  // Step 1 — CASSANDRA scan for Pillar 1 signals (unless pillar balance override)
-  if (!last3AllP1 && brief) {
-    const briefLower = brief.toLowerCase()
-    const signal = PILLAR_1_SIGNALS.find(kw => briefLower.includes(kw))
-    if (signal) {
-      // Extract a brief snippet around the signal for context
-      const idx = briefLower.indexOf(signal)
-      const snippet = brief.slice(Math.max(0, idx - 40), idx + 120).replace(/\n/g, ' ').trim()
-      const topic = `Market moment: ${snippet.slice(0, 80)}...`
-      return { pillar: 1, topic, cassandraSignal: snippet }
-    }
-  }
-
-  // Step 2 — Pillar 3, opportunistic only: try once per run (not on retries).
-  // No fixed rotation slot, no forced post — only fires if today's sports/
-  // lifestyle search turns up something with a genuine finance angle.
-  if (attemptPillar3) {
-    const dateStr = new Date().toISOString().slice(0, 10)
-    const pillar3Result = await generateDraft(slot, 3, PILLAR_3_SEARCH_TOPIC(dateStr), null, voicePrefs)
-    if (!pillar3Result.skip) {
-      return {
-        pillar: 3,
-        topic: pillar3Result.topic,
-        cassandraSignal: null,
-        pregeneratedDraft: pillar3Result,
-      }
-    }
-    console.log('[iris] Pillar 3 skipped — no strong sports angle today')
-  }
-
-  // Step 3 — pillar balance between 1 and 2 only
-  const p1count = lastThreePillars.filter(p => p === 1).length
-
-  const targetPillar: 1 | 2 = (last3AllP1 || p1count >= 2) ? 2 : 1
-
-  // Step 4 — pick from topic bank for target pillar, avoiding recent
-  const bankMap: Record<1 | 2, string[]> = {
-    1: PILLAR_1_TOPICS,   // fallback if no CASSANDRA signal fires
-    2: PILLAR_2_TOPICS,
-  }
-
-  const bank = bankMap[targetPillar]
-  const fresh = bank.filter(t => !recentLower.has(t.toLowerCase()))
-  const pool = fresh.length > 0 ? fresh : bank  // reset if all recently used
-  // Cycle: pick first in pool (deterministic — same run = same pick)
-  return { pillar: targetPillar, topic: pool[0]!, cassandraSignal: null }
-}
-
-// ─── Scheduled draft builder (called by POST /api/cron/iris) ─────────────────
-
-export async function buildScheduledDraft(
-  slot: 'morning' | 'evening',
-  channel: string,
-): Promise<void> {
+export async function buildMorningDraft(): Promise<{ postId: string; topic: string }> {
   const rowId = crypto.randomUUID()
   const startMs = Date.now()
 
   await getDb().insert(activity).values({
     id: rowId,
-    event_id: `iris_draft_${slot}_${Date.now()}`,
+    event_id: `iris_morning_draft_${Date.now()}`,
     type: 'scheduled_draft',
     agent: 'IRIS',
-    input: slot,
+    input: 'morning',
     status: 'pending',
     created_at: Math.floor(Date.now() / 1000),
   })
 
   try {
-    const [recentTopics, lastThreePillars, brief, suggestedPost] = await Promise.all([
-      getRecentTopics(7),
-      getLastThreePillars(),
-      getTodaysBrief(),
-      getSuggestedTopic(),
-    ])
-    const voicePrefs = await getVoicePreferences()
+    const [brief, recentTopics, current] = await Promise.all([getTodaysBrief(), getRecentTopics(14), getCurrentDraft()])
+    if (current) await supersedeDraft(current.id)
 
-    let selected: PickedTopic
-    if (suggestedPost) {
-      // Consume the CASSANDRA-flagged topic: mark it selected, use it for this draft.
-      await updatePostStatus(suggestedPost.id, 'selected')
-      selected = {
-        pillar: suggestedPost.pillar as 1 | 2 | 3,
-        topic: suggestedPost.topic,
-        cassandraSignal: null,
-      }
-    } else {
-      selected = await selectTopic(brief, recentTopics, lastThreePillars, slot, voicePrefs)
+    let topic: string | undefined
+    if (!brief) {
+      const suggestions = await suggestTopics(recentTopics, null)
+      topic = suggestions[0]
     }
 
-    // Relevance filter can skip a topic — fall back to the next topic in the
-    // bank, up to a few attempts, rather than force a weak/irrelevant post.
-    // A Pillar 3 pick already ran its search+draft inside selectTopic() — reuse
-    // that result instead of searching a second time via generateDraft.
-    const MAX_ATTEMPTS = 4
-    const skipped: { topic: string; reason: string }[] = []
-    const excludedTopics = [...recentTopics]
-    let result: IrisDraft | IrisSkip = selected.pregeneratedDraft
-      ?? await generateDraft(slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs, selectPostType(selected))
-
-    while (result.skip && skipped.length < MAX_ATTEMPTS - 1) {
-      skipped.push({ topic: selected.topic, reason: result.reason })
-      console.log(`[iris] topic skipped (${result.reason}): "${selected.topic}" — falling back to next topic in bank`)
-      if (suggestedPost && selected.topic === suggestedPost.topic) {
-        await updatePostStatus(suggestedPost.id, 'skipped')
-      }
-      excludedTopics.push(selected.topic)
-      // Pillar 3 already had its one shot this run — don't re-search on retries.
-      selected = await selectTopic(brief, excludedTopics, lastThreePillars, slot, voicePrefs, false)
-      result = selected.pregeneratedDraft
-        ?? await generateDraft(slot, selected.pillar, selected.topic, selected.cassandraSignal, voicePrefs, selectPostType(selected))
-    }
-
-    if (result.skip) {
-      skipped.push({ topic: selected.topic, reason: result.reason })
-      const summary = skipped.map(s => `"${s.topic}" (${s.reason})`).join('; ')
-      console.log(`[iris] buildScheduledDraft: all ${skipped.length} attempts skipped by relevance filter — ${summary}`)
-      await getDb()
-        .update(activity)
-        .set({ output: `no relevant topic found — skipped: ${summary}`, status: 'success', duration_ms: Date.now() - startMs })
-        .where(eq(activity.id, rowId))
-      await postMessage(channel, `_IRIS: nothing relevant to post this ${slot} — every topic tried failed the relevance filter. Skipped rather than forcing it._`)
-      return
-    }
-
-    const draft: IrisDraft = result
-    const imageUrl = await generateImage(draft.imagePrompt)
+    const draft = await generateDraft({ topic, postType: 'auto', todayAngle: brief })
 
     const postId = await savePost({
-      slot,
-      pillar: draft.pillar,
+      slot: 'morning',
+      pillar: 1,
       topic: draft.topic,
       copy: draft.copy,
-      image_prompt: draft.imagePrompt,
-      image_url: imageUrl,
-      format: draft.format,
       status: 'draft',
-      slack_ts: null,
       post_type: draft.postType,
     })
 
-    const slackText = formatSlackMessage(slot, draft.topic, draft.format, draft.postTime, draft.copy)
-    const msg = await postMessage(channel, slackText)
-    await updatePostSlackTs(postId, msg.ts)
-
-    // Upload image in thread (fire-and-forget — never blocks delivery)
-    void postSlackImageInThread(imageUrl, channel, msg.ts)
+    await saveChatMessage('maia', "Good morning — here's today's draft:", postId)
 
     await getDb()
       .update(activity)
-      .set({ output: `draft posted: ${selected.topic}`, status: 'success', duration_ms: Date.now() - startMs })
+      .set({ output: `draft generated: ${draft.topic}`, status: 'success', duration_ms: Date.now() - startMs })
       .where(eq(activity.id, rowId))
+
+    return { postId, topic: draft.topic }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error('[iris] buildScheduledDraft failed:', err)
+    console.error('[iris] buildMorningDraft failed:', err)
     await getDb()
       .update(activity)
       .set({ output: msg, status: 'error', duration_ms: Date.now() - startMs })
       .where(eq(activity.id, rowId))
-    await postMessage(channel, `⚠ IRIS: draft generation failed — ${msg}`)
+    throw err
   }
 }
 
-// ─── Slack thread reply handler ───────────────────────────────────────────────
+// ─── Chat message dispatch (called by POST /api/dashboard/iris/chat) ────────
 
-export async function handleIrisThread(
-  post: IrisPost,
-  replyText: string,
-  channel: string,
-  _replyTs: string,
-): Promise<void> {
-  const lower = replyText.trim().toLowerCase()
+export type ChatDispatchResult =
+  | { kind: 'draft'; postId: string; maiaMessage: string }
+  | { kind: 'text'; maiaMessage: string }
 
-  if (/^done\s*$/i.test(lower)) {
-    await updatePostStatus(post.id, 'approved')
+// Generates a fresh draft, supersedes whatever was previously the live draft
+// (if any), and drops the new one into the chat thread.
+async function dropDraft(
+  topic: string | undefined,
+  todayAngle: string | null | undefined,
+  postType: PostType | 'auto',
+  maiaIntro: string,
+): Promise<ChatDispatchResult> {
+  const current = await getCurrentDraft()
+  if (current) await supersedeDraft(current.id)
 
-    // Extract any stylistic preferences from the "done" message and prior topic context
-    const prefs = await extractVoicePreferences(
-      `Topic: ${post.topic}\nFinal approval message: ${replyText}`,
-    )
-    await Promise.all(
-      prefs.map(p => saveVoicePreference(p.type, p.value, `iris_thread_${post.id}`)),
-    )
+  const draft = await generateDraft({ topic, postType, todayAngle })
+  const postId = await savePost({
+    slot: new Date().getHours() < 13 ? 'morning' : 'evening',
+    pillar: 1,
+    topic: draft.topic,
+    copy: draft.copy,
+    status: 'draft',
+    post_type: draft.postType,
+  })
+  await saveChatMessage('maia', maiaIntro, postId)
+  return { kind: 'draft', postId, maiaMessage: maiaIntro }
+}
 
-    const prefNote = prefs.length > 0
-      ? `\n_Voice memory: ${prefs.length} preference${prefs.length !== 1 ? 's' : ''} logged._`
-      : ''
-    await postMessage(
-      channel,
-      `✅ *IRIS — Draft approved.* Copy saved. Paste it to LinkedIn manually when ready.${prefNote}`,
-      post.slack_ts ?? undefined,
-    )
-    return
+export async function dispatchChatMessage(
+  message: string,
+  requestedPostType?: PostType | 'auto',
+): Promise<ChatDispatchResult> {
+  const current = await getCurrentDraft()
+  await saveChatMessage('archie', message)
+
+  // An explicit pill selection always wins over the free-text classifier.
+  if (requestedPostType && requestedPostType !== 'auto') {
+    return dropDraft(message, null, requestedPostType, "Here's a new draft:")
   }
 
-  // Redraft with feedback injected
-  try {
-    const [voicePrefs, todaysBrief] = await Promise.all([
-      getVoicePreferences(),
-      getTodaysBrief(),
-    ])
+  const classified = await classifyChatMessage(message, Boolean(current))
 
-    // Extract and persist any stylistic preferences from this feedback
-    const prefs = await extractVoicePreferences(
-      `Topic: ${post.topic}\nUser feedback: ${replyText}`,
-    )
-    await Promise.all(
-      prefs.map(p => saveVoicePreference(p.type, p.value, `iris_thread_${post.id}`)),
-    )
-
-    // Inject feedback as context so Claude knows what to change
-    const feedbackContext = [
-      todaysBrief ?? '',
-      `\nPrevious draft (first 300 chars):\n${post.copy.slice(0, 300)}`,
-      `\nUser feedback to apply: ${replyText}`,
-    ].join('').trim()
-
-    const redraftResult: IrisDraft | IrisSkip = await generateDraft(
-      post.slot as 'morning' | 'evening',
-      post.pillar as 1 | 2 | 3,
-      post.topic,
-      feedbackContext,
-      voicePrefs,
-    )
-
-    if (redraftResult.skip) {
-      console.log(`[iris] handleIrisThread redraft skipped (${redraftResult.reason}): "${post.topic}"`)
-      await postMessage(
-        channel,
-        `_IRIS: this redraft failed the relevance filter (${redraftResult.reason}) — original draft left unchanged._`,
-        post.slack_ts ?? undefined,
-      )
-      return
+  switch (classified.action) {
+    case 'refine': {
+      if (!current) return dropDraft(message, null, 'auto', "Here's a new draft:")
+      const voiceLearnings = await getVoiceLearnings(10)
+      const refined = await refinePost({ currentDraft: current.copy, instruction: classified.instruction, voiceLearnings })
+      await supersedeDraft(current.id)
+      const postId = await savePost({
+        slot: current.slot || (new Date().getHours() < 13 ? 'morning' : 'evening'),
+        pillar: 1,
+        topic: current.topic,
+        copy: refined,
+        status: 'draft',
+        post_type: current.post_type,
+      })
+      await saveChatMessage('maia', 'Refined:', postId)
+      return { kind: 'draft', postId, maiaMessage: 'Refined:' }
     }
 
-    const newDraft: IrisDraft = redraftResult
+    case 'suggest': {
+      const [brief, recentTopics] = await Promise.all([getTodaysBrief(), getRecentTopics(14)])
+      const suggestions = await suggestTopics(recentTopics, brief)
+      const text = suggestions.length > 0
+        ? `A few ideas for today:\n\n${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}`
+        : "Couldn't come up with fresh ideas right now — try describing a rough topic instead."
+      await saveChatMessage('maia', text)
+      return { kind: 'text', maiaMessage: text }
+    }
 
-    // Persist updated copy
-    await getDb()
-      .update(iris_posts)
-      .set({ copy: newDraft.copy })
-      .where(eq(iris_posts.id, post.id))
+    case 'news_angle': {
+      const brief = await getTodaysBrief()
+      if (!brief) {
+        const text = "No CASSANDRA brief yet today — try again once this morning's market brief has run, or give me a topic directly."
+        await saveChatMessage('maia', text)
+        return { kind: 'text', maiaMessage: text }
+      }
+      return dropDraft(undefined, brief, 'auto', "Here's a draft on today's news angle:")
+    }
 
-    // Update the original Slack message in-place
-    await updateMessage(
-      channel,
-      post.slack_ts!,
-      formatSlackMessage(
-        post.slot as 'morning' | 'evening',
-        newDraft.topic,
-        newDraft.format,
-        newDraft.postTime,
-        newDraft.copy,
-      ),
-    )
+    case 'restart':
+      return dropDraft(current?.topic, null, 'auto', 'Starting again:')
 
-    const prefNote = prefs.length > 0 ? ` (${prefs.length} pref${prefs.length !== 1 ? 's' : ''} logged)` : ''
-    await postMessage(
-      channel,
-      `✏️ *Redrafted.*${prefNote} Reply again to refine further, or say *"done"* to approve.`,
-      post.slack_ts ?? undefined,
-    )
-  } catch (err) {
-    console.error('[iris] handleIrisThread redraft failed:', err)
-    await postMessage(
-      channel,
-      `⚠ IRIS: redraft failed — ${err instanceof Error ? err.message : String(err)}`,
-      post.slack_ts ?? undefined,
-    )
+    case 'show_history':
+      return { kind: 'text', maiaMessage: '__show_history__' }
+
+    case 'idea':
+    default:
+      return dropDraft(classified.action === 'idea' ? classified.topic : message, null, 'auto', "Here's a draft:")
   }
 }
 
-// ─── Intent detection ─────────────────────────────────────────────────────────
-
-export type IrisIntent = { type: 'status' }
-
-export function detectIrisIntent(text: string): IrisIntent | null {
-  const lower = text.trim().toLowerCase()
-  if (/^iris[,.]?\s+status$/i.test(lower)) return { type: 'status' }
-  return null
+export async function markSuperseded(postId: string): Promise<void> {
+  await supersedeDraft(postId)
 }
 
-export async function handleIrisStatus(channel: string): Promise<void> {
-  const voicePrefs = await getVoicePreferences()
-  const recent = await getRecentTopics(7)
-  const lines = [
-    '*IRIS — Status*',
-    `Posts drafted (last 7 days): ${recent.length}`,
-    `Voice preferences logged: ${voicePrefs.length}`,
-    recent.length > 0 ? `Last topic: ${recent[0]}` : 'No drafts yet.',
-  ]
-  await postMessage(channel, lines.join('\n'))
-}
+export type { IrisPost }

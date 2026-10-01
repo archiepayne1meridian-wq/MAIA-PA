@@ -163,8 +163,18 @@ export const iris_posts = sqliteTable('iris_posts', {
   edit_delta: text('edit_delta'),                              // JSON: { original, edited }
   edit_notes: text('edit_notes'),                              // auto-generated notes on what the edit reveals about voice
   approved: integer('approved').notNull().default(0),          // 1 if Archie approved/posted it
-  post_type: text('post_type'),                                // sports_twist / financial_truth / expat_reality / news_angle
+  post_type: text('post_type'),                                // personal_story / news_angle / fact_drop / tool_guide / expat_reality / reframe / auto
   engagement_signal: text('engagement_signal'),                // e.g. 'good' if Archie marks it as having done well
+})
+
+// The LinkedIn chat thread — free-text messages interleaved with draft cards
+// (draft cards are rendered from iris_posts via draft_post_id, not duplicated here).
+export const iris_chat_messages = sqliteTable('iris_chat_messages', {
+  id: text('id').primaryKey(),
+  role: text('role').notNull(),              // 'maia' | 'archie'
+  content: text('content').notNull(),        // '' when the message is purely a draft-card wrapper
+  draft_post_id: text('draft_post_id'),       // iris_posts.id rendered as a card right after this message, if any
+  created_at: integer('created_at').notNull(),
 })
 
 export const iris_voice_learnings = sqliteTable('iris_voice_learnings', {

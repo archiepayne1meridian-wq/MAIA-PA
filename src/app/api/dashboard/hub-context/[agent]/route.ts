@@ -6,11 +6,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { getDb } from '@/db'
-import { iris_posts, iris_voice_learnings, kpi_logs, kpi_weekly, diana_sessions, research_briefs, study_cards } from '@/db/schema'
+import { iris_posts, iris_voice_learnings, kpi_logs, kpi_weekly, diana_sessions, study_cards } from '@/db/schema'
 import { desc, gte, eq, and, lte } from 'drizzle-orm'
 import { getGoals } from '../../../../../../tools/goals'
 import { getProgress, getWeaknessReport } from '../../../../../../tools/study-db'
 import { getFillerWordsForDate, getCallbacksDue } from '../../../../../../tools/apollo'
+import { buildNewsContextSections } from '@/lib/cassandra-handler'
 
 function weekStartSecs(): number {
   const d = new Date()
@@ -59,28 +60,9 @@ async function hubSections(): Promise<Section[]> {
 }
 
 async function newsSections(): Promise<Section[]> {
-  const db = getDb()
-  const following: Section = {
-    type: 'list',
-    title: 'FOLLOWING',
-    items: [
-      { text: 'UK Pension & Tax' },
-      { text: 'Swiss Company News' },
-      { text: 'Bond Markets & Rate Decisions' },
-      { text: 'FCA New Rules Only' },
-      { text: 'Swiss Regulation' },
-    ],
-  }
-
-  const tStart = todayStartSecs()
-  const [brief] = await db.select({ summary: research_briefs.summary, created_at: research_briefs.created_at })
-    .from(research_briefs).where(gte(research_briefs.created_at, tStart)).orderBy(desc(research_briefs.created_at)).limit(1)
-
-  const today: Section = brief
-    ? { type: 'list', title: "TODAY'S ITEMS", items: [{ text: brief.summary.slice(0, 90) + (brief.summary.length > 90 ? '…' : ''), sub: 'Today\'s brief' }] }
-    : { type: 'empty', title: "TODAY'S ITEMS", message: 'No brief yet today.' }
-
-  return [following, today]
+  // Shared with GET /api/dashboard/cassandra/context — same per-article data,
+  // same FOLLOWING/TODAY'S ITEMS/LAST UPDATED shape either way it's fetched.
+  return buildNewsContextSections()
 }
 
 async function callsSections(): Promise<Section[]> {

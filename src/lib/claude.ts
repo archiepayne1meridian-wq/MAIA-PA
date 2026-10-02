@@ -83,3 +83,71 @@ export async function askWithWebSearch(
 
   return { text, search: { query, results } }
 }
+
+export interface ToolDef {
+  name: string
+  description: string
+  input_schema: {
+    type: 'object'
+    properties: Record<string, unknown>
+    required?: string[]
+  }
+}
+
+// Generic multi-tool loop: grants Claude a set of custom tools (not Claude's
+// own built-in web_search) and dispatches to `executor` by tool name whenever
+// it calls one, feeding the result back until Claude produces its final text
+// answer. Used by CASSANDRA's chat follow-up handler to let Claude run fresh
+// Brave searches / fetch articles on its own terms rather than always
+// front-loading everything before the first reply.
+export async function askWithTools(
+  systemPrompt: string,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  tools: ToolDef[],
+  executor: (name: string, input: Record<string, unknown>) => Promise<string>,
+  maxTokens = 1024,
+  model?: string,
+  maxRounds = 3,
+): Promise<{ text: string; toolCalls: { name: string; input: Record<string, unknown>; resultPreview: string }[] }> {
+  const client = getClient()
+  const toolCalls: { name: string; input: Record<string, unknown>; resultPreview: string }[] = []
+  const history: Anthropic.MessageParam[] = messages.map(m => ({ role: m.role, content: m.content }))
+
+  for (let round = 0; round < maxRounds; round++) {
+    const message = await client.messages.create({
+      model: model ?? env.ANTHROPIC_MODEL(),
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: history,
+      tools: tools.map(t => ({ type: 'custom' as const, name: t.name, description: t.description, input_schema: t.input_schema })),
+    })
+
+    const toolUse = message.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
+    const textBlocks = message.content.filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    const text = textBlocks.map(b => b.text).join('\n').trim()
+
+    if (!toolUse || message.stop_reason !== 'tool_use') {
+      return { text, toolCalls }
+    }
+
+    const input = toolUse.input as Record<string, unknown>
+    const result = await executor(toolUse.name, input)
+    toolCalls.push({ name: toolUse.name, input, resultPreview: result.slice(0, 200) })
+
+    history.push({ role: 'assistant', content: message.content })
+    history.push({
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: result }],
+    })
+  }
+
+  // Ran out of rounds — ask one final time without tools so Claude must answer in prose.
+  const final = await client.messages.create({
+    model: model ?? env.ANTHROPIC_MODEL(),
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: history,
+  })
+  const finalText = final.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map(b => b.text).join('\n').trim()
+  return { text: finalText, toolCalls }
+}

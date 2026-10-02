@@ -30,4 +30,6 @@ export const env = {
   NEXT_PUBLIC_BASE_URL: () => requireEnv('NEXT_PUBLIC_BASE_URL'),
   MAIA_API_KEY: () => process.env.MAIA_API_KEY,
   OPENAI_API_KEY: () => requireEnv('OPENAI_API_KEY'),
+  BRAVE_API_KEY: () => requireEnv('BRAVE_API_KEY'),
+  PERPLEXITY_API_KEY: () => requireEnv('PERPLEXITY_API_KEY'),
 }

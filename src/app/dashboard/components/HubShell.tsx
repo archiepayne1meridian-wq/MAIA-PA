@@ -27,7 +27,12 @@ export default function HubShell() {
   return (
     <div className={s.shell}>
       <AgentRailNew activeId={activeId} onSelect={setActiveId} />
-      <ConversationCentre ref={centreRef} agent={active} onMessageSent={() => setContextRefreshKey(k => k + 1)} />
+      <ConversationCentre
+        ref={centreRef}
+        agent={active}
+        onMessageSent={() => setContextRefreshKey(k => k + 1)}
+        onSwitchAgent={setActiveId}
+      />
       <ContextPanel agent={active.id} contextTitle={active.contextTitle} refreshKey={contextRefreshKey} />
     </div>
   )

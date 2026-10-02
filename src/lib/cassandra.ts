@@ -1,26 +1,28 @@
-// CASSANDRA — structured morning brief generator.
+// CASSANDRA — news research engine for the News conversation thread.
 //
-// generateStructuredBrief: web search is the primary intelligence source (one
-//   askWithWebSearch call per section, run in parallel), combined with a single
-//   Haiku call that turns the raw findings + supplementary RSS items into a
-//   structured, sectioned brief (summary + "why it matters" angle per item).
-//   RSS feeds (filtered via isRelevantToDeVere) are supplementary context only —
-//   not the primary source. Advice-word guard applies to CASSANDRA's own
-//   generated prose (summary/angle) — never to attributed third-party facts.
-// formatStructuredBrief: deterministic. Renders Markets/FX (unchanged) + the
-//   generated sections as numbered lines, source name in plain text, no links —
-//   full items incl. links go to headlines_json instead (see cassandra-handler.ts).
+// Pipeline: Brave Search API (20 parallel queries, last-7-days-only, deduped)
+// → Haiku relevance filter (per-article JSON: summary/key quote/call angle/
+//   content angle/relevance/category) → cassandra_items rows + conversation
+//   thread cards (see cassandra-handler.ts for persistence/thread wiring).
+//
+// Advice-word guard applies to CASSANDRA's own generated prose (summary/
+// call_angle/content_angle) — never to attributed third-party quotes/facts
+// (key_quote). Same invariant as the rest of this file always had.
 
-import { askWith, askWithWebSearch } from './claude'
+import { askWith, askWithTools, type ToolDef } from './claude'
 import type { IndexQuote, FxQuote } from '../../tools/market-data'
 import { extractJson } from './format'
-import type { FeedItem } from '../../tools/feeds'
+import { braveSearch, type BraveResult } from '../../tools/brave-search'
+import { askPerplexity } from '../../tools/perplexity'
 import { saveEntry, updateEntryTags } from '../../tools/muse'
 import { autoTag } from './muse'
 import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
 
-// Haiku for search + structuring — cheap and fast, matches IRIS's model choice.
+// Haiku for the bulk relevance filter — cheap, fast, high volume (up to ~160
+// raw search results/day). Sonnet for the conversational follow-up handler,
+// matching IRIS's model choice for anything Archie reads and talks back to.
 const DIGEST_MODEL = 'claude-haiku-4-5-20251001'
+const CHAT_MODEL = 'claude-sonnet-4-6'
 
 // Advice words: whole-word, case-insensitive. Applied to CASSANDRA's own prose only.
 // Must NOT trip on: "holdings", "operating", "buyback", "threshold", "withholding"
@@ -37,11 +39,10 @@ function guardProse(text: string, section: string): string | null {
 }
 
 // Per-field guard — for Claude-generated summary/angle text.
-// Returns the text if clean; null if it trips (log + drop, not the whole section).
-function guardField(text: string, section: string, field: string): string | null {
+function guardField(text: string, title: string, field: string): string | null {
   const match = ADVICE_WORD_RE.exec(text)
   if (match) {
-    console.error(`[cassandra] Advice-word guard tripped in "${section}" ${field} on word "${match[0]}" — dropping item.`)
+    console.error(`[cassandra] Advice-word guard tripped on "${title}" ${field} ("${match[0]}") — dropping item.`)
     return null
   }
   return text
@@ -56,517 +57,331 @@ function fmtDate(d: Date): string {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-// ─── Topic filter (RSS supplementary items only) ──────────────────────────────
-// Keeps RSS supplementary context scoped to deVere's core advice areas instead of
-// general business news. Web search is the primary source now — RSS just fills
-// gaps search might miss. Title only — FeedItem carries no description/summary
-// field (see tools/feeds.ts), and checking source too let curated feed names
-// (e.g. "Bank of England", "Pensions Age") give every item a free pass regardless
-// of content.
-const HIGH_VALUE_KEYWORDS = [
-  // UK tax and budget
-  'budget', 'autumn statement', 'spring statement', 'chancellor',
-  'keir starmer', 'rachel reeves', 'labour tax', 'uk tax',
-  'inheritance tax', 'iht', 'capital gains', 'income tax',
-  'non-dom', 'domicile', 'tax residency', 'pension tax',
-  'pension relief', 'pension annual allowance',
+// ─── Step 1 — Brave Search across ~20 parallel queries ───────────────────────
+// Exact query strings as specified — not templated, so they stay literally
+// what was asked for rather than silently drifting with a computed year.
 
-  // Pensions specifically
-  'pension', 'qrops', 'sipp', 'drawdown', 'annuity',
-  'state pension', 'pension age', 'pension transfer',
-  'pension death', 'pension inheritance', 'april 2027',
-  'pension reform', 'defined benefit', 'defined contribution',
+const SEARCHES: string[] = [
+  // UK financial and pension
+  'UK pension rules changes 2026',
+  'UK inheritance tax pension death benefits 2026',
+  'Bank of England interest rate decision 2026',
+  'UK budget tax changes expats abroad 2026',
+  'HMRC pension announcement 2026',
+  'unclaimed pension pots UK 2026',
 
-  // Swiss specific
-  'switzerland', 'swiss', 'snb', 'swiss franc', 'chf',
-  'finma', 'pillar 2', 'pillar 3', 'vested benefits',
-  'freizugigkeit', 'bvg', 'lpp',
+  // Switzerland
+  'Swiss National Bank SNB interest rate 2026',
+  'Switzerland expat financial regulation 2026',
+  'Swiss company restructuring redundancy 2026',
+  'Novartis OR Roche OR Nestle OR UBS OR ABB OR Trafigura news 2026',
 
-  // Expat and cross border
-  'expat', 'expatriate', 'non-resident', 'overseas',
-  'cross-border', 'double taxation', 'tax treaty',
-  'foreign assets', 'offshore', 'repatriation',
+  // Retirement destinations
+  'Spain Portugal retirement tax expats 2026',
+  'Mediterranean retirement financial planning 2026',
 
-  // Swiss company events (high value for prospecting)
-  'novartis', 'roche', 'abb', 'nestle', 'nestlé',
-  'zurich insurance', 'julius baer', 'ubs', 'credit suisse',
-  'lonza', 'trafigura', 'philip morris', 'fmc corporation',
-  'glencore', 'syngenta', 'holcim', 'richemont', 'swatch',
+  // Markets — broad moves only
+  'bond market interest rates 2026',
+  'inflation rate UK Switzerland 2026',
+  'global market correction drop 2026',
 
-  // Company events that create mobile prospects
-  'redundan', 'layoff', 'restructur', 'merger', 'acquisition',
-  'office closure', 'job cut', 'headcount', 'relocat',
-  'expanding to switzerland', 'moving to switzerland',
+  // Geopolitical
+  'election wealth tax financial impact 2026',
+  'UK political change pension wealth 2026',
 
-  // Market intelligence — broad moves only
-  'market crash', 'market rally', 'market correction', 'bear market',
-  'bull market', 'market selloff', 'market volatility',
-  'bond market', 'gilt market', 'yield curve', 'bond yield',
-  'interest rates', 'rate cut', 'rate hike', 'rate decision',
-  'bank of england', 'ecb', 'federal reserve', 'snb',
-  'inflation', 'cpi', 'deflation',
-  'sector rotation', 'tech selloff', 'energy sector', 'financial sector',
-  'property market', 'real estate market', 'housing market',
+  // deVere CEO
+  'Nigel Green deVere 2026',
 
-  // FCA — new rules only
-  'fca rule', 'fca regulation', 'fca policy', 'fca guidance',
-  'new regulation', 'regulatory change', 'rule change',
-  'consumer duty', 'financial promotion', 'advice rules',
+  // Regulation — new rules only
+  'FCA new rules regulation 2026',
+  'financial regulation change UK Switzerland 2026',
 ]
 
-// EXCLUDE these even if they match above
-const EXCLUDE_KEYWORDS = [
-  // Crypto
-  'bitcoin', 'crypto', 'cryptocurrency', 'ethereum', 'blockchain',
-  'nft', 'defi', 'web3', 'altcoin', 'token', 'binance', 'coinbase',
-  'digital asset', 'digital currency',
-
-  // Individual stocks and companies (unless Swiss employer cluster)
-  'earnings per share', 'quarterly earnings', 'analyst rating',
-  'price target', 'stock upgrade', 'stock downgrade', 'ipo filing',
-  'sec filing', 'insider trading', 'share buyback',
-
-  // FCA noise — hearings, enforcement, individual cases
-  'fca hearing', 'fca action', 'fca enforcement', 'fca fine',
-  'fca ban', 'fca investigation', 'tribunal', 'upper tribunal',
-  'regulatory sanction', 'conduct hearing', 'banned by fca',
-  'fined by fca', 'senior manager banned',
-
-  // General noise
-  'post-trade', 'mifid reporting', 'annex 1', 'esma consultation',
-  'technical standard', 'rts consultation',
-]
-
-// FeedItem has no separate description field — title is the only text available,
-// so it doubles as both title and description for this check.
-export function isRelevantToDeVere(item: FeedItem): boolean {
-  const text = item.title.toLowerCase()
-  if (EXCLUDE_KEYWORDS.some(k => text.includes(k))) return false
-  return HIGH_VALUE_KEYWORDS.some(k => text.includes(k))
+interface RawCandidate extends BraveResult {
+  query: string
 }
 
-// ─── Sections ──────────────────────────────────────────────────────────────────
-
-export type CassandraSectionKey = 'sector' | 'pensions' | 'tax' | 'expat' | 'political' | 'regulatory'
-
-// Canonical order + labels. The Haiku call is asked to return these exact labels;
-// matchSectionLabel below maps its output back to a stable key via keyword
-// matching (robust to minor phrasing drift — "and" vs "&", capitalisation, etc.)
-// rather than trusting the model to echo a machine slug.
-const SECTION_ORDER: { key: CassandraSectionKey; label: string }[] = [
-  { key: 'sector',     label: 'Sector Snapshot' },
-  { key: 'pensions',   label: 'Pensions & Retirement' },
-  { key: 'tax',        label: 'Tax & Legislation' },
-  { key: 'expat',      label: 'Expat & Cross-Border' },
-  { key: 'political',  label: 'Political & Macro' },
-  { key: 'regulatory', label: 'Regulatory' },
-]
-
-function matchSectionLabel(label: string): { key: CassandraSectionKey; label: string } | null {
-  const l = label.toLowerCase()
-  if (l.includes('sector')) return SECTION_ORDER[0]!
-  if (l.includes('pension')) return SECTION_ORDER[1]!
-  if (l.includes('tax') || l.includes('legislation')) return SECTION_ORDER[2]!
-  if (l.includes('expat') || l.includes('cross-border') || l.includes('cross border')) return SECTION_ORDER[3]!
-  if (l.includes('political') || l.includes('macro')) return SECTION_ORDER[4]!
-  if (l.includes('regulat')) return SECTION_ORDER[5]!
-  return null
-}
-
-// Lightweight keyword classifier for bucketing RSS supplementary items into one
-// of the 6 sections. Doesn't need to be perfect — it's extra context fed to the
-// Haiku call, not the primary output. First match wins; order favours the more
-// specific categories (pensions/tax/expat) over the broader ones.
-const SECTION_RSS_KEYWORDS: { key: CassandraSectionKey; words: string[] }[] = [
-  { key: 'pensions',   words: ['pension', 'qrops', 'sipp', 'iorp', 'annuity', 'drawdown', 'retirement', 'lifetime allowance', 'annual allowance', 'defined contribution', 'defined benefit'] },
-  { key: 'tax',        words: ['inheritance tax', 'iht', 'capital gains', 'income tax', 'tax relief', 'hmrc', 'legislation', 'budget', 'autumn statement', 'spring statement'] },
-  { key: 'expat',      words: ['expat', 'expatriate', 'non-dom', 'domicile', 'residency', 'double taxation'] },
-  { key: 'regulatory', words: ['fca', 'fsa', 'mfsa', 'compliance', 'regulation', 'financial conduct', 'consumer duty', 'financial advice', 'adviser', 'tpr'] },
-  { key: 'political',  words: ['election', 'parliament', 'prime minister', 'chancellor', 'policy', 'government', 'westminster'] },
-  { key: 'sector',     words: ['stock', 'shares', 'nasdaq', 'ftse', 'dow', 'earnings', 'ipo', 'markets'] },
-]
-
-function classifyRssItem(item: FeedItem): CassandraSectionKey | null {
-  const t = item.title.toLowerCase()
-  for (const { key, words } of SECTION_RSS_KEYWORDS) {
-    if (words.some(w => t.includes(w))) return key
+// Runs n async jobs with a concurrency cap — 20 simultaneous Brave requests
+// risks 429s on a standard-plan key; this keeps a handful in flight at once.
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  async function worker() {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i]!)
+    }
   }
-  return null
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
 }
 
-// Buckets already-relevance-filtered RSS items by section, capped per section so
-// the supplementary context doesn't overwhelm the prompt.
-function bucketRssBySection(items: FeedItem[], maxPerSection: number): Partial<Record<CassandraSectionKey, FeedItem[]>> {
-  const buckets: Partial<Record<CassandraSectionKey, FeedItem[]>> = {}
-  for (const item of items) {
-    const key = classifyRssItem(item)
-    if (!key) continue
-    const arr = buckets[key] ?? (buckets[key] = [])
-    if (arr.length < maxPerSection) arr.push(item)
-  }
-  return buckets
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+
+// Brave's `freshness=pw` param already enforces "past week" server-side —
+// this is a defensive second check for the (rarer) case where Brave supplies
+// a parseable page_age that's actually stale, never used to add dates we
+// don't have.
+function withinLastSevenDays(pageAgeIso: string | null): boolean {
+  if (!pageAgeIso) return true
+  const t = new Date(pageAgeIso).getTime()
+  if (Number.isNaN(t)) return true
+  return Date.now() - t <= SEVEN_DAYS_MS
 }
 
-// ─── Step 1 — web search per section ──────────────────────────────────────────
-
-const SEARCH_SYSTEM = `You are a research assistant gathering source material for a financial morning brief.
-
-Search the web for the given query and report back the most significant, current findings — a few bullet points, each stating what happened, the publication/source name, and the URL if the search result provides one.
-
-Be factual and specific — name the company, policy, rate, or legislation involved. No opinions, no recommendations, no advice. If nothing significant or current turns up, say so plainly rather than inventing anything.`
-
-interface SectionResearch {
-  key: CassandraSectionKey
-  label: string
-  findings: string
-}
-
-async function gatherSectionResearch(): Promise<SectionResearch[]> {
-  // Widened from a strict "today" filter to "latest" (last ~48h) — a hard same-day
-  // filter meant quiet days returned nothing at all; this way yesterday's and this
-  // morning's news both surface, so there's still a real brief on slower days.
-  const year = new Date().getFullYear()
-
-  const searches: { key: CassandraSectionKey; label: string; query: string }[] = [
-    { key: 'sector',     label: 'Sector Snapshot',         query: `market moving sector news tech energy finance latest ${year}` },
-    { key: 'pensions',   label: 'Pensions & Retirement',   query: `UK pension news QROPS SIPP retirement latest ${year}` },
-    { key: 'tax',        label: 'Tax & Legislation',       query: `UK tax legislation HMRC inheritance tax update latest ${year}` },
-    { key: 'expat',      label: 'Expat & Cross-Border',    query: `British expat finance tax residency Malta Europe latest ${year}` },
-    { key: 'political',  label: 'Political & Macro',       query: `UK political financial market impact economy latest ${year}` },
-    { key: 'regulatory', label: 'Regulatory',              query: `FCA TPR financial regulation adviser compliance latest ${year}` },
-  ]
-
-  return Promise.all(searches.map(async s => {
+async function gatherRawCandidates(): Promise<{ candidates: RawCandidate[]; skippedQueries: string[] }> {
+  const skippedQueries: string[] = []
+  const perQuery = await mapWithConcurrency(SEARCHES, 5, async query => {
     try {
-      const { text } = await askWithWebSearch(SEARCH_SYSTEM, s.query, 1024, DIGEST_MODEL)
-      return { key: s.key, label: s.label, findings: text }
+      const results = await braveSearch(query, 6)
+      return results.filter(r => withinLastSevenDays(r.pageAgeIso)).map(r => ({ ...r, query }))
     } catch (err) {
-      console.error(`[cassandra] web search failed for section "${s.key}":`, err)
-      return { key: s.key, label: s.label, findings: '(search unavailable — no findings this run)' }
+      console.error(`[cassandra] Brave search failed for "${query}":`, err)
+      skippedQueries.push(query)
+      return []
     }
-  }))
+  })
+
+  const seen = new Set<string>()
+  const candidates: RawCandidate[] = []
+  for (const batch of perQuery) {
+    for (const c of batch) {
+      if (seen.has(c.url)) continue
+      seen.add(c.url)
+      candidates.push(c)
+    }
+  }
+  return { candidates, skippedQueries }
 }
 
-// ─── Step 2 — structured brief from combined research ─────────────────────────
+// ─── Step 2 — Haiku relevance filter ──────────────────────────────────────────
 
-const STRUCTURED_SYSTEM = `You are CASSANDRA, a morning intelligence briefing agent for Archie Payne —
-a trainee financial adviser at deVere Group, Malta, serving British expats
-across Europe.
+const FILTER_PROMPT = `You are filtering news for Archie Payne, BDA at deVere and Partners Switzerland.
 
-Your job is to produce a sharp, structured morning brief. You are writing
-for someone who needs to stay ahead of markets, regulation, pensions,
-tax, and expat finance — and who will use this to have intelligent
-conversations with prospects and clients.
+His job: book meetings with British expats in Switzerland with cross-border financial planning.
 
-Rules:
-- Every item: one sentence what happened + one sentence why it matters
-  to a deVere adviser serving British expats. Never more than two sentences
-  per item.
-- Write the "why it matters" angle as a description of relevance or
-  implication — never as an instruction. Do not use "should", "must", or
-  "need to". Describe what's affected or what it signals, not what someone
-  should do about it. Write "this affects clients with QROPS holdings in
-  Malta" — not "advisers should review QROPS holdings."
-- Be specific — name the policy, the rate, the legislation, the company.
-  Never be vague.
-- Only include genuinely significant items. If nothing important happened
-  in a section today, omit that section entirely.
-- Flag effective dates explicitly when legislation changes
-  ("comes into force 6 April 2027")
-- Never give financial advice or recommendations
-- No markdown headers — use the section labels provided
-- Return JSON only — no prose outside the JSON
-- CRITICAL: For every item, you must include the source URL from the search
-  results. Look in the search result metadata for the URL of the article.
-  If a specific article URL is available, use it. If not, use the publication's
-  homepage URL (e.g. https://www.fca.org.uk for FCA items).
-  Never return null for url — always provide something linkable.
-- For every item in the Regulatory and Tax & Legislation sections only, add an
-  "impact" field with one of three values:
+INCLUDE — news that could:
+- Affect UK pensions, IHT, or tax for people living abroad
+- Create a reason for a British expat to think about their finances
+- Give Archie a genuine conversation starter on a cold call
+- Be relevant to someone with assets in multiple countries
+- Affect Swiss residents financially (SNB decisions, Swiss company news)
+- Affect popular retirement destinations (Spain, Portugal)
+- Show market conditions affecting assets or pension values
+- Be a quote from Nigel Green (deVere CEO) — always include
+- Be a new regulatory rule from FCA or Swiss regulator
 
-  "direct" — this changes something Archie needs to do or say, or directly
-  affects a deVere product or how clients should structure their money.
-  Examples: IHT on pension death benefits April 2027, QROPS rule change,
-  pension access age change, non-dom rule update.
+EXCLUDE — always:
+- Cryptocurrency, bitcoin, blockchain, NFTs
+- Individual stock picks or analyst ratings
+- FCA enforcement actions, fines, bans, hearings — new RULES only
+- Generic market commentary with no expat angle
+- Articles older than 7 days
+- Low quality sources — blogs, random finance sites, unknown authors
+- Anything already covered in the last brief
 
-  "watch" — this could develop into something significant for the target
-  client base. Monitor but no immediate action needed.
-  Examples: proposed legislation not yet passed, consultation papers,
-  regulatory reviews in progress.
-
-  "awareness" — good to know, relevant to financial services generally,
-  but no immediate impact on expat clients or deVere products.
-  Examples: FCA post-trade reporting changes, generic conduct rules,
-  unrelated regulatory admin.
-
-  Do not add "impact" to items in any other section.
-
-- QUOTES — if you find a genuinely useful quote from a credible financial
-  figure (central bank governor, finance minister, well-known economist,
-  senior market commentator) that is relevant to expat finance, markets,
-  or wealth — include it in the top-level "quote" field:
-
-  { "text": "[exact quote, verbatim from the source]", "person": "[name]",
-    "title": "[their title]", "date": "[date, or null if unknown]" }
-
-  Examples of good quotes:
-  - Bank of England Governor on interest rates
-  - Chancellor on pension or tax changes
-  - SNB Governor on Swiss franc policy
-  - Well-known investor on market conditions
-
-  Only include if genuinely useful and directly relevant. Maximum 1 quote
-  per brief. Do not invent quotes — only use verbatim quotes that actually
-  appear in the search findings below. If nothing qualifies, set "quote"
-  to null.
-
-Return this exact JSON shape:
+For each article that passes, return:
 {
-  "quote": {
-    "text": "exact quote text",
-    "person": "person's name",
-    "title": "their title",
-    "date": "date, or null if unknown"
-  },
-  "sections": [
-    {
-      "label": "Sector Snapshot",
-      "items": [
-        {
-          "summary": "one sentence what happened",
-          "angle": "one sentence why this matters to a deVere adviser",
-          "source": "publication name",
-          "url": "the article URL, or the publication's homepage if no specific article URL is available"
-        }
-      ]
-    },
-    {
-      "label": "Regulatory",
-      "items": [
-        {
-          "summary": "one sentence what happened",
-          "angle": "one sentence why this matters to a deVere adviser",
-          "source": "publication name",
-          "url": "the article URL, or the publication's homepage if no specific article URL is available",
-          "impact": "direct | watch | awareness"
-        }
-      ]
-    }
-  ]
+  "title": "article title",
+  "source": "BBC / Financial Times / Reuters / etc.",
+  "url": "article URL",
+  "published": "date",
+  "summary": "2-3 sentence summary of what this article says",
+  "key_quote": "most quotable line from the article if available — verbatim, attributed",
+  "call_angle": "one sentence — how Archie could use this on a cold call today",
+  "content_angle": "one sentence — how this could become a LinkedIn post",
+  "relevance": "high / medium",
+  "category": "uk_pension | swiss_news | markets | regulation | geopolitical | retirement_destinations | devere_ceo"
 }
 
-("impact" appears only on items inside "Regulatory" and "Tax & Legislation" —
-omit it entirely from items in every other section.)
+Return only HIGH and MEDIUM relevance items.
+Return JSON array only. No preamble.`
 
-("quote" is optional — set it to null (not an object) if no genuinely
-relevant, verbatim quote was found in the search findings.)
+export type CassandraCategory =
+  | 'uk_pension' | 'swiss_news' | 'markets' | 'regulation'
+  | 'geopolitical' | 'retirement_destinations' | 'devere_ceo'
 
-Sections to include (only if content exists):
-Sector Snapshot, Pensions & Retirement, Tax & Legislation,
-Expat & Cross-Border, Political & Macro, Regulatory
+export type CassandraRelevance = 'high' | 'medium'
 
-Markets and FX are handled separately — do not include them in sections.`
-
-// Claude sometimes prefaces its final answer with a sentence of reasoning before
-// the JSON — extract a fenced block anywhere in the text, or fall back to
-// brace-matching, rather than requiring the JSON at the very start.
-export type ImpactLevel = 'direct' | 'watch' | 'awareness'
-
-export interface StructuredBriefItem {
-  summary: string
-  angle: string
-  source: string
-  url: string | null
-  impact?: ImpactLevel  // Regulatory and Tax & Legislation items only
-}
-
-export interface StructuredBriefSection {
-  key: CassandraSectionKey
-  label: string
-  items: StructuredBriefItem[]
-}
-
-export interface BriefQuote {
-  text: string
-  person: string
+export interface CassandraArticle {
   title: string
-  date: string | null
+  source: string
+  url: string
+  published: string | null
+  summary: string
+  keyQuote: string | null
+  callAngle: string
+  contentAngle: string | null
+  relevance: CassandraRelevance
+  category: CassandraCategory
 }
 
-export interface StructuredBriefResult {
-  sections: StructuredBriefSection[]
-  quote: BriefQuote | null
-  rawJson: string        // exact JSON returned by the Haiku call, pre-guard — for verification
-  rawSearches: SectionResearch[]  // raw findings per section, pre-combination — for verification
+const VALID_CATEGORIES: CassandraCategory[] = [
+  'uk_pension', 'swiss_news', 'markets', 'regulation',
+  'geopolitical', 'retirement_destinations', 'devere_ceo',
+]
+
+export const CATEGORY_LABEL: Record<CassandraCategory, string> = {
+  uk_pension: 'UK Pension & Tax',
+  swiss_news: 'Swiss Company News',
+  markets: 'Bond Markets & Rates',
+  regulation: 'FCA New Rules',
+  geopolitical: 'Geopolitical',
+  retirement_destinations: 'Retirement Destinations',
+  devere_ceo: 'Nigel Green / deVere',
 }
 
-// generateStructuredBrief: one askWithWebSearch call per section (parallel) +
-// one combining Haiku call. rssRelevant should already be filtered via
-// isRelevantToDeVere — bucketed here by section as supplementary context.
-export async function generateStructuredBrief(rssRelevant: FeedItem[], rssPerSection = 3): Promise<StructuredBriefResult> {
-  const [searches, rssBuckets, prefs] = [
-    await gatherSectionResearch(),
-    bucketRssBySection(rssRelevant, rssPerSection),
-    await getPreferences('cassandra'),
-  ]
+function parseFilteredItem(rawItem: unknown): CassandraArticle | null {
+  if (!rawItem || typeof rawItem !== 'object') return null
+  const r = rawItem as Record<string, unknown>
+  const { title, source, url, summary, call_angle, relevance, category } = r
+  if (typeof title !== 'string' || typeof source !== 'string' || typeof url !== 'string') return null
+  if (typeof summary !== 'string' || typeof call_angle !== 'string') return null
 
-  const today = new Date().toISOString().split('T')[0]
+  const relevanceNorm = typeof relevance === 'string' ? relevance.trim().toLowerCase() : ''
+  if (relevanceNorm !== 'high' && relevanceNorm !== 'medium') {
+    console.error(`[cassandra] dropping "${title}" — invalid relevance "${String(relevance)}"`)
+    return null
+  }
 
-  const sectionBlocks = SECTION_ORDER.map(s => {
-    const research = searches.find(r => r.key === s.key)
-    const rss = rssBuckets[s.key] ?? []
-    const rssBlock = rss.length > 0
-      ? `\nSupplementary RSS items (use only if they add something the search missed):\n${rss.map(i => `- "${i.title}" (${i.source})`).join('\n')}`
-      : ''
-    return `### ${s.label}\nWeb search findings:\n${research?.findings ?? '(no findings)'}${rssBlock}`
-  }).join('\n\n')
+  const categoryNorm = typeof category === 'string' ? category.trim().toLowerCase() : ''
+  if (!VALID_CATEGORIES.includes(categoryNorm as CassandraCategory)) {
+    console.error(`[cassandra] dropping "${title}" — invalid category "${String(category)}"`)
+    return null
+  }
 
-  const userMessage = `Today's date: ${today}\n\n${sectionBlocks}\n\nWrite the structured morning brief now, following the schema and rules exactly.`
+  const guardedSummary = guardField(summary, title, 'summary')
+  const guardedCallAngle = guardedSummary ? guardField(call_angle, title, 'call_angle') : null
+  if (!guardedSummary || !guardedCallAngle) return null
 
-  const prefText = formatPreferencesForPrompt(prefs)
-  const systemWithPrefs = prefText ? `${prefText}\n\n${STRUCTURED_SYSTEM}` : STRUCTURED_SYSTEM
-  console.log(`[cassandra] generateStructuredBrief: ${prefs.length} confirmed preference(s) injected`)
+  const contentAngleRaw = typeof r.content_angle === 'string' ? r.content_angle : null
+  const guardedContentAngle = contentAngleRaw ? guardField(contentAngleRaw, title, 'content_angle') : null
 
-  const raw = await askWith(systemWithPrefs, userMessage, 3072, DIGEST_MODEL)
+  // key_quote is a verbatim third-party attribution, not CASSANDRA's own
+  // prose — never run through the advice-word guard.
+  const keyQuote = typeof r.key_quote === 'string' && r.key_quote.trim() ? r.key_quote.trim() : null
+  const published = typeof r.published === 'string' && r.published.trim() ? r.published.trim() : null
+
+  return {
+    title, source, url, published,
+    summary: guardedSummary,
+    keyQuote,
+    callAngle: guardedCallAngle,
+    contentAngle: contentAngleRaw ? guardedContentAngle : null,
+    relevance: relevanceNorm as CassandraRelevance,
+    category: categoryNorm as CassandraCategory,
+  }
+}
+
+// Repairs a JSON array truncated mid-object (hit the output token ceiling) by
+// dropping back to the last complete "}," boundary and closing the array
+// there — salvages everything genuinely finished rather than losing a whole
+// batch to one cut-off item.
+function repairTruncatedArray(raw: string): unknown[] | null {
+  const lastComplete = raw.lastIndexOf('},')
+  if (lastComplete === -1) return null
+  const salvaged = `${raw.slice(0, lastComplete + 1)}]`
+  try {
+    const parsed = JSON.parse(salvaged)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+async function runFilterBatch(batch: RawCandidate[], systemWithPrefs: string, today: string): Promise<CassandraArticle[]> {
+  const digest = batch.map((c, i) =>
+    `${i + 1}. "${c.title}" — ${c.source}\nURL: ${c.url}\nAge: ${c.age ?? c.pageAgeIso ?? 'unknown'}\nSnippet: ${c.description}`,
+  ).join('\n\n')
+  const userMessage = `Today's date: ${today}\n\nRaw search results to filter:\n\n${digest}\n\nFilter these now, following the rules exactly.`
+
+  const raw = await askWith(systemWithPrefs, userMessage, 8192, DIGEST_MODEL)
   const cleaned = extractJson(raw)
 
   let parsed: unknown
-  try { parsed = JSON.parse(cleaned) }
-  catch { throw new Error(`[cassandra] generateStructuredBrief returned unparseable JSON: ${raw.slice(0, 300)}`) }
-
-  const obj = parsed as { sections?: unknown; quote?: unknown }
-  if (!Array.isArray(obj.sections)) throw new Error('[cassandra] generateStructuredBrief missing sections array')
-
-  // Quote is a verbatim third-party attribution, not CASSANDRA's own prose —
-  // not run through guardField/guardProse (see the file-header comment on the
-  // advice-word guard: it applies to generated summary/angle text, never to
-  // attributed facts). Only basic shape validation here.
-  let quote: BriefQuote | null = null
-  if (obj.quote && typeof obj.quote === 'object') {
-    const { text, person, title, date } = obj.quote as Record<string, unknown>
-    if (typeof text === 'string' && text.trim() && typeof person === 'string' && person.trim() && typeof title === 'string' && title.trim()) {
-      quote = { text: text.trim(), person: person.trim(), title: title.trim(), date: typeof date === 'string' && date.trim() ? date.trim() : null }
-    } else {
-      console.error('[cassandra] generateStructuredBrief: malformed quote object — dropping.', obj.quote)
+  try {
+    parsed = JSON.parse(cleaned)
+  } catch {
+    const repaired = repairTruncatedArray(cleaned)
+    if (!repaired) {
+      console.error(`[cassandra] filter batch returned unparseable JSON (not even partially salvageable): ${raw.slice(0, 300)}`)
+      return []
     }
+    console.error(`[cassandra] filter batch output was truncated — salvaged ${repaired.length} complete item(s) from the partial response.`)
+    parsed = repaired
   }
 
-  const sections: StructuredBriefSection[] = []
-  for (const rawSection of obj.sections as unknown[]) {
-    if (!rawSection || typeof rawSection !== 'object') continue
-    const { label, items } = rawSection as { label?: unknown; items?: unknown }
-    if (typeof label !== 'string' || !Array.isArray(items)) continue
-    const matched = matchSectionLabel(label)
-    if (!matched) {
-      console.error(`[cassandra] generateStructuredBrief: unrecognised section label "${label}" — dropping.`)
-      continue
-    }
-
-    // Impact is assessed only for Regulatory and Tax & Legislation items.
-    const needsImpact = matched.key === 'regulatory' || matched.key === 'tax'
-    const VALID_IMPACT: ImpactLevel[] = ['direct', 'watch', 'awareness']
-
-    const guardedItems: StructuredBriefItem[] = []
-    for (const rawItem of items as unknown[]) {
-      if (!rawItem || typeof rawItem !== 'object') continue
-      const { summary, angle, source, url, impact } = rawItem as Record<string, unknown>
-      if (typeof summary !== 'string' || typeof angle !== 'string' || typeof source !== 'string') continue
-
-      const guardedSummary = guardField(summary, matched.label, 'summary')
-      const guardedAngle = guardedSummary ? guardField(angle, matched.label, 'angle') : null
-      if (!guardedSummary || !guardedAngle) continue  // drop the offending item entirely, keep the rest
-
-      const item: StructuredBriefItem = {
-        summary: guardedSummary,
-        angle: guardedAngle,
-        source,
-        url: typeof url === 'string' ? url : null,
-      }
-
-      if (needsImpact) {
-        // Model omitted or returned something outside the three known values — default to
-        // the least-alarming level rather than drop the item or leave it unflagged.
-        const valid = typeof impact === 'string' && VALID_IMPACT.includes(impact as ImpactLevel)
-        if (!valid) {
-          console.error(`[cassandra] generateStructuredBrief: missing/invalid impact "${String(impact)}" for "${matched.label}" item — defaulting to "awareness".`)
-        }
-        item.impact = valid ? (impact as ImpactLevel) : 'awareness'
-      }
-
-      guardedItems.push(item)
-    }
-
-    if (guardedItems.length > 0) sections.push({ key: matched.key, label: matched.label, items: guardedItems })
+  if (!Array.isArray(parsed)) {
+    console.error('[cassandra] filter batch: expected a JSON array, got:', typeof parsed)
+    return []
   }
+
+  return (parsed as unknown[]).map(parseFilteredItem).filter((a): a is CassandraArticle => a !== null)
+}
+
+// Chunked into batches of 20 so a busy news day (100+ raw candidates) never
+// risks truncating a single huge Haiku call — each batch gets its own output
+// budget, run in parallel, and one bad batch doesn't cost the others.
+const FILTER_BATCH_SIZE = 20
+
+async function filterArticlesWithHaiku(candidates: RawCandidate[], excludeUrls: Set<string>): Promise<CassandraArticle[]> {
+  const fresh = candidates.filter(c => !excludeUrls.has(c.url))
+  if (fresh.length === 0) return []
+
+  const prefs = await getPreferences('cassandra')
+  const prefText = formatPreferencesForPrompt(prefs)
+  const systemWithPrefs = prefText ? `${prefText}\n\n${FILTER_PROMPT}` : FILTER_PROMPT
+  const today = new Date().toISOString().split('T')[0]
+
+  const batches: RawCandidate[][] = []
+  for (let i = 0; i < fresh.length; i += FILTER_BATCH_SIZE) batches.push(fresh.slice(i, i + FILTER_BATCH_SIZE))
+
+  const results = await Promise.all(batches.map(async (batch, i) => {
+    try {
+      return await runFilterBatch(batch, systemWithPrefs, today)
+    } catch (err) {
+      console.error(`[cassandra] filter batch ${i + 1}/${batches.length} failed:`, err)
+      return []
+    }
+  }))
+  const articles = results.flat()
 
   if (prefs.length > 0) void incrementTimesApplied(prefs.map(p => p.id)).catch(err => console.error('[cassandra] incrementTimesApplied failed:', err))
 
-  return { sections, quote, rawJson: cleaned, rawSearches: searches }
+  // High relevance first — same item order the brief/cards/context panel all render in.
+  articles.sort((a, b) => (a.relevance === b.relevance ? 0 : a.relevance === 'high' ? -1 : 1))
+  return articles
 }
 
-// ─── Step 3 — action angles (call angle / post idea / knowledge update) ───────
-//
-// A second, small Haiku call over the SAME vetted section content (not a fresh
-// pass over raw search results) — asks "given everything already surfaced
-// today, is there one genuine reason to call someone, post something, or note
-// something?" Deliberately separate from the per-item summary/angle already on
-// each StructuredBriefItem: those are per-headline context; this is a single,
-// scarce, actionable pick across the whole brief. Plain text out (not JSON) —
-// the format is simple enough that JSON just adds parsing risk for no benefit,
-// and it keeps the raw Haiku output trivially inspectable end to end.
+export interface GatherResult {
+  articles: CassandraArticle[]
+  skippedQueries: string[]
+}
 
-const ACTION_ANGLE_SYSTEM = `You are CASSANDRA, spotting today's single best action for Archie Payne, a
-trainee financial adviser at deVere Group serving British expats across
-Europe and Switzerland.
+// Full pipeline: Brave search → dedupe → Haiku filter. excludeUrls lets the
+// afternoon refresh ask for "only things not already in today's thread."
+export async function gatherAndFilterArticles(excludeUrls: Set<string> = new Set()): Promise<GatherResult> {
+  const { candidates, skippedQueries } = await gatherRawCandidates()
+  console.log(`[cassandra] Brave Search: ${candidates.length} unique candidates from ${SEARCHES.length} queries (${skippedQueries.length} queries failed).`)
+  const articles = await filterArticlesWithHaiku(candidates, excludeUrls)
+  console.log(`[cassandra] Haiku filter: ${articles.length} of ${candidates.length} candidates passed.`)
+  return { articles, skippedQueries }
+}
 
-You've just reviewed today's structured morning brief findings (given below).
-From everything in it, decide if there's a genuine, specific reason to act
-today.
+// ─── MUSE filing — single best call angle, same mechanism as before ──────────
+// The old generateActionAngles Claude call is no longer needed: call_angle is
+// already a per-article field from the filter pass, so the "today's single
+// best action" line is picked directly from data rather than re-derived.
 
-For each relevant item found today, produce:
-
-1. A CALL ANGLE if the item creates a reason to call a specific type of prospect:
-   Format: "Call angle: [who to target] — [why today] — [what to say]"
-   Example: "Call angle: Finance professionals at Novartis Geneva — company announced 500 job cuts this week — lead with uncertainty about their future and asset portability"
-
-2. A POST IDEA if the item would make a good LinkedIn discussion:
-   Format: "Post idea: [topic] — [angle] — [question to end with]"
-   Example: "Post idea: UK pension IHT April 2027 — most expats don't know this applies to them — did you know your pension is now in scope?"
-
-3. A KNOWLEDGE UPDATE if it changes something you need to know:
-   Format: "Knowledge: [what changed] — [impact on products/clients]"
-   Example: "Knowledge: SNB holds rates at 1.5% — Swiss mortgage holders relieved but savings rates stay low"
-
-Rules:
-- Only produce a CALL ANGLE if there's genuinely a reason to call someone today.
-- Only produce a POST IDEA if it would genuinely spark discussion.
-- If nothing relevant today — respond with exactly: Nothing significant today.
-- Maximum 3 items total across all three types.
-- Never pad or force an angle that isn't there. Quality over quantity always.
-- Each item on its own single line, in the exact "Label: text" format shown
-  above — no bullet points, no numbering, no markdown, no commentary before or
-  after the line(s).
-- Never give financial advice or recommendations.`
-
-// Guarded like any other CASSANDRA-generated prose (see guardProse/guardField
-// above) — this is Archie's own "what to say" language, not attributed fact.
-export async function generateActionAngles(sections: StructuredBriefSection[]): Promise<string> {
-  if (sections.length === 0) return 'Nothing significant today.'
-
-  const digest = sections
-    .map(sec => `### ${sec.label}\n${sec.items.map(i => `- ${i.summary} — ${i.angle} (${i.source})`).join('\n')}`)
-    .join('\n\n')
-
-  const userMessage = `Today's structured brief findings:\n\n${digest}\n\nProduce today's action angles now, following the rules exactly.`
-
-  const raw = (await askWith(ACTION_ANGLE_SYSTEM, userMessage, 400, DIGEST_MODEL)).trim()
-  const guarded = guardProse(raw, 'Action Angles')
-  return guarded ?? 'Nothing significant today.'
+function bestCallAngleLine(articles: CassandraArticle[]): string {
+  const best = articles.find(a => a.relevance === 'high') ?? articles[0]
+  if (!best) return 'Nothing significant today.'
+  return `Call angle: ${best.callAngle}`
 }
 
 // Product-related keywords route to the "Products" sector; everything else
-// (tax/legislation/compliance language, or no match) defaults to "Regulations" —
-// matching the split MUSE already uses for Training vs. everything-else sectors.
+// defaults to "Regulations" — matching the split MUSE already uses.
 const PRODUCT_SECTOR_KEYWORDS = ['structured note', 'portfolio bond', 'sipp', 'qrops', 'pillar 2', 'pillar 3', 'rl360', 'ardan', 'autocall']
 
 function sectorForAngleText(text: string): 'Products' | 'Regulations' {
@@ -574,110 +389,254 @@ function sectorForAngleText(text: string): 'Products' | 'Regulations' {
   return PRODUCT_SECTOR_KEYWORDS.some(k => lower.includes(k)) ? 'Products' : 'Regulations'
 }
 
-// Auto-files today's "Call angle" and "Knowledge" lines to MUSE as Tier 1 news
-// entries — Tier 1 because they're CASSANDRA's own already-guarded, public-facts
-// prose, safe to hand back to an AI model later (e.g. a future digest). "Post
-// idea" lines are IRIS's territory, not knowledge-base material, so they're
-// skipped here. A no-op on "Nothing significant today." or a guard-tripped fallback.
-export async function fileActionAnglesToMuse(actionAngles: string): Promise<number> {
-  if (!actionAngles || actionAngles.trim() === 'Nothing significant today.') return 0
+// Files today's single call-angle line to MUSE as a Tier 1 news entry — a
+// no-op if nothing qualified today. Mirrors the old fileActionAnglesToMuse's
+// "Call angle:" handling; "Post idea"/"Knowledge" lines aren't produced by
+// the new pipeline (content_angle covers the LinkedIn case directly via the
+// "Post idea" button instead).
+export async function fileCallAngleToMuse(articles: CassandraArticle[]): Promise<number> {
+  const line = bestCallAngleLine(articles)
+  const match = line.match(/^call angle:\s*(.+)$/i)
+  if (!match) return 0
+  const text = match[1]!.trim()
 
-  let filed = 0
-  for (const rawLine of actionAngles.split('\n')) {
-    const line = rawLine.trim()
-    const callMatch = line.match(/^call angle:\s*(.+)$/i)
-    const knowledgeMatch = line.match(/^knowledge:\s*(.+)$/i)
-    const text = callMatch?.[1] ?? knowledgeMatch?.[1]
-    if (!text) continue
+  const title = `Call angle — ${text.split('—')[0]?.trim().slice(0, 60) ?? text.slice(0, 60)}`
+  const sector = sectorForAngleText(text)
+  const now = Math.floor(Date.now() / 1000)
 
-    const kind = callMatch ? 'Call angle' : 'Knowledge update'
-    const title = `${kind} — ${text.split('—')[0]?.trim().slice(0, 60) ?? text.slice(0, 60)}`
-    const sector = sectorForAngleText(text)
-    const now = Math.floor(Date.now() / 1000)
-
-    const entryId = await saveEntry({
-      sector,
-      title,
-      summary: text,
-      content: text,
-      brief_depth: 'simple',
-      source: 'cassandra',
-      source_agent: 'CASSANDRA',
-      status: 'active',
-      date_filed: now,
-      last_updated: now,
-      privacy_tier: 1,
-      entry_type: 'news',
-    })
-    await updateEntryTags(entryId, autoTag(text, title))
-    filed++
-  }
-  return filed
+  const entryId = await saveEntry({
+    sector,
+    title,
+    summary: text,
+    content: text,
+    brief_depth: 'simple',
+    source: 'cassandra',
+    source_agent: 'CASSANDRA',
+    status: 'active',
+    date_filed: now,
+    last_updated: now,
+    privacy_tier: 1,
+    entry_type: 'news',
+  })
+  await updateEntryTags(entryId, autoTag(text, title))
+  return 1
 }
 
-// ─── Step 4 — deterministic Slack/dashboard rendering ─────────────────────────
+// ─── Deterministic Slack/dashboard rendering ──────────────────────────────────
 
-// "Quote: '...' — Person, Title (Date)" — parsed back out by CassandraWorkspace.tsx's
-// parseQuoteLine, matching the existing "Call angle:" / "Post idea:" / "Knowledge:"
-// line convention. Date is parenthesised rather than comma-joined with the rest —
-// title itself can legitimately contain a comma ("Governor, Bank of England"), so a
-// flat "person, title, date" chain can't be split back apart unambiguously; a
-// parenthetical is trivial to strip on the way back out regardless of what's inside it.
-function formatQuoteLine(quote: BriefQuote): string {
-  const attribution = [quote.person, quote.title].filter(Boolean).join(', ')
-  return `Quote: '${quote.text}' — ${attribution}${quote.date ? ` (${quote.date})` : ''}`
-}
-
-export function formatStructuredBrief(
+export function formatBriefSlackText(
   indices: IndexQuote[],
   fx: FxQuote[],
-  sections: StructuredBriefSection[],
-  skipped: string[],
-  actionAngles: string,
-  quote: BriefQuote | null = null,
+  articles: CassandraArticle[],
+  skippedQueries: string[],
 ): string {
   const blocks: string[] = []
 
-  // ── Markets ──────────────────────────────────────────────────────────────
   if (indices.length > 0) {
     const lines = indices.map(q => `${q.label} ${fmtPct(q.dayChangePct)}`).join(' · ')
     const guarded = guardProse(`*Markets*\n${lines}`, 'Markets')
     if (guarded) blocks.push(guarded)
   }
 
-  // ── FX ───────────────────────────────────────────────────────────────────
   if (fx.length > 0) {
     const lines = fx.map(q => `${q.pair} ${q.rate.toFixed(4)} ${fmtPct(q.dayChangePct)}`).join(' · ')
     const guarded = guardProse(`*FX*\n${lines}`, 'FX')
     if (guarded) blocks.push(guarded)
   }
 
-  // ── Quote of the Day — verbatim third-party attribution, not guarded (see
-  // the note on generateStructuredBrief's quote parsing above). ─────────────
-  if (quote) {
-    blocks.push(`*Quote of the Day*\n${formatQuoteLine(quote)}`)
+  const angleLine = bestCallAngleLine(articles)
+  const guardedAngle = guardProse(angleLine, "Today's Angle")
+  blocks.push(`*Today's Angle*\n${guardedAngle ?? 'Nothing significant today.'}`)
+
+  const byCategory = new Map<CassandraCategory, CassandraArticle[]>()
+  for (const a of articles) {
+    const arr = byCategory.get(a.category) ?? []
+    arr.push(a)
+    byCategory.set(a.category, arr)
+  }
+  for (const [category, items] of byCategory) {
+    const lines = items.map((item, i) => `${i + 1}. ${item.summary} — ${item.callAngle} (${item.source})`)
+    blocks.push(`*${CATEGORY_LABEL[category]}*\n${lines.join('\n')}`)
   }
 
-  // ── Today's Angle (call angle / post idea / knowledge update) ──────────────
-  // Always included, even when it's just "Nothing significant today." — that's
-  // the honest, deliberate absence-case, not a gap to hide.
-  const guardedAngles = guardProse(actionAngles.trim(), 'Today\'s Angle')
-  blocks.push(`*Today's Angle*\n${guardedAngles ?? 'Nothing significant today.'}`)
-
-  // ── Generated sections ───────────────────────────────────────────────────
-  for (const sec of sections) {
-    if (sec.items.length === 0) continue
-    const lines = sec.items.map((item, i) => `${i + 1}. ${item.summary} — ${item.angle} (${item.source})`)
-    blocks.push(`*${sec.label}*\n${lines.join('\n')}`)
+  if (articles.length === 0) {
+    blocks.push('Nothing significant today worth using on calls.\nStandard calls — lead with the IHT April 2027 angle, still relevant.')
   }
-
-  if (blocks.length === 0) return '⚠ CASSANDRA: no data available for this brief.'
 
   let msg = `*CASSANDRA — Morning Brief*\n${fmtDate(new Date())}\n\n` + blocks.join('\n\n')
-
-  if (skipped.length > 0) {
-    msg += `\n\n_⚠ Some sources unavailable: ${skipped.join(', ')}_`
+  if (skippedQueries.length > 0) {
+    msg += `\n\n_⚠ Some searches unavailable: ${skippedQueries.length} of ${SEARCHES.length} queries failed._`
   }
-
   return msg
+}
+
+// Compat shape for research_briefs.headlines_json — read by several older
+// consumers (IRIS's getTodaysBrief, DIANA's getTodayAngle, the old standalone
+// /dashboard/cassandra page, dashboard/hub-context's news panel). impact is
+// always null — the old Regulatory/Tax impact-level concept doesn't carry
+// over to the new flat category taxonomy.
+export function toHeadlinesJsonCompat(articles: CassandraArticle[]): string {
+  return JSON.stringify(articles.map(a => ({
+    summary: a.summary,
+    angle: a.callAngle,
+    source: a.source,
+    url: a.url,
+    section: a.category,
+    sectionLabel: CATEGORY_LABEL[a.category],
+    impact: null,
+  })))
+}
+
+// ─── Conversational follow-up (POST /api/dashboard/cassandra/chat) ───────────
+
+export const CASSANDRA_CHAT_SYSTEM = `You are CASSANDRA, Archie's financial news research assistant.
+
+Archie is a BDA at deVere and Partners Switzerland. He needs news he can use on cold calls and LinkedIn posts. He is NOT a qualified adviser.
+
+You have access to today's news brief which was generated earlier.
+
+When Archie asks follow-up questions:
+- "Tell me more about [article]" → expand with more detail, find additional context
+- "Find me more on [topic]" → run a fresh Brave search on that topic, return results
+- "Give me the full article" → fetch the URL and summarise the full piece
+- "Find a quote I can use" → pull the most quotable, credible line from the article
+- "How do I use this on a call?" → give a specific one-liner he can say to a British expat
+- "Turn this into a post" → suggest to open LinkedIn agent with this angle pre-loaded
+- "What does Nigel Green say about this?" → search for deVere CEO's position on the topic
+
+Always:
+- British English
+- Attribute quotes correctly — "[quote]" — [Person], [Title], [Publication], [Date]
+- Never invent quotes or statistics
+- Never give financial advice
+- Keep responses concise — Archie is busy
+
+CASSANDRA can run fresh Brave searches during the conversation when Archie asks to dig deeper. This is what makes it a research tool not just a bulletin.
+
+CHOOSING A SEARCH TOOL — you have two:
+
+search_news (Brave) — a quick news lookup. Use for:
+- "find more news on..."
+- "search for..."
+- "any more on..."
+
+deep_research (Perplexity) — synthesis across multiple sources, for anything
+needing a considered answer rather than a fresh headline list. Use for:
+- "tell me more about..."
+- "find me quotes on..."
+- "what are people saying about..."
+- "give me different angles on..."
+- "what does [person] say about..." (including "what does Nigel Green say")
+
+If a request doesn't clearly match either list, use your judgement — simple
+"what's new" style asks are search_news; anything asking you to think,
+compare, or quote is deep_research.`
+
+const SEARCH_TOOL: ToolDef = {
+  name: 'search_news',
+  description: 'Run a fresh Brave web search for current news on a topic — a quick headline lookup, not synthesis. Use for "find more news on X", "search for X", "any more on X".',
+  input_schema: {
+    type: 'object',
+    properties: { query: { type: 'string', description: 'The search query' } },
+    required: ['query'],
+  },
+}
+
+const DEEP_RESEARCH_TOOL: ToolDef = {
+  name: 'deep_research',
+  description: 'Run a deep, multi-source research query via Perplexity — for synthesis, pulling verbatim attributed quotes, comparing differing angles, or finding what a named person (e.g. Nigel Green) has said on a topic. Use for "tell me more about X", "find me quotes on X", "what are people saying about X", "give me different angles on X", "what does [person] say about X".',
+  input_schema: {
+    type: 'object',
+    properties: { query: { type: 'string', description: 'The research question' } },
+    required: ['query'],
+  },
+}
+
+const FETCH_ARTICLE_TOOL: ToolDef = {
+  name: 'fetch_article',
+  description: 'Fetch the full text of an article by URL, to summarise or quote from beyond the stored summary.',
+  input_schema: {
+    type: 'object',
+    properties: { url: { type: 'string', description: 'The article URL to fetch' } },
+    required: ['url'],
+  },
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function fetchArticleText(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MAIA/1.0)' } })
+    if (!res.ok) return `Could not fetch this page (HTTP ${res.status}). Use the stored summary instead.`
+    const html = await res.text()
+    const text = stripHtml(html)
+    return text.slice(0, 6000) || 'The page returned no readable text. Use the stored summary instead.'
+  } catch (err) {
+    console.error(`[cassandra] fetch_article failed for ${url}:`, err)
+    return 'Could not fetch this page. Use the stored summary instead.'
+  }
+}
+
+async function runSearchTool(query: string): Promise<string> {
+  try {
+    const results = await braveSearch(query, 6)
+    if (results.length === 0) return 'No fresh results found for that search.'
+    return results.map(r => `"${r.title}" — ${r.source}\n${r.description}\nURL: ${r.url}\nAge: ${r.age ?? 'unknown'}`).join('\n\n')
+  } catch (err) {
+    console.error(`[cassandra] chat search_news failed for "${query}":`, err)
+    return 'That search failed — Brave Search is temporarily unavailable.'
+  }
+}
+
+async function runDeepResearchTool(query: string): Promise<string> {
+  try {
+    const { answer, citations } = await askPerplexity(query)
+    const citationBlock = citations.length > 0 ? `\n\nSources:\n${citations.join('\n')}` : ''
+    return `${answer}${citationBlock}`
+  } catch (err) {
+    console.error(`[cassandra] chat deep_research failed for "${query}":`, err)
+    return 'That deep research failed — Perplexity is temporarily unavailable.'
+  }
+}
+
+export interface ChatTurn { role: 'user' | 'assistant'; content: string }
+
+// Runs the chat follow-up loop. todaysContext is a plain-text digest of
+// today's articles (title/source/summary/key_quote/call_angle/url per item)
+// so Claude has today's brief in hand without a separate tool round-trip for
+// the common "tell me more about X" case.
+export async function answerCassandraFollowUp(
+  history: ChatTurn[],
+  todaysContext: string,
+): Promise<{ text: string; ranFreshSearch: boolean }> {
+  const messages: ChatTurn[] = [
+    { role: 'user', content: `Today's news brief (for context — already shown to Archie):\n\n${todaysContext || '(no brief generated yet today)'}` },
+    { role: 'assistant', content: "Got it — I've got today's brief in hand. What do you need?" },
+    ...history,
+  ]
+
+  const { text, toolCalls } = await askWithTools(
+    CASSANDRA_CHAT_SYSTEM,
+    messages,
+    [SEARCH_TOOL, DEEP_RESEARCH_TOOL, FETCH_ARTICLE_TOOL],
+    async (name, input) => {
+      if (name === 'search_news') return runSearchTool(String(input.query ?? ''))
+      if (name === 'deep_research') return runDeepResearchTool(String(input.query ?? ''))
+      if (name === 'fetch_article') return fetchArticleText(String(input.url ?? ''))
+      return 'Unknown tool.'
+    },
+    900,
+    CHAT_MODEL,
+  )
+
+  const ranFreshSearch = toolCalls.some(c => c.name === 'search_news' || c.name === 'deep_research')
+  return { text: text || "I couldn't put together a reply there — try rephrasing?", ranFreshSearch }
 }

@@ -11,7 +11,7 @@ export type ConversationAgent =
 export type MessageRole = 'maia' | 'user'
 export type MessageType =
   | 'text' | 'draft' | 'news' | 'crm_notes' | 'flashcard'
-  | 'morning_brief' | 'action_buttons'
+  | 'morning_brief' | 'action_buttons' | 'news_brief' | 'news_card'
 
 export interface ConversationMessage {
   id: string

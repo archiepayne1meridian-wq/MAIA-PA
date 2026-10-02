@@ -103,7 +103,22 @@
 .newsTitle { font-size: 13px; font-weight: 600; line-height: 1.4; margin-bottom: 4px; }
 .newsMeta { font-family: var(--mono), monospace; font-size: 9px; color: var(--text-dim); margin-bottom: 8px; }
 .newsSummary { font-size: 12px; color: var(--text-mid); line-height: 1.5; margin-bottom: 10px; }
-.newsActions { display: flex; gap: 8px; }
+.newsActions { display: flex; gap: 8px; flex-wrap: wrap; }
+.newsBlockLabel { font-family: var(--mono), monospace; font-size: 9px; color: var(--accent); letter-spacing: 0.5px; margin-bottom: 4px; }
+.newsQuoteBlock { background: var(--accent-dim); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; padding: 8px 10px; margin-bottom: 10px; }
+.newsQuoteText { font-size: 12px; font-style: italic; line-height: 1.5; }
+.newsAngleBlock { border-left: 3px solid var(--border); padding: 8px 10px; margin-bottom: 10px; }
+.newsAngleText { font-size: 12px; line-height: 1.5; color: var(--text-mid); }
+
+/* Transient toast — e.g. "Copied — ready to use" */
+.toast {
+  position: sticky; bottom: 4px; left: 0;
+  margin: 8px auto 0; width: fit-content;
+  background: var(--accent); color: #fff;
+  font-size: 11px; font-weight: 500;
+  padding: 7px 14px; border-radius: 20px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+}
 
 /* Draft card */
 .draftCard { background: var(--raised); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; max-width: 92%; }

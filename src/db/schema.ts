@@ -477,6 +477,27 @@ export const maia_conversations = sqliteTable('maia_conversations', {
   last_updated: integer('last_updated').notNull().default(sql`(unixepoch())`),
 })
 
+// Per-article CASSANDRA news items (Brave Search + Haiku relevance filter) —
+// one row per qualifying article per day. Tracks used_on_call/used_in_post so
+// CASSANDRA can eventually learn what's genuinely useful vs. what gets ignored.
+export const cassandra_items = sqliteTable('cassandra_items', {
+  id: text('id').primaryKey(),
+  date: text('date').notNull(),            // YYYY-MM-DD
+  title: text('title').notNull(),
+  source: text('source').notNull(),
+  url: text('url').notNull(),
+  published: text('published'),
+  summary: text('summary').notNull(),
+  key_quote: text('key_quote'),
+  call_angle: text('call_angle').notNull(),
+  content_angle: text('content_angle'),
+  relevance: text('relevance').notNull(),   // 'high' | 'medium'
+  category: text('category').notNull(),     // uk_pension | swiss_news | markets | regulation | geopolitical | retirement_destinations | devere_ceo
+  used_on_call: integer('used_on_call').notNull().default(0),
+  used_in_post: integer('used_in_post').notNull().default(0),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
 export const maia_goals = sqliteTable('maia_goals', {
   id: text('id').primaryKey(),
   goal_text: text('goal_text').notNull(),

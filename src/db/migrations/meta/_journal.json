@@ -267,6 +267,13 @@
       "when": 1790925496225,
       "tag": "0037_bouncy_omega_flight",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1790975285666,
+      "tag": "0038_pale_warhawk",
+      "breakpoints": true
     }
   ]
 }

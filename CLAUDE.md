@@ -399,6 +399,8 @@ SIMON_VOICE_ID             # Simon voice (DIANA): Ln7FbpLNuLn2OdYq2w7S
 DATABASE_URL               # SQLite path: /data/maia.db on Railway volume
 NEXT_PUBLIC_BASE_URL       # https://maia-pa-production.up.railway.app
 CRON_SECRET                # protects cron routes (use MAIA_API_KEY pattern)
+BRAVE_API_KEY              # CASSANDRA morning/afternoon brief — web search
+PERPLEXITY_API_KEY         # CASSANDRA chat follow-ups — deep research/quotes/angles
 ```
 
 **Coming when OAuth is set up:**

@@ -10,6 +10,7 @@ import { iris_posts, iris_voice_learnings, kpi_logs, kpi_weekly, diana_sessions,
 import { desc, gte, eq, and, lte } from 'drizzle-orm'
 import { getGoals } from '../../../../../../tools/goals'
 import { getProgress, getWeaknessReport } from '../../../../../../tools/study-db'
+import { getFillerWordsForDate, getCallbacksDue } from '../../../../../../tools/apollo'
 
 function weekStartSecs(): number {
   const d = new Date()
@@ -114,9 +115,17 @@ async function callsSections(): Promise<Section[]> {
     ],
   }
 
-  // No filler-word tracking table exists yet — honest empty state rather than fabricated numbers.
-  const filler: Section = { type: 'empty', title: 'FILLER WORDS TODAY', message: 'Not tracked yet.' }
-  const callbacks: Section = { type: 'empty', title: 'CALLBACKS DUE', message: 'Nothing due.' }
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const fillerToday = await getFillerWordsForDate(todayStr)
+  const fillerEntries = Object.entries(fillerToday).filter(([, n]) => n > 0)
+  const filler: Section = fillerEntries.length > 0
+    ? { type: 'stats', title: 'FILLER WORDS TODAY', rows: fillerEntries.map(([key, n]) => ({ label: `"${key.replace(/_/g, ' ')}"`, value: String(n) })) }
+    : { type: 'empty', title: 'FILLER WORDS TODAY', message: 'No calls analysed today yet.' }
+
+  const due = await getCallbacksDue()
+  const callbacks: Section = due.length > 0
+    ? { type: 'list', title: 'CALLBACKS DUE', items: due.map(d => ({ text: d.prospect_name ?? 'Unknown', sub: d.follow_up_date ?? undefined })) }
+    : { type: 'empty', title: 'CALLBACKS DUE', message: 'Nothing due.' }
 
   return [stats, filler, callbacks]
 }

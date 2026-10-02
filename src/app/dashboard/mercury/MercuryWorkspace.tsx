@@ -41,11 +41,11 @@ interface ApolloCallSummary {
   created_at: number
 }
 
-interface ApolloIntelligence {
+interface ApolloCallDetail {
   prospect_name: string | null
-  meeting_details: string | null
-  financial_concerns: string | null
-  talking_points: string[]
+  callSummary: string | null
+  crmNotes: string | null
+  followUpNotes: string | null
 }
 
 const MEDIUM_LABELS: Record<Medium, string> = {
@@ -168,14 +168,13 @@ export default function MercuryWorkspace() {
     try {
       const res = await fetch(`/api/dashboard/apollo/${recentApolloCall.id}`)
       if (!res.ok) throw new Error(`${res.status}`)
-      const data = await res.json() as { call: { prospect_name: string | null; intelligence: ApolloIntelligence | null } }
-      const intel = data.call.intelligence
-      const prospectName = intel?.prospect_name ?? data.call.prospect_name
+      const data = await res.json() as { call: ApolloCallDetail }
+      const call = data.call
       const parts: string[] = []
-      if (prospectName) parts.push(`Prospect: ${prospectName}.`)
-      if (intel?.meeting_details) parts.push(`Meeting: ${intel.meeting_details}.`)
-      if (intel?.financial_concerns) parts.push(`Concerns: ${intel.financial_concerns}.`)
-      if (intel?.talking_points?.length) parts.push(`Key points: ${intel.talking_points.join('; ')}.`)
+      if (call.prospect_name) parts.push(`Prospect: ${call.prospect_name}.`)
+      if (call.callSummary) parts.push(`Call: ${call.callSummary}`)
+      if (call.crmNotes) parts.push(`Notes: ${call.crmNotes}`)
+      if (call.followUpNotes) parts.push(`Follow-up: ${call.followUpNotes}`)
       setContext(parts.join(' '))
     } catch (e) {
       setPullApolloError(String(e))

@@ -111,6 +111,32 @@ export async function updatePreferenceValue(id: string, rule_value: string): Pro
     .where(eq(maia_preferences.id, id))
 }
 
+// Insert-or-update on (category, rule_key) — for session-context values that
+// represent a single current state (e.g. "today's coaching focus") rather
+// than an accumulating list of rules. Confirmed by default like addPreference,
+// but callers that only want this read back (not injected into prompts) must
+// filter it out by rule_key at the read site — see IRIS's morning_generation_time
+// precedent for the same pattern.
+export async function upsertPreference(input: {
+  category: string
+  rule_type: RuleType
+  rule_key: string
+  rule_value: string
+  source?: string
+}): Promise<void> {
+  const db = getDb()
+  const [existing] = await db.select({ id: maia_preferences.id }).from(maia_preferences)
+    .where(and(eq(maia_preferences.category, input.category), eq(maia_preferences.rule_key, input.rule_key)))
+    .limit(1)
+  if (existing) {
+    await db.update(maia_preferences)
+      .set({ rule_value: input.rule_value, updated_at: sql`(unixepoch())` })
+      .where(eq(maia_preferences.id, existing.id))
+  } else {
+    await addPreference(input)
+  }
+}
+
 export async function deletePreference(id: string): Promise<void> {
   await getDb().delete(maia_preferences).where(eq(maia_preferences.id, id))
 }

@@ -3,146 +3,80 @@ import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { askWith } from '@/lib/claude'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
-import { getCall, updateCall } from '../../../../../../tools/apollo'
+import { getCall, updateCall, type CallOutcome, type CallStage } from '../../../../../../tools/apollo'
+import { getTodayCallAngle } from '../../../../../../tools/hermes-db'
+import { upsertPreference } from '@/lib/preferences'
 import { extractJson } from '@/lib/format'
 
-const OPUS = 'claude-opus-4-6'
+const SONNET = 'claude-sonnet-4-6'
 
-const APOLLO_EXTRACT_SYSTEM = `You are APOLLO, an intelligence extraction agent for a financial adviser
-at deVere Group. Analyse this prospect call transcript and extract every
-useful detail about the prospect.
+const SYSTEM_PROMPT = `You are analysing a cold call made by Archie Payne, BDA at deVere and Partners Switzerland.
 
-Return JSON only — no prose outside the JSON. Extract every detail mentioned,
-infer carefully where appropriate, never invent. If something isn't mentioned,
-return null for that field.
+Archie's goal on every call: book a meeting with Stephen Smith (Senior Wealth Manager).
+deVere USP: cross-border financial planning for internationally mobile professionals in Switzerland.
+Ideal client: British expats with financial ties back home.
 
-Also identify at which stage the call ended:
+ANALYSE THE CALL AND RETURN JSON:
 
-STAGES:
-- opener: call ended before fact find started
-- fact_find: call ended during fact find
-- enlarge: call ended during enlarge/problem surfacing
-- disturb: call ended during disturb
-- close: call ended during close/funnel
-- completed: meeting booked, call completed successfully
-- voicemail: reached voicemail, no conversation
-
-Add to your JSON response:
-"call_stage_reached": one of the above values
-"call_stage_note": one sentence — what specifically happened at that stage
-  e.g. "Prospect said not interested after opener, before any fact find questions"
-  e.g. "Good fact find, lost momentum when asking for meeting — ask softened"
-  e.g. "Meeting booked successfully after handling send me an email objection"
-
-PRIVACY RULES — apply to all extracted fields:
-- Names: first name + last initial only. "John Smith" → "John S."
-- Never store: full surname, phone, email, home address, children's details
-  (a general mention that they have children is fine — never names or ages)
-- Keep: company, location, occupation, financial situation (general terms)
-- Financial amounts: keep if relevant to the case (e.g. "pension not reviewed
-  since 2017", "significant cash holdings across two currencies") — never
-  store specific account numbers or precise balances unless essential
-
-Return this exact shape:
 {
-  "prospect_name": string | null,   // "John S." format — see PRIVACY RULES
-  "prospect_location": string | null,   // city + country
-  "company": string | null,   // employer name
-  "age_range": string | null,
-  "occupation": string | null,
-  "family_situation": string | null,   // general terms only — never children's names/ages
-  "financial_situation": string | null,   // general terms — see PRIVACY RULES on amounts
-  "income_indicators": string | null,
-  "financial_concerns": string | null,
-  "future_goals": string | null,
-  "timeline": string | null,
-  "objections_raised": string | null,
-  "what_resonated": string | null,
-  "meeting_details": string | null,
-  "advisor_name": string | null,
-  "tone_notes": string | null,
-  "suggested_approach": string | null,
-  "talking_points": string[],
-  "call_stage_reached": "opener" | "fact_find" | "enlarge" | "disturb" | "close" | "completed" | "voicemail",
-  "call_stage_note": string
-}`
+  "coaching_insight": "One specific, actionable coaching point. What to do differently next time or what worked well. Max 2 sentences.",
 
-export type CallStage = 'opener' | 'fact_find' | 'enlarge' | 'disturb' | 'close' | 'completed' | 'voicemail'
+  "stage_reached": "opener | fact_find | enlarge | disturb | close | completed",
 
-export interface FillerWordAnalysis {
-  total: number
-  breakdown: Record<string, number>
-  worst_offender: string | null  // the most used filler word
+  "filler_words": {
+    "you_know": 0,
+    "sort_of": 0,
+    "basically": 0,
+    "kind_of": 0,
+    "obviously": 0
+  },
+
+  "winning_phrases": [
+    "Exact phrase that landed well — only include if genuinely effective"
+  ],
+
+  "crm_notes": "Only populate if outcome is meeting_booked. Quick, concise notes Stephen can use. Include: what the meeting is about, key personal details (football fan, mentioned kids etc.), any asset values or financial situation mentioned, suggested talking points for Stephen. Max 150 words.",
+
+  "confirmation_email": "Only populate if outcome is meeting_booked. Draft email confirming the meeting. Reference something specific from the call — a detail they mentioned, something they said. Warm but professional. From Archie.",
+
+  "follow_up_notes": "Only populate if outcome is follow_up. Why worth keeping. When to call back based on what they said. Max 50 words.",
+
+  "follow_up_date": "ISO date string if they gave a timeframe, computed relative to today's date given below. Null if not.",
+
+  "drop_reason": "Only populate if outcome is drop. One sentence on why not worth the CRM space.",
+
+  "prospect_quality": "high | medium | low — based on what was learned about their situation",
+
+  "call_summary": "Two sentence summary of what happened on the call."
 }
 
-export interface ApolloIntelligence {
-  prospect_name: string | null
-  prospect_location: string | null
-  company: string | null
-  age_range: string | null
-  occupation: string | null
-  family_situation: string | null
-  financial_situation: string | null
-  income_indicators: string | null
-  financial_concerns: string | null
-  future_goals: string | null
-  timeline: string | null
-  objections_raised: string | null
-  what_resonated: string | null
-  meeting_details: string | null
-  advisor_name: string | null
-  tone_notes: string | null
-  suggested_approach: string | null
-  talking_points: string[]
-  call_stage_reached: CallStage | null
-  call_stage_note: string | null
-  filler_words: FillerWordAnalysis
+IMPORTANT:
+- coaching_insight must be specific — not generic. Reference what actually happened on this call.
+- winning_phrases only if genuinely effective. Empty array if none.
+- crm_notes are for Stephen — include anything personal that helps build rapport.
+- Never include the prospect's full surname anywhere.
+- British English throughout.`
+
+interface FillerWords {
+  you_know: number
+  sort_of: number
+  basically: number
+  kind_of: number
+  obviously: number
 }
 
-// ── Filler word counter — simple string match, no extra API call ────────────
-
-const FILLER_WORDS = [
-  'you know', 'sort of', 'kind of', 'basically',
-  'literally', 'obviously', 'right', 'yeah so',
-  'i mean', 'like i said', 'to be honest',
-  'at the end of the day', 'if you know what i mean',
-]
-
-function countFillerWords(transcript: string): Record<string, number> {
-  const lower = transcript.toLowerCase()
-  const counts: Record<string, number> = {}
-  for (const filler of FILLER_WORDS) {
-    const matches = lower.match(new RegExp(filler, 'g'))
-    if (matches && matches.length > 0) {
-      counts[filler] = matches.length
-    }
-  }
-  return counts
-}
-
-function totalFillerCount(counts: Record<string, number>): number {
-  return Object.values(counts).reduce((a, b) => a + b, 0)
-}
-
-// Only Archie's turns count — never the prospect's. Transcript lines look like
-// "[MM:SS] Archie: ..." (see formatTranscript in transcribe/route.ts) or, after
-// manual editing in the workspace, "Archie: ..." with no timestamp — match both.
-function extractArchieText(transcript: string): string {
-  const lines: string[] = []
-  for (const line of transcript.split('\n')) {
-    const match = line.match(/^(?:\[\d{1,2}:\d{2}\]\s*)?([^:]+):\s*(.*)$/)
-    if (match && /^archie$/i.test(match[1].trim())) {
-      lines.push(match[2])
-    }
-  }
-  return lines.join(' ')
-}
-
-function analyseFillerWords(transcript: string): FillerWordAnalysis {
-  const counts = countFillerWords(extractArchieText(transcript))
-  const total = totalFillerCount(counts)
-  const worstOffender = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
-  return { total, breakdown: counts, worst_offender: worstOffender }
+interface AnalysisResult {
+  coaching_insight: string
+  stage_reached: CallStage
+  filler_words: FillerWords
+  winning_phrases: string[]
+  crm_notes: string | null
+  confirmation_email: string | null
+  follow_up_notes: string | null
+  follow_up_date: string | null
+  drop_reason: string | null
+  prospect_quality: 'high' | 'medium' | 'low'
+  call_summary: string
 }
 
 export async function POST(req: Request) {
@@ -150,12 +84,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { callId, transcript: editedTranscript } = await req.json().catch(() => ({})) as {
+  const { callId, transcript: editedTranscript, prospectName, outcome } = await req.json().catch(() => ({})) as {
     callId?: string
-    transcript?: string  // current edited state from the workspace, if the transcript was corrected before analysing
+    transcript?: string
+    prospectName?: string
+    outcome?: CallOutcome
   }
   if (!callId) {
     return NextResponse.json({ error: 'callId required' }, { status: 400 })
+  }
+  if (outcome !== 'booked' && outcome !== 'follow_up' && outcome !== 'drop') {
+    return NextResponse.json({ error: 'outcome must be booked, follow_up, or drop' }, { status: 400 })
   }
 
   const call = await getCall(callId)
@@ -163,22 +102,49 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Call or transcript not found' }, { status: 404 })
   }
 
-  // Edited transcript (if supplied) always wins — corrections feed the analysis,
-  // and get persisted so later views/generation see the corrected version too.
   const transcript = editedTranscript && editedTranscript.trim() ? editedTranscript : call.transcript
-
   const startMs = Date.now()
 
   try {
-    const raw = await askWith(APOLLO_EXTRACT_SYSTEM, transcript, 2000, OPUS)
-    const intelligence = JSON.parse(extractJson(raw)) as ApolloIntelligence
-    intelligence.filler_words = analyseFillerWords(transcript)
+    const todayAngle = await getTodayCallAngle()
+    const outcomeLabel = outcome === 'booked' ? 'meeting_booked' : outcome
+
+    const userMessage = [
+      `Today's date: ${new Date().toISOString().slice(0, 10)}`,
+      `Call outcome: ${outcomeLabel}`,
+      prospectName ? `Prospect name: ${prospectName}` : '',
+      todayAngle ? `Today's call angle: ${todayAngle}` : '',
+      '',
+      'TRANSCRIPT:',
+      transcript,
+    ].filter(Boolean).join('\n')
+
+    const raw = await askWith(SYSTEM_PROMPT, userMessage, 2000, SONNET)
+    const result = JSON.parse(extractJson(raw)) as AnalysisResult
 
     await updateCall(callId, {
       transcript,
-      intelligence_json: JSON.stringify(intelligence),
-      prospect_name: intelligence.prospect_name ?? null,
+      prospect_name: prospectName ?? call.prospect_name,
+      outcome,
+      coaching_insight: result.coaching_insight,
+      stage_reached: result.stage_reached,
+      filler_words_json: JSON.stringify(result.filler_words),
+      winning_phrases_json: JSON.stringify(result.winning_phrases ?? []),
+      advisor_brief: result.crm_notes ?? null,       // repurposed field — see schema.ts
+      client_email: result.confirmation_email ?? null, // repurposed field — see schema.ts
+      follow_up_notes: result.follow_up_notes ?? null,
+      follow_up_date: result.follow_up_date ?? null,
+      drop_reason: result.drop_reason ?? null,
+      prospect_quality: result.prospect_quality,
+      call_summary: result.call_summary,
     })
+
+    // Feed DIANA — today's focus + weak stage, read at the start of her next
+    // session. Fire-and-forget; never blocks the response.
+    void Promise.all([
+      upsertPreference({ category: 'diana', rule_type: 'behaviour', rule_key: 'todays_focus', rule_value: result.coaching_insight, source: 'apollo' }),
+      upsertPreference({ category: 'diana', rule_type: 'behaviour', rule_key: 'weak_stage', rule_value: result.stage_reached, source: 'apollo' }),
+    ]).catch(err => console.error('[apollo] DIANA preference feed failed:', err))
 
     await getDb().insert(activity).values({
       id: crypto.randomUUID(),
@@ -186,13 +152,13 @@ export async function POST(req: Request) {
       type: 'analyse',
       agent: 'APOLLO',
       input: callId,
-      output: `extracted intelligence for ${intelligence.prospect_name ?? 'unknown prospect'}`,
+      output: `analysed call — outcome=${outcome}, stage=${result.stage_reached}`,
       status: 'success',
       duration_ms: Date.now() - startMs,
       created_at: Math.floor(Date.now() / 1000),
     })
 
-    return NextResponse.json({ callId, intelligence })
+    return NextResponse.json({ callId, outcome, ...result })
   } catch (err) {
     console.error('[apollo] analysis failed:', err)
     await getDb().insert(activity).values({

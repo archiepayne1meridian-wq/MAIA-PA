@@ -1,7 +1,16 @@
+import { buildDashboardData } from '../data'
+import AgentPageShell from '../components/AgentPageShell'
 import ApolloWorkspace from './ApolloWorkspace'
 
-export const metadata = { title: 'APOLLO — Call Intelligence' }
+export const metadata = { title: 'Calls — Transcription & Coaching' }
 
-export default function ApolloPage() {
-  return <ApolloWorkspace />
+export default async function ApolloPage() {
+  const { agents } = await buildDashboardData()
+  const agent = agents.find(a => a.id === 'APOLLO')!
+
+  return (
+    <AgentPageShell agent={agent}>
+      <ApolloWorkspace />
+    </AgentPageShell>
+  )
 }

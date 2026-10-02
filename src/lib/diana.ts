@@ -636,7 +636,11 @@ export async function roleplayTurn(
     ? buildDeVereSystem(prospect, difficulty, voiceMode)
     : buildLegacySystem(difficulty, voiceMode)
 
-  const prefs = await getPreferences('diana')
+  // todays_focus/weak_stage are session-context values APOLLO writes after
+  // every call (see src/app/api/dashboard/apollo/analyse/route.ts) — read by
+  // the session-start UI, not voice/content rules, so they're excluded here
+  // the same way IRIS excludes morning_generation_time from its prompt.
+  const prefs = (await getPreferences('diana')).filter(p => p.rule_key !== 'todays_focus' && p.rule_key !== 'weak_stage')
   const prefText = formatPreferencesForPrompt(prefs)
   const systemPrompt = prefText ? `${prefText}\n\n${basePrompt}` : basePrompt
   console.log(`[diana] roleplayTurn: ${prefs.length} confirmed preference(s) injected`)

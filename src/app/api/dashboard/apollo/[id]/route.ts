@@ -22,11 +22,14 @@ export async function GET(
       call_date: call.call_date,
       prospect_name: call.prospect_name,
       transcript: call.transcript,
-      intelligence: call.intelligence_json ? JSON.parse(call.intelligence_json) : null,
-      advisorBrief: call.advisor_brief,
-      clientEmail: call.client_email,
-      museCaseId: call.muse_case_id,
-      museSaved: Boolean(call.muse_case_id && call.muse_brief_id && call.muse_email_id),
+      outcome: call.outcome,
+      stageReached: call.stage_reached,
+      callSummary: call.call_summary,
+      crmNotes: call.advisor_brief,            // repurposed field — see schema.ts
+      confirmationEmail: call.client_email,    // repurposed field — see schema.ts
+      followUpNotes: call.follow_up_notes,
+      followUpDate: call.follow_up_date,
+      winningPhrases: call.winning_phrases_json ? JSON.parse(call.winning_phrases_json) as string[] : [],
     },
   })
 }

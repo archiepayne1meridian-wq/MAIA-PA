@@ -375,15 +375,30 @@ export const visualizer_notes = sqliteTable('visualizer_notes', {
 export const apollo_calls = sqliteTable('apollo_calls', {
   id: text('id').primaryKey(),
   call_date: text('call_date').notNull(),
-  prospect_name: text('prospect_name'),
+  prospect_name: text('prospect_name'),              // first name + last initial only (GDPR)
   transcript: text('transcript'),
-  intelligence_json: text('intelligence_json'),
-  advisor_brief: text('advisor_brief'),
-  client_email: text('client_email'),
-  muse_brief_id: text('muse_brief_id'),
-  muse_email_id: text('muse_email_id'),
-  muse_case_id: text('muse_case_id'),               // muse_cases.id this call was filed against
-  coaching_insight: text('coaching_insight'),        // one-sentence APOLLO coaching note, generated alongside advisor_brief — surfaced by MAIA's morning brief / chat context
+  intelligence_json: text('intelligence_json'),       // legacy Opus extraction shape — unused by the new single-pass analyse flow, kept for old rows
+  advisor_brief: text('advisor_brief'),               // repurposed: holds the new flow's crm_notes text
+  client_email: text('client_email'),                 // repurposed: holds the new flow's confirmation_email text
+  muse_brief_id: text('muse_brief_id'),               // legacy MUSE case-filing — retired, kept for old rows
+  muse_email_id: text('muse_email_id'),               // legacy MUSE case-filing — retired, kept for old rows
+  muse_case_id: text('muse_case_id'),                 // legacy MUSE case-filing — retired, kept for old rows
+  coaching_insight: text('coaching_insight'),         // one-sentence coaching note — surfaced by MAIA's morning brief / chat context
+  outcome: text('outcome'),                           // 'booked' | 'follow_up' | 'drop' — set by Archie before analysis
+  stage_reached: text('stage_reached'),                // opener/fact_find/enlarge/disturb/close/completed
+  filler_words_json: text('filler_words_json'),        // JSON: { you_know: n, sort_of: n, ... }
+  winning_phrases_json: text('winning_phrases_json'),   // JSON array of strings
+  saved_phrase_indices_json: text('saved_phrase_indices_json').notNull().default('[]'), // JSON array — which winning_phrases[] indices have been saved to MUSE
+  follow_up_notes: text('follow_up_notes'),
+  follow_up_date: text('follow_up_date'),              // ISO date, if Archie gave a timeframe
+  drop_reason: text('drop_reason'),
+  prospect_quality: text('prospect_quality'),          // high/medium/low
+  call_summary: text('call_summary'),
+  reminder_set: integer('reminder_set').notNull().default(0),
+  reminder_type: text('reminder_type'),                // 'show_up' | 'follow_up'
+  reminder_date: text('reminder_date'),
+  email_sent: integer('email_sent').notNull().default(0),
+  dropped: integer('dropped').notNull().default(0),    // 1 once Archie confirms the drop
   created_at: integer('created_at').notNull(),
 })
 

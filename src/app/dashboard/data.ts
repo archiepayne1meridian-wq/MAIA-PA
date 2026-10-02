@@ -390,7 +390,7 @@ export async function buildDashboardData(): Promise<DashboardData> {
       feed: [['—', 'Say "Mercury, draft an email…" in Slack']],
     },
     {
-      id: 'APOLLO', role: 'Call Intelligence', badge: 'A',
+      id: 'APOLLO', displayName: 'Calls', role: 'Transcription & Coaching', badge: 'A',
       status: apolloTotal > 0 ? 'online' : 'idle',
       stat: apolloTotal > 0 ? `${apolloTotal} call${apolloTotal !== 1 ? 's' : ''} processed` : 'No calls yet',
       statusLabel: 'Drop an 8x8 recording in the dashboard to transcribe and brief',

@@ -1,0 +1,88 @@
+/* ── APOLLO — Calls conversation thread ──────────────────────────────────── */
+
+.page { display: flex; flex-direction: column; gap: 14px; margin-bottom: 90px; }
+.thread { display: flex; flex-direction: column; gap: 16px; }
+
+.callGroup { display: flex; flex-direction: column; gap: 12px; }
+.callGroupDivider { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+.callGroupDivider span { font-family: var(--mono), monospace; font-size: 9.5px; color: var(--text-dim); white-space: nowrap; }
+.callGroupDivider::before, .callGroupDivider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+.card { background: var(--raised); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; max-width: 94%; }
+.cardHeader { padding: 9px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); background: var(--accent-dim); }
+.cardTitle { font-family: var(--mono), monospace; font-size: 9.5px; color: var(--accent); font-weight: 600; letter-spacing: 0.5px; }
+.cardBody { padding: 12px 14px; font-size: 12.5px; line-height: 1.65; color: var(--text); white-space: pre-wrap; }
+.cardActions { padding: 10px 14px; display: flex; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--border); }
+
+/* Upload card */
+.uploadCard { composes: card; }
+.dropZone {
+  margin: 12px 14px 14px; padding: 24px; border: 1.5px dashed var(--border); border-radius: 10px;
+  text-align: center; cursor: pointer; transition: border-color 0.15s, color 0.15s; color: var(--text-mid);
+}
+.dropZone:hover { border-color: var(--accent); color: var(--accent); }
+.dropZoneActive { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.dropZoneIcon { font-size: 24px; margin-bottom: 8px; }
+.dropZoneHint { font-family: var(--mono), monospace; font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+.spinner {
+  width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; margin: 0 auto 10px; animation: apolloSpin 0.8s linear infinite;
+}
+@keyframes apolloSpin { to { transform: rotate(360deg); } }
+
+/* Transcript confirm card */
+.transcriptHint { font-family: var(--mono), monospace; font-size: 9.5px; color: var(--text-dim); padding: 8px 14px 0; }
+.turns { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; max-height: 320px; overflow-y: auto; }
+.turn { display: flex; gap: 8px; align-items: flex-start; }
+.turnSpeaker {
+  font-family: var(--mono), monospace; font-size: 10px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+  padding: 2px 7px; border-radius: 4px; margin-top: 1px; user-select: none; transition: opacity 0.12s;
+}
+.turnSpeaker:hover { opacity: 0.75; }
+.turnSpeakerArchie { background: var(--accent-dim); color: var(--accent); }
+.turnSpeakerProspect { background: var(--raised-2); color: var(--text-mid); }
+.turnText {
+  flex: 1; font-size: 12.5px; line-height: 1.5; color: var(--text); outline: none;
+  padding: 2px 4px; border-radius: 4px; transition: background 0.12s;
+}
+.turnText:focus { background: var(--surface); }
+
+.confirmFields { padding: 12px 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; }
+.fieldLabel { font-family: var(--mono), monospace; font-size: 9.5px; color: var(--text-dim); letter-spacing: 0.3px; margin-bottom: 6px; display: block; }
+.nameInput {
+  width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 10px; font-size: 12.5px; color: var(--text); outline: none; transition: border-color 0.12s;
+}
+.nameInput:focus { border-color: var(--accent); }
+.outcomeRow { display: flex; gap: 8px; flex-wrap: wrap; }
+.outcomeBtn {
+  padding: 7px 13px; border-radius: 100px; font-size: 11.5px; font-family: var(--display), sans-serif;
+  border: 1px solid var(--border); background: transparent; color: var(--text-mid); cursor: pointer; transition: 0.12s;
+}
+.outcomeBtn:hover { border-color: var(--accent); color: var(--accent); }
+.outcomeBtnActive { border-color: var(--accent) !important; color: var(--accent) !important; background: var(--accent-dim); }
+.analyseBtn {
+  padding: 9px 14px; border-radius: 8px; background: var(--accent); color: #fff; border: none;
+  font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: var(--display), sans-serif; transition: opacity 0.12s;
+}
+.analyseBtn:hover:not(:disabled) { opacity: 0.85; }
+.analyseBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Coaching card */
+.coachingStage { font-family: var(--mono), monospace; font-size: 10.5px; color: var(--text-mid); margin-top: 10px; }
+.fillerRow { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-family: var(--mono), monospace; font-size: 10.5px; color: var(--text-mid); }
+
+/* Phrase card */
+.phraseText { font-size: 13px; font-style: italic; color: var(--text); line-height: 1.6; }
+.phraseRow { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.phraseRow:last-child { border-bottom: none; }
+.savedTag { font-family: var(--mono), monospace; font-size: 9.5px; color: var(--online); }
+
+.errorText { color: var(--alert); font-size: 12px; padding: 8px 14px; }
+.emptyThread { font-family: var(--mono), monospace; font-size: 11px; color: var(--text-dim); text-align: center; padding: 30px 0; }
+.newCallBtn {
+  align-self: flex-start; padding: 6px 14px; border-radius: 100px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-mid); font-size: 11.5px; cursor: pointer; transition: 0.12s;
+  font-family: var(--display), sans-serif; margin-bottom: 4px;
+}
+.newCallBtn:hover { border-color: var(--accent); color: var(--accent); }

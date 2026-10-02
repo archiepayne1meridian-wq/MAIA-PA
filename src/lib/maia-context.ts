@@ -7,7 +7,6 @@ import { apollo_calls, iris_posts, diana_sessions, kpi_logs, kpi_weekly, study_c
 import { desc, eq, gte, isNotNull, and, lte } from 'drizzle-orm'
 import { getTodayCallAngle } from '../../tools/hermes-db'
 import { getProgress } from '../../tools/study-db'
-import type { ApolloIntelligence } from '@/app/api/dashboard/apollo/analyse/route'
 
 function weekStartSecs(): number {
   const d = new Date()
@@ -72,8 +71,9 @@ export async function gatherMaiaContext(): Promise<MaiaContext> {
   const recentCalls = await db
     .select({
       prospect_name: apollo_calls.prospect_name,
-      intelligence_json: apollo_calls.intelligence_json,
-      advisor_brief: apollo_calls.advisor_brief,
+      outcome: apollo_calls.outcome,
+      call_summary: apollo_calls.call_summary,
+      advisor_brief: apollo_calls.advisor_brief,   // repurposed: crm_notes — see schema.ts
       call_date: apollo_calls.call_date,
       created_at: apollo_calls.created_at,
     })
@@ -84,17 +84,13 @@ export async function gatherMaiaContext(): Promise<MaiaContext> {
 
   const thisWeekMeetings: MaiaMeetingItem[] = []
   for (const row of recentCalls) {
-    if (!row.intelligence_json) continue
-    try {
-      const intel = JSON.parse(row.intelligence_json) as ApolloIntelligence
-      if (!intel.meeting_details) continue
-      thisWeekMeetings.push({
-        prospectName: row.prospect_name ?? intel.prospect_name ?? 'Unnamed prospect',
-        meetingDetails: intel.meeting_details,
-        hasBrief: !!row.advisor_brief,
-        callDate: row.call_date,
-      })
-    } catch { /* skip unparsable rows */ }
+    if (row.outcome !== 'booked') continue
+    thisWeekMeetings.push({
+      prospectName: row.prospect_name ?? 'Unnamed prospect',
+      meetingDetails: row.call_summary ?? 'Meeting booked',
+      hasBrief: !!row.advisor_brief,
+      callDate: row.call_date,
+    })
     if (thisWeekMeetings.length >= 5) break
   }
 

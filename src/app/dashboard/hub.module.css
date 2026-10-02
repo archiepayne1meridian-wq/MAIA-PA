@@ -183,3 +183,26 @@
 .hTagRed { background: rgba(220,38,38,0.15); color: #DC2626; }
 .hTagAmber { background: rgba(245,158,11,0.15); color: #F59E0B; }
 .hTagGreen { background: rgba(232,114,28,0.15); color: var(--accent); }
+
+/* ── Shared file drop zone ────────────────────────────────────────────────── */
+
+.fileDropCard {
+  border: 1.5px dashed var(--border); border-radius: 10px; padding: 24px; text-align: center;
+  cursor: pointer; color: var(--text-mid); transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.fileDropCard:hover { border-color: var(--accent); color: var(--accent); }
+.fileDropCardActive { border-color: var(--accent) !important; color: var(--accent) !important; background: var(--accent-dim); }
+.fileDropIcon { font-size: 22px; margin-bottom: 6px; }
+.fileDropSelected { font-family: var(--mono), monospace; font-size: 10.5px; color: var(--text); margin-top: 6px; }
+.fileDropHint { font-family: var(--mono), monospace; font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+
+.fileDropCompact {
+  width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 14px; transition: all 0.15s; flex-shrink: 0;
+}
+.fileDropCompact:hover { border-color: var(--accent); color: var(--accent); }
+.fileDropCompact:disabled { opacity: 0.4; cursor: not-allowed; }
+.fileDropCompactActive { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+.chatInputBarDragOver { outline: 1.5px dashed var(--accent); outline-offset: -3px; background: var(--accent-dim); }

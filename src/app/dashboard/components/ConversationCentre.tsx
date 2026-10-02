@@ -3,6 +3,18 @@
 import { useEffect, useState, useCallback, useRef, forwardRef, useImperativeHandle } from 'react'
 import s from '../hub.module.css'
 import type { ConversationAgent, HubAgentMeta } from './hub-agents'
+import FileDropZone from './FileDropZone'
+
+// Mirrors the server-side allow-list in /api/dashboard/conversations/[agent]/upload —
+// kept here too so the file picker and drag-over only accept what that route will.
+const AGENT_FILE_ACCEPT: Partial<Record<ConversationAgent, string[]>> = {
+  calls: ['mp3', 'mp4', 'm4a', 'wav', 'ogg'],
+  linkedin: ['png', 'jpg', 'jpeg', 'webp'],
+  news: ['pdf', 'png', 'jpg'],
+  study: ['pdf', 'docx'],
+  prospects: ['csv', 'xlsx'],
+}
+const DEFAULT_FILE_ACCEPT = ['png', 'jpg', 'jpeg', 'webp', 'pdf']
 
 interface ConversationMessage {
   id: string
@@ -36,6 +48,8 @@ const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function 
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [notConnectedNote, setNotConnectedNote] = useState<string | null>(null)
+  const [uploadingFile, setUploadingFile] = useState(false)
+  const [barDragOver, setBarDragOver] = useState(false)
   const threadRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
@@ -76,6 +90,27 @@ const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function 
     }
   }
 
+  // Routes a dropped/picked file based on the active agent + its extension —
+  // server-side validates the same allow-list (AGENT_FILE_ACCEPT above mirrors
+  // it client-side just for the picker/drag-over affordance).
+  async function handleFileDrop(file: File) {
+    if (uploadingFile) return
+    setUploadingFile(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch(`/api/dashboard/conversations/${agent.id}/upload`, { method: 'POST', body: formData })
+      const data = await res.json() as { error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Upload failed')
+      load()
+      onMessageSent?.()
+    } catch (err) {
+      console.error('[conversation] file upload failed:', err)
+    } finally {
+      setUploadingFile(false)
+    }
+  }
+
   function notConnected() {
     setNotConnectedNote("This agent's conversation logic isn't connected yet.")
     setTimeout(() => setNotConnectedNote(null), 2500)
@@ -103,12 +138,29 @@ const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function 
         )}
       </div>
 
-      <div className={s.chatInputBar}>
+      <div
+        className={`${s.chatInputBar} ${barDragOver ? s.chatInputBarDragOver : ''}`}
+        onDragOver={e => { e.preventDefault(); setBarDragOver(true) }}
+        onDragLeave={() => setBarDragOver(false)}
+        onDrop={e => {
+          e.preventDefault()
+          setBarDragOver(false)
+          const file = e.dataTransfer.files[0]
+          if (file) void handleFileDrop(file)
+        }}
+      >
         <button className={s.micBtn} onClick={notConnected} aria-label="Voice input">🎙</button>
+        <FileDropZone
+          compact
+          accept={AGENT_FILE_ACCEPT[agent.id] ?? DEFAULT_FILE_ACCEPT}
+          onFile={file => void handleFileDrop(file)}
+          disabled={uploadingFile}
+          label={`Attach file (${(AGENT_FILE_ACCEPT[agent.id] ?? DEFAULT_FILE_ACCEPT).map(e => `.${e}`).join(' ')})`}
+        />
         <input
           ref={inputRef}
           className={s.chatInput}
-          placeholder={notConnectedNote ?? 'Type or speak to MAIA...'}
+          placeholder={notConnectedNote ?? (uploadingFile ? 'Uploading file…' : 'Type or speak to MAIA...')}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') void send() }}

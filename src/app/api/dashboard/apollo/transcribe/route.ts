@@ -8,7 +8,7 @@ import { getDb } from '@/db'
 import { activity } from '@/db/schema'
 import { saveCall } from '../../../../../../tools/apollo'
 
-const ALLOWED_EXTENSIONS = ['mp3', 'mp4', 'm4a', 'wav', 'ogg', 'webm']
+const ALLOWED_EXTENSIONS = ['mp3', 'mp4', 'm4a', 'wav', 'ogg']
 const MAX_SIZE_BYTES = 200 * 1024 * 1024 // 200MB
 
 interface WhisperSegment {
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
   if (!ALLOWED_EXTENSIONS.includes(ext)) {
     return NextResponse.json(
-      { error: 'Unsupported format — use .mp3, .m4a, .wav, .mp4, .ogg, or .webm' },
+      { error: 'Unsupported format — use .mp3, .m4a, .wav, .mp4, or .ogg' },
       { status: 400 },
     )
   }

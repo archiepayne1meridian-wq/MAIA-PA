@@ -90,8 +90,5 @@ export async function GET() {
             : null,
         }
       : null,
-    // Feedback is posted to Slack only — not yet stored in the database.
-    // Storage will be added in a future phase.
-    feedbackNote: 'Full feedback is delivered to Slack. Database storage coming in a future phase.',
   })
 }

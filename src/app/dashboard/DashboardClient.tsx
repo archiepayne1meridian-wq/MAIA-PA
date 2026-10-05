@@ -250,7 +250,7 @@ export default function DashboardClient({ agents, onlineCount, needYouCount, bri
                     ? `${needYouCount} item${needYouCount !== 1 ? 's' : ''} need${needYouCount === 1 ? 's' : ''} your attention. Tap the relevant agent tile to review.`
                     : onlineCount > 0
                     ? `All clear — ${onlineCount} agent${onlineCount !== 1 ? 's' : ''} active, nothing pending your approval.`
-                    : 'Agents are standing by. Send a command in Slack or use the mic below.'}
+                    : 'Agents are standing by. Use the mic below or open an agent to get started.'}
                 </div>
               </div>
             </div>

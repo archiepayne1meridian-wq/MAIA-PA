@@ -332,7 +332,7 @@ export default function VictoriaWorkspace() {
               )
             })
           ) : (
-            <span className={s.victoriaNoDataStrip}>No KPI data logged yet. Post in Slack: "VICTORIA, log: calls=12, connects=5"</span>
+            <span className={s.victoriaNoDataStrip}>No KPI data logged yet. Tap the counters above to start tracking today.</span>
           )}
         </div>
       </div>

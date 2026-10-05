@@ -264,7 +264,6 @@ export async function processInput(
     suggested_content: assessment.content,
     suggested_depth: assessment.depth,
     suggested_links: JSON.stringify(assessment.links),
-    slack_ts: null,
   })
 
   return { pendingIds: [pendingId], assessment }
@@ -357,10 +356,10 @@ export async function findRelatedEntries(
 // entry content anywhere, it only reads from SQLite and returns rows.
 //
 // NOTE — signature/shape change: the old searchKnowledge(query, sector) returned
-// { synthesis, results: SearchResult[] } and was used by handleMuseSearch (Slack's
-// "MUSE, search..." intent). That caller has been updated to work off this new
-// { knowledge, templates, cases } shape instead — it loses the Haiku-authored
-// one-line synthesis, but gains templates in the same search and is instant.
+// { synthesis, results: SearchResult[] }. The dashboard search route has been
+// updated to work off this new { knowledge, templates, cases } shape instead —
+// it loses the Haiku-authored one-line synthesis, but gains templates in the
+// same search and is instant.
 
 export interface ScoredEntry extends MuseEntry {
   relevance_score: number

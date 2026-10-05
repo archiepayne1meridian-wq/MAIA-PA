@@ -1,8 +1,5 @@
 const REQUIRED = [
   'ANTHROPIC_API_KEY',
-  'SLACK_BOT_TOKEN',
-  'SLACK_SIGNING_SECRET',
-  'SLACK_CHANNEL_ID',
   'DATABASE_URL',
   'NEXT_PUBLIC_BASE_URL',
 ] as const
@@ -23,9 +20,6 @@ export function validateEnv(): void {
 export const env = {
   ANTHROPIC_API_KEY: () => requireEnv('ANTHROPIC_API_KEY'),
   ANTHROPIC_MODEL: () => process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
-  SLACK_BOT_TOKEN: () => requireEnv('SLACK_BOT_TOKEN'),
-  SLACK_SIGNING_SECRET: () => requireEnv('SLACK_SIGNING_SECRET'),
-  SLACK_CHANNEL_ID: () => requireEnv('SLACK_CHANNEL_ID'),
   DATABASE_URL: () => requireEnv('DATABASE_URL'),
   NEXT_PUBLIC_BASE_URL: () => requireEnv('NEXT_PUBLIC_BASE_URL'),
   MAIA_API_KEY: () => process.env.MAIA_API_KEY,

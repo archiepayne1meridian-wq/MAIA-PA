@@ -715,7 +715,7 @@ export default function AthenaWorkspace() {
                   <div className={s.athenaNoDue}>
                     <p className={s.athenaNoDueText}>No cards due right now.</p>
                     <p className={s.athenaNoDueSub}>
-                      Add material in Slack: <span className={s.athenaCode}>ATHENA, add this to &lt;module&gt;: &lt;notes&gt;</span>
+                      Come back once new material has been added for a module.
                     </p>
                     <button className={s.athenaRefreshBtn} onClick={() => void loadDueCard()}>Refresh</button>
                   </div>
@@ -781,7 +781,7 @@ export default function AthenaWorkspace() {
                     {quizPhase === 'loading_modules' && <p className={s.athenaLoading}>Loading…</p>}
 
                     {quizPhase !== 'loading_modules' && modules.length === 0 && (
-                      <p className={s.athenaQuizNoMaterial}>No CISI material yet — add notes in Slack to generate real questions.</p>
+                      <p className={s.athenaQuizNoMaterial}>No CISI material yet for these modules.</p>
                     )}
 
                     {quizPhase !== 'loading_modules' && modules.length > 0 && (

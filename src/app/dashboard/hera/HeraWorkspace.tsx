@@ -264,7 +264,7 @@ export default function HeraWorkspace() {
                 No weekly review yet. HERA generates a review after you've logged reflections for the week.
               </p>
               <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>
-                Reflect in Slack: <em>"HERA, I'm reflecting: [your thoughts]"</em>
+                Log a reflection below to get started.
               </p>
             </div>
           )}
@@ -343,7 +343,7 @@ export default function HeraWorkspace() {
 
           {data.reflections.length === 0 ? (
             <p style={{ fontSize: 13, color: 'var(--text-dim)', paddingTop: 12, lineHeight: 1.65 }}>
-              No reflections yet. Start in Slack: <em>"HERA, I'm reflecting: …"</em>
+              No reflections yet. Log one below to get started.
             </p>
           ) : (
             <div className={s.heraReflFeed}>

@@ -170,7 +170,7 @@ export async function buildDashboardData(): Promise<DashboardData> {
   const dianaFeed: [string, string][] = dianaRows
     .filter(r => r.status === 'ended').slice(0, 3)
     .map(r => [relTime(r.created_at), `Drill: ${r.scenario ?? 'roleplay'}`] as [string, string])
-  if (dianaFeed.length === 0) dianaFeed.push(['—', 'No sessions yet — start a drill in Slack'])
+  if (dianaFeed.length === 0) dianaFeed.push(['—', 'No sessions yet — start a drill'])
 
   const dianaTarget = 5
   const dianaProg = Math.min(Math.round(sessionCount / dianaTarget * 100), 100)
@@ -319,7 +319,7 @@ export async function buildDashboardData(): Promise<DashboardData> {
         ['Streak', `${streak}d`, 'days with reflections'],
         ['Last check-in', lastRefRow ? relTime(lastRefRow.created_at) : 'None', refToday ? 'today' : 'not yet today'],
         ['Tonight', refToday ? 'Done ✓' : 'Pending', '22:00 reflection'],
-        ['Mode', 'Slack', 'voice or text'],
+        ['Mode', 'Dashboard', 'voice or text'],
       ],
       feed: heraFeed,
     },
@@ -363,7 +363,7 @@ export async function buildDashboardData(): Promise<DashboardData> {
       id: 'MUSE', role: 'Second Brain', badge: 'M',
       status: 'idle' as const,
       stat: 'Ready',
-      statusLabel: 'Knowledge base available — add entries via Slack or dashboard',
+      statusLabel: 'Knowledge base available — add entries from the dashboard',
       prog: 0,
       progAlert: false,
       tiles: [
@@ -372,13 +372,13 @@ export async function buildDashboardData(): Promise<DashboardData> {
         ['Harvest', 'Step 5', 'ATHENA + CASSANDRA wired then'],
         ['Mode', 'Confirm-first', 'nothing commits without approval'],
       ],
-      feed: [['—', 'Say "MUSE, file this:" or use the brain dump panel']],
+      feed: [['—', 'Use the brain dump panel to file a new entry']],
     },
     {
       id: 'MERCURY', role: 'Message drafting', badge: 'M',
       status: 'idle',
       stat: 'Ready',
-      statusLabel: 'Draft via Slack or dashboard workspace',
+      statusLabel: 'Draft via the dashboard workspace',
       prog: 0,
       progAlert: false,
       tiles: [
@@ -387,7 +387,7 @@ export async function buildDashboardData(): Promise<DashboardData> {
         ['Voice', 'Shared with IRIS', 'preferences carry across'],
         ['Source', 'mercury_drafts', 'saved on approval'],
       ],
-      feed: [['—', 'Say "Mercury, draft an email…" in Slack']],
+      feed: [['—', 'Draft a message from the Mercury workspace']],
     },
     {
       id: 'APOLLO', displayName: 'Calls', role: 'Transcription & Coaching', badge: 'A',

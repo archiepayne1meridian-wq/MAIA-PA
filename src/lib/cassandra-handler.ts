@@ -10,15 +10,13 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { eq, desc } from 'drizzle-orm'
-import { postMessage } from './slack'
 import {
-  gatherAndFilterArticles, formatBriefSlackText, toHeadlinesJsonCompat,
+  gatherAndFilterArticles, formatBriefText, toHeadlinesJsonCompat,
   fileCallAngleToMuse, answerCassandraFollowUp, CATEGORY_LABEL,
   type CassandraArticle, type ChatTurn,
 } from './cassandra'
 import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
 import { checkMuseHarvest } from './muse-handler'
-import { savePost } from '../../tools/iris'
 import { getDb } from '@/db'
 import { activity, research_briefs, cassandra_items } from '@/db/schema'
 import { getConversation, appendMessage, appendMessages, type ConversationMessage } from '../../tools/maia-conversations'
@@ -71,41 +69,6 @@ function loadConfig(): CassandraConfig {
       fxPairs: ['GBP/USD', 'EUR/USD', 'EUR/GBP'],
     }
   }
-}
-
-// ─── Intent detection (Slack) ─────────────────────────────────────────────────
-
-export type CassandraIntent =
-  | { type: 'morning_brief' }
-  | { type: 'fx_only' }
-  | { type: 'flag_iris_topic'; description: string }
-
-export function detectCassandraIntent(text: string): CassandraIntent | null {
-  const lower = text.trim().toLowerCase()
-
-  if (
-    /^(?:cassandra[,.]?\s+)?brief me$/i.test(lower) ||
-    /^market brief$/i.test(lower) ||
-    /^markets$/i.test(lower) ||
-    /^cassandra[,.]?\s+brief$/i.test(lower)
-  ) {
-    return { type: 'morning_brief' }
-  }
-
-  if (
-    /^(?:cassandra[,.]?\s+)?fx$/i.test(lower) ||
-    /^what'?s the pound doing/i.test(lower)
-  ) {
-    return { type: 'fx_only' }
-  }
-
-  const flagMatch = text.match(/^(?:cassandra[,.]?\s+flag\s+this[:\s]+|iris\s+topic:\s*)(.+)$/i)
-  if (flagMatch) {
-    const description = (flagMatch[1] ?? '').trim()
-    if (description) return { type: 'flag_iris_topic', description }
-  }
-
-  return null
 }
 
 // ─── Date helpers ──────────────────────────────────────────────────────────────
@@ -230,7 +193,7 @@ async function runPipeline(excludeUrls: Set<string>): Promise<{
 
 // ─── Scheduled morning brief (POST /api/cron/cassandra/brief, existing POST /api/cassandra/brief) ──
 
-export async function buildScheduledBrief(channel: string): Promise<void> {
+export async function buildScheduledBrief(): Promise<void> {
   const rowId = crypto.randomUUID()
   const startMs = Date.now()
 
@@ -247,9 +210,7 @@ export async function buildScheduledBrief(channel: string): Promise<void> {
   try {
     const existingUrls = await getTodaysItemUrls(todayDateString())
     const { articles, skippedQueries, itemIds, indices, fx } = await runPipeline(existingUrls)
-    const text = formatBriefSlackText(indices, fx, articles, skippedQueries)
-
-    await postMessage(channel, text)
+    const text = formatBriefText(indices, fx, articles, skippedQueries)
 
     await getDb().insert(research_briefs).values({
       id: crypto.randomUUID(),
@@ -272,7 +233,6 @@ export async function buildScheduledBrief(channel: string): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[cassandra] buildScheduledBrief failed:', err)
     await getDb().update(activity).set({ output: msg, status: 'error', duration_ms: Date.now() - startMs }).where(eq(activity.id, rowId))
-    await postMessage(channel, `⚠ CASSANDRA brief failed: ${msg}`)
   }
 }
 
@@ -344,7 +304,7 @@ export async function ensureTodaysBriefInThread(): Promise<ConversationMessage[]
   try {
     const existingUrls = await getTodaysItemUrls(todayDateString())
     const { articles, skippedQueries, itemIds, indices, fx } = await runPipeline(existingUrls)
-    const text = formatBriefSlackText(indices, fx, articles, skippedQueries)
+    const text = formatBriefText(indices, fx, articles, skippedQueries)
 
     await getDb().insert(research_briefs).values({
       id: crypto.randomUUID(),
@@ -464,46 +424,4 @@ export async function sendPostIdeaToLinkedin(itemId: string): Promise<void> {
     timestamp: Math.floor(Date.now() / 1000),
   }
   await appendMessage('linkedin', msg)
-}
-
-// ─── On-demand Slack handlers (unchanged intent surface) ─────────────────────
-
-export async function handleCassandraBrief(channel: string, _slackUser?: string): Promise<void> {
-  // Same pipeline as the scheduled brief — Slack "CASSANDRA, brief me" still works.
-  await buildScheduledBrief(channel)
-}
-
-export async function handleFxOnly(channel: string, _slackUser?: string): Promise<void> {
-  const config = loadConfig()
-  try {
-    const fx = await getFxQuotes(config.fxPairs)
-    if (fx.length === 0) {
-      await postMessage(channel, '⚠ CASSANDRA: FX data unavailable.')
-      return
-    }
-    const lines = fx.map(q => {
-      const sign = q.dayChangePct >= 0 ? '+' : ''
-      return `${q.pair} ${q.rate.toFixed(4)} ${sign}${q.dayChangePct.toFixed(2)}%`
-    }).join(' · ')
-    await postMessage(channel, `*FX*\n${lines}`)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error('[cassandra] handleFxOnly failed:', err)
-    await postMessage(channel, `⚠ CASSANDRA FX: ${msg}`)
-  }
-}
-
-export async function handleFlagIrisTopic(description: string, channel: string): Promise<void> {
-  try {
-    await savePost({
-      slot: '', pillar: 1, topic: description, copy: '',
-      image_prompt: null, image_url: null, format: null,
-      status: 'suggested', slack_ts: null,
-    })
-    await postMessage(channel, `Got it — added *${description}* to IRIS topic queue. It'll be picked up at the next draft.`)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error('[cassandra] handleFlagIrisTopic failed:', err)
-    await postMessage(channel, `⚠ CASSANDRA: could not flag topic — ${msg}`)
-  }
 }

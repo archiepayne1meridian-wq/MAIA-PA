@@ -29,7 +29,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   setImmediate(() => {
-    buildScheduledBrief(env.SLACK_CHANNEL_ID()).catch((err: unknown) =>
+    buildScheduledBrief().catch((err: unknown) =>
       console.error('[cassandra/brief] handler error:', err),
     )
   })

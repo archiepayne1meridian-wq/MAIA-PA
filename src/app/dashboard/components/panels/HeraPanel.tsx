@@ -85,7 +85,7 @@ export default function HeraPanel() {
         </>
       ) : (
         <div className={s.panelEmpty}>
-          No reflections yet. Say <strong>"reflection: ..."</strong> in Slack tonight.
+          No reflections yet. Log one from the HERA page tonight.
         </div>
       )}
     </>

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { handleMuseConfirm } from '@/lib/muse-handler'
-import { env } from '@/lib/env'
 
 export async function POST(req: NextRequest) {
   if (!(await requireDashboardAuth())) {
@@ -21,9 +20,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const channel = env.SLACK_CHANNEL_ID()
-    await handleMuseConfirm(channel, pendingId, decision as 'keep' | 'discard')
-    return NextResponse.json({ status: decision === 'keep' ? 'approved' : 'discarded', id: pendingId })
+    const result = await handleMuseConfirm(pendingId, decision as 'keep' | 'discard')
+    if (result.status === 'not_found') {
+      return NextResponse.json({ error: result.message }, { status: 404 })
+    }
+    return NextResponse.json({ ...result, id: pendingId })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Confirm error'
     return NextResponse.json({ error: message }, { status: 500 })

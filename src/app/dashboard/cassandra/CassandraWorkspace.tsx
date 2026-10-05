@@ -412,7 +412,6 @@ export default function CassandraWorkspace() {
           {!brief && !loading && !error && (
             <p className={s.cassandraEmptyBrief}>
               No brief available yet. The CASSANDRA cron runs at 07:35 BST (Mon–Fri).
-              You can also ask in Slack: <em>"CASSANDRA, brief me"</em>
             </p>
           )}
         </div>

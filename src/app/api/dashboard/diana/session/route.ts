@@ -1,7 +1,6 @@
 // Web adapter for DIANA session management.
-// Uses slack_user: 'web' to isolate web sessions from Slack sessions.
-// Slack handler always uses the real Slack user ID (e.g. 'U024BE7LH') —
-// getActiveSession('web') and getActiveSession('<slack_uid>') never collide.
+// Uses the fixed 'web' identifier for the dashboard's single user — this is
+// a personal single-user tool, so no collision handling is needed.
 
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
@@ -45,7 +44,7 @@ export async function GET() {
   return NextResponse.json({ session: session ? serialise(session) : null })
 }
 
-// POST — start a new session. Ends any existing web session first (same as Slack flow).
+// POST — start a new session. Ends any existing web session first.
 export async function POST(req: Request) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

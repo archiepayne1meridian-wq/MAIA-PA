@@ -48,7 +48,7 @@ export default function CassandraPanel() {
   if (!data.brief) {
     return (
       <div className={s.panelEmpty}>
-        No brief on record yet. Say <strong>"brief me"</strong> in Slack to run one.
+        No brief on record yet. The morning cron will generate one.
       </div>
     )
   }

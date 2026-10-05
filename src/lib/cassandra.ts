@@ -422,9 +422,9 @@ export async function fileCallAngleToMuse(articles: CassandraArticle[]): Promise
   return 1
 }
 
-// ─── Deterministic Slack/dashboard rendering ──────────────────────────────────
+// ─── Deterministic brief text rendering ──────────────────────────────────────
 
-export function formatBriefSlackText(
+export function formatBriefText(
   indices: IndexQuote[],
   fx: FxQuote[],
   articles: CassandraArticle[],

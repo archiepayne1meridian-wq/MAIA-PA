@@ -307,7 +307,7 @@ context/
 ├── diana.md                      — Practice call config (live, read at runtime)
 ├── athena.md                     — Study config (live, read at runtime)
 ├── iris-voice.md                 — LinkedIn voice profile (live, read at runtime)
-└── victoria.md                   — Live (Slack handler reads this)
+└── victoria.md                   — Live, read by the dashboard + weekly scorecard cron
 scripts/
 └── seed-*.ts                     — One-time seed scripts (already run, kept for reference)
 ```
@@ -326,9 +326,10 @@ scripts/
 - Old navy/blue design system — replaced with orange/brown
 - Agent mythology names in nav rail — replaced with plain English names
 - Old cron flows for IRIS (6am/12pm Slack) — retired
+- Slack entirely — removed October 2026. No Slack app, no `/api/slack/*` routes, no `SLACK_*` env vars. See the note under Secrets below.
 
 **Still live but hidden (intentionally):**
-- DEMETER — portfolio tracker, hidden from nav but Slack handler still works
+- DEMETER — portfolio tracker, hidden from nav but the cron brief still works
 - VICTORIA — KPI tracker, hidden from nav but backend live
 
 ---
@@ -355,6 +356,10 @@ SIMON_VOICE_ID           # Simon (DIANA): Ln7FbpLNuLn2OdYq2w7S
 DATABASE_URL             # /data/maia.db
 NEXT_PUBLIC_BASE_URL     # https://maia-pa-production.up.railway.app
 ```
+
+# Slack removed — October 2026
+# Reminders and agent prompting via WhatsApp (Hermes Agent on Mac Mini).
+# All agent output goes to dashboard conversation threads.
 
 ---
 

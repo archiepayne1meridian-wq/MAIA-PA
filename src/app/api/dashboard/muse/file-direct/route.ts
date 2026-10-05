@@ -1,7 +1,7 @@
 // Dashboard-first filing — no approval loop. The user picked the sector, wrote context,
 // and clicked submit: they know what they're filing. Saves straight to muse_entries with
-// status: 'active'. The existing pending/approvals flow (auto-harvest, Slack brain dumps,
-// Slack "file this") is untouched — this is a second, deliberate-filing path alongside it.
+// status: 'active'. The existing pending/approvals flow (auto-harvest, the brain dump
+// panel) is untouched — this is a second, deliberate-filing path alongside it.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'

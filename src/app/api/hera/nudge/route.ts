@@ -1,11 +1,10 @@
 import { timingSafeEqual } from 'crypto'
 import { env } from '@/lib/env'
-import { buildEveningNudge, buildWeeklyReview } from '@/lib/hera-handler'
+import { buildWeeklyReview } from '@/lib/hera-handler'
 
-// POST /api/hera/nudge
-// Body (optional JSON): { "mode": "nudge" | "weekly" }
-// Defaults to "nudge" if mode is absent.
-// Bearer auth via MAIA_API_KEY (timingSafeEqual). 200-first + setImmediate pattern.
+// POST /api/hera/nudge — weekly reflection review, saved to weekly_reviews
+// (read by the HERA dashboard). Bearer auth via MAIA_API_KEY (timingSafeEqual).
+// 200-first + setImmediate pattern.
 
 export async function POST(request: Request): Promise<Response> {
   const authHeader = request.headers.get('Authorization') ?? ''
@@ -33,20 +32,9 @@ export async function POST(request: Request): Promise<Response> {
     return new Response('Unauthorized', { status: 401 })
   }
 
-  let mode: 'nudge' | 'weekly' = 'nudge'
-  try {
-    const body = await request.json()
-    if (body?.mode === 'weekly') mode = 'weekly'
-  } catch {
-    // No body or non-JSON — default to 'nudge'
-  }
-
-  const channel = env.SLACK_CHANNEL_ID()
-
   setImmediate(() => {
-    const fn = mode === 'weekly' ? buildWeeklyReview : buildEveningNudge
-    fn(channel).catch((err: unknown) =>
-      console.error(`[hera/nudge] ${mode} handler error:`, err),
+    buildWeeklyReview().catch((err: unknown) =>
+      console.error('[hera/nudge] weekly review error:', err),
     )
   })
 

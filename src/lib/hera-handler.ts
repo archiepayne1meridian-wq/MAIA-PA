@@ -4,7 +4,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { eq } from 'drizzle-orm'
-import { postMessage } from './slack'
 import {
   detectDistress,
   coarseSentiment,
@@ -15,10 +14,8 @@ import {
 import {
   addReflection,
   getReflections,
-  getTodayReflections,
   saveWeeklyReview,
   getStreak,
-  type Reflection,
 } from '../../tools/hera-db'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
@@ -58,32 +55,6 @@ function loadHeraConfig(): HeraConfig {
   } catch {
     return defaults
   }
-}
-
-// ─── Intent detection ─────────────────────────────────────────────────────────
-
-export type HeraIntent =
-  | { type: 'log_reflection'; text: string }
-  | { type: 'how_am_i_doing' }
-  | { type: 'what_patterns' }
-  | { type: 'mentor_prompt' }
-
-export function detectHeraIntent(text: string): HeraIntent | null {
-  const lower = text.trim().toLowerCase()
-
-  // On-demand queries
-  if (/\b(how am i doing|how('?m| am) i getting on)\b/i.test(lower))
-    return { type: 'how_am_i_doing' }
-  if (/\bwhat patterns\b/i.test(lower))
-    return { type: 'what_patterns' }
-  if (/\b(raise with (my )?(senior |line )?adviser|raise with (my )?mentor|what (should|to) (raise|ask|bring))\b/i.test(lower))
-    return { type: 'mentor_prompt' }
-
-  // Explicit reflection trigger: "HERA," prefix, or the word "reflection"
-  if (/^hera[,.]?\s+/i.test(lower) || /\breflection\b/i.test(lower))
-    return { type: 'log_reflection', text: text.trim() }
-
-  return null
 }
 
 // ─── Shared activity logger ───────────────────────────────────────────────────
@@ -128,8 +99,8 @@ const SUPPORTIVE_RESPONSE =
 // ─── Log a reflection — shared core ──────────────────────────────────────────
 //
 // Runs the full pipeline (distress check, ack, save, streak note) and returns
-// the response text rather than posting it anywhere. Both the Slack handler
-// and the dashboard reflect route call this so the logic lives in one place.
+// the response text rather than posting it anywhere — the dashboard reflect
+// route calls this and returns the text in its JSON response.
 
 export interface ProcessedReflection {
   response: string
@@ -183,85 +154,9 @@ export async function processReflection(
   return { response: parts.join('\n'), distressFlagged: false }
 }
 
-export async function handleLogReflection(
-  channel: string,
-  text: string,
-  source: 'text' | 'voice' = 'text',
-): Promise<void> {
-  const { rowId, startMs } = await logActivity('log_reflection', text.slice(0, 200))
-
-  try {
-    const { response, distressFlagged } = await processReflection(text, source)
-    await postMessage(channel, response)
-    await succeedActivity(rowId, startMs, distressFlagged ? 'distress path taken' : 'reflection logged')
-  } catch (err) {
-    console.error('[hera] handleLogReflection failed:', err)
-    await failActivity(rowId, startMs, err)
-    await postMessage(channel, `⚠ HERA: couldn't save your reflection — ${err instanceof Error ? err.message : String(err)}`)
-  }
-}
-
-// ─── On-demand: how am I doing / patterns / mentor prompt ────────────────────
-
-export async function handleOnDemand(
-  channel: string,
-  intent: 'how_am_i_doing' | 'what_patterns' | 'mentor_prompt',
-): Promise<void> {
-  const config = loadHeraConfig()
-  const { rowId, startMs } = await logActivity(`on_demand_${intent}`, intent)
-
-  try {
-    const recent = await getReflections(14)
-
-    if (recent.length === 0) {
-      await postMessage(channel, `_HERA: no reflections on record yet. Send one this evening and I'll start building up a picture._`)
-      await succeedActivity(rowId, startMs, 'no data')
-      return
-    }
-
-    let reply: string
-    if (intent === 'mentor_prompt') {
-      // Run coachWeekly and extract just the final adviser-prompt paragraph.
-      // For simplicity, we run the full coaching read — the adviser prompt is the last paragraph.
-      reply = await coachWeekly(recent, config.focusAreas)
-    } else {
-      reply = await coachWeekly(recent, config.focusAreas)
-    }
-
-    await postMessage(channel, reply)
-    await succeedActivity(rowId, startMs, 'on-demand response sent')
-  } catch (err) {
-    console.error('[hera] handleOnDemand failed:', err)
-    await failActivity(rowId, startMs, err)
-    await postMessage(channel, `⚠ HERA: ${err instanceof Error ? err.message : String(err)}`)
-  }
-}
-
-// ─── Scheduled evening nudge ──────────────────────────────────────────────────
-
-export async function buildEveningNudge(channel: string): Promise<void> {
-  const { rowId, startMs } = await logActivity('evening_nudge', 'scheduled')
-
-  try {
-    const todayEntries = await getTodayReflections()
-    if (todayEntries.length > 0) {
-      console.log('[hera] nudge skipped — reflection already logged today')
-      await succeedActivity(rowId, startMs, 'skipped — already reflected')
-      return
-    }
-
-    await postMessage(channel, `*HERA* — How did today go? Send me a quick note, voice memo, or a few sentences whenever you're ready. 🌙`)
-    await succeedActivity(rowId, startMs, 'nudge sent')
-  } catch (err) {
-    console.error('[hera] buildEveningNudge failed:', err)
-    await failActivity(rowId, startMs, err)
-    await postMessage(channel, `⚠ HERA nudge failed: ${err instanceof Error ? err.message : String(err)}`)
-  }
-}
-
 // ─── Scheduled weekly review ──────────────────────────────────────────────────
 
-export async function buildWeeklyReview(channel: string): Promise<void> {
+export async function buildWeeklyReview(): Promise<string> {
   const config = loadHeraConfig()
   const { rowId, startMs } = await logActivity('weekly_review', 'scheduled')
 
@@ -269,9 +164,9 @@ export async function buildWeeklyReview(channel: string): Promise<void> {
     const reflections = await getReflections(7)
 
     if (reflections.length === 0) {
-      await postMessage(channel, `*HERA — Weekly Reflection*\n\nNo reflections this week. That's okay — the important thing is starting. Try a short note this evening.`)
+      const empty = `No reflections this week. That's okay — the important thing is starting. Try a short note this evening.`
       await succeedActivity(rowId, startMs, 'no reflections this week')
-      return
+      return empty
     }
 
     const summary = await coachWeekly(reflections, config.focusAreas)
@@ -280,11 +175,11 @@ export async function buildWeeklyReview(channel: string): Promise<void> {
     const weekStart = nowSec - 7 * 86400
     await saveWeeklyReview(weekStart, nowSec, summary)
 
-    await postMessage(channel, `*HERA — Weekly Reflection*\n\n${summary}`)
-    await succeedActivity(rowId, startMs, `weekly review posted (${reflections.length} reflections)`)
+    await succeedActivity(rowId, startMs, `weekly review saved (${reflections.length} reflections)`)
+    return summary
   } catch (err) {
     console.error('[hera] buildWeeklyReview failed:', err)
     await failActivity(rowId, startMs, err)
-    await postMessage(channel, `⚠ HERA weekly review failed: ${err instanceof Error ? err.message : String(err)}`)
+    throw err
   }
 }

@@ -30,9 +30,9 @@ export async function POST(request: Request): Promise<Response> {
     return new Response('Unauthorized', { status: 401 })
   }
 
-  // Acknowledge immediately — don't block on Slack post
+  // Acknowledge immediately — generation runs in the background
   setImmediate(() => {
-    buildBrief(env.SLACK_CHANNEL_ID()).catch((err: unknown) =>
+    buildBrief().catch((err: unknown) =>
       console.error('[demeter/brief] handler error:', err),
     )
   })

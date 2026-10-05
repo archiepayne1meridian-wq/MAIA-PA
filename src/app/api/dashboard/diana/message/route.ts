@@ -26,14 +26,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'No active session — start one first' }, { status: 404 })
   }
 
-  // Capture transcript BEFORE appending the user's message.
-  // Mirrors the Slack handler: roleplayTurn receives history, then the new adviser line.
+  // Capture transcript BEFORE appending the user's message — roleplayTurn
+  // receives history, then the new adviser line.
   const _existingTranscript = parseTranscript(session.transcript_json)
   await appendTurn(session.id, 'user', text.trim())
 
   // DIANA never speaks first. Archie's very first line of the call gets the
-  // generated prospect's exact opening line — deterministic, no Claude call —
-  // exactly like the legacy Slack roleplay's deterministic "Hello?" opener.
+  // generated prospect's exact opening line — deterministic, no Claude call.
   // Every turn after that is a real Claude reply.
   const prospect = parseGeneratedProspect(session.generated_prospect)
   let reply: string

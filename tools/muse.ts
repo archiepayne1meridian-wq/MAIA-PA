@@ -88,7 +88,7 @@ export interface MusePending {
   suggested_depth: string
   suggested_links: string  // JSON array of titles
   status: string
-  slack_ts: string | null
+  slack_ts?: string | null
   created_at: number
 }
 

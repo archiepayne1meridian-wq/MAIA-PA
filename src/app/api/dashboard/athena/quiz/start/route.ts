@@ -18,7 +18,7 @@ export async function POST(req: Request) {
   const size = body.size ?? 20
 
   if (modules.length === 0) {
-    return NextResponse.json({ error: 'No material to generate questions from. Add CISI notes in Slack first.' }, { status: 422 })
+    return NextResponse.json({ error: 'No material to generate questions from for these modules.' }, { status: 422 })
   }
 
   const materialByModule: Record<string, string> = {}

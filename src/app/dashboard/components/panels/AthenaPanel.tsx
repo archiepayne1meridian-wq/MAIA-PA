@@ -40,7 +40,7 @@ export default function AthenaPanel() {
         <div className={s.tile}>
           <div className={s.eyebrow} style={{ marginBottom: 9 }}>Cards due today</div>
           <div className={s.tileBig}>{data.dueToday}</div>
-          <div className={s.tileSub}>{data.dueToday > 0 ? 'review now in Slack' : 'all clear'}</div>
+          <div className={s.tileSub}>{data.dueToday > 0 ? 'review now' : 'all clear'}</div>
         </div>
         <div className={s.tile}>
           <div className={s.eyebrow} style={{ marginBottom: 9 }}>Mastery</div>

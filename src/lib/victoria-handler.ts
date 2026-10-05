@@ -3,13 +3,9 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { eq } from 'drizzle-orm'
-import { postMessage } from './slack'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
 import {
-  parseTally,
-  parseTallyWithClaude,
-  formatEchoConfirm,
   formatScorecard,
   scorecardNarrative,
   type VictoriaConfig,
@@ -24,13 +20,11 @@ import {
   computeRatios,
 } from '../../tools/kpi'
 import {
-  logTally,
   getDay,
   getCurrentWeekLogs,
   getPreviousWeekLogs,
   getWeeklies,
   saveWeekly,
-  toDateStamp,
   toWeekStart,
 } from '../../tools/victoria-db'
 
@@ -108,77 +102,11 @@ export function loadVictoriaConfig(): VictoriaConfig {
   }
 }
 
-// ── Intent detection ──────────────────────────────────────────────────────────
-
-export type VictoriaIntent =
-  | { type: 'scorecard' }
-  | { type: 'tally'; text: string }
-  | { type: 'confirm_tally' }
-  | { type: 'correct_tally'; text: string }
-
-export function detectVictoriaIntent(text: string): VictoriaIntent | null {
-  const lower = text.trim().toLowerCase()
-
-  // On-demand scorecard / status
-  if (
-    /\bhow am i doing\b/.test(lower) ||
-    /\bmy numbers?\b/.test(lower) ||
-    /\bscorecard\b/.test(lower) ||
-    /^victoria[,\s].*\b(score|numbers?|stats?|progress|report|summary)\b/.test(lower) ||
-    /^victoria\s*$/.test(lower) ||
-    /^victoria[,\s]\s*how/.test(lower)
-  ) {
-    return { type: 'scorecard' }
-  }
-
-  // "VICTORIA, <tally>" — explicit prefix
-  if (/^victoria[,\s]/i.test(lower)) {
-    const tallyPart = text.trim().replace(/^victoria[,\s]+/i, '').trim()
-    if (tallyPart) return { type: 'tally', text: tallyPart }
-    return null
-  }
-
-  return null
-}
-
-// Called from the events route when we're in a pending-confirmation state
-// (stored in a lightweight in-memory map — sessions are short-lived).
-export function isPendingConfirm(text: string): boolean {
-  const lower = text.trim().toLowerCase()
-  return /^(yes|yep|yeah|correct|looks? right|confirmed?|ok|okay|✓|👍)$/i.test(lower)
-}
-
-// ── Pending tally state (in-memory, per-user) ─────────────────────────────────
-// Persists only within a single Railway instance and single conversation.
-// Acceptable for a personal tool with one user.
-
-interface PendingTally {
-  metrics: Record<string, number>
-  note?: string
-  dateStamp: number
-  isOverwrite: boolean
-}
-
-const pendingTallies = new Map<string, PendingTally>()
-
-export function setPendingTally(userId: string, p: PendingTally): void {
-  pendingTallies.set(userId, p)
-}
-
-export function getPendingTally(userId: string): PendingTally | null {
-  return pendingTallies.get(userId) ?? null
-}
-
-export function clearPendingTally(userId: string): void {
-  pendingTallies.delete(userId)
-}
-
 // ── Activity logging ──────────────────────────────────────────────────────────
 
 async function logActivity(
   type: string,
   input: string,
-  slackUser?: string,
 ): Promise<{ rowId: string; startMs: number }> {
   const rowId = crypto.randomUUID()
   const startMs = Date.now()
@@ -187,7 +115,6 @@ async function logActivity(
     event_id: `victoria_${type}_${Date.now()}`,
     type,
     agent: 'VICTORIA',
-    slack_user: slackUser,
     input: input.slice(0, 200),
     status: 'pending',
     created_at: Math.floor(Date.now() / 1000),
@@ -201,101 +128,10 @@ async function succeedActivity(rowId: string, startMs: number, output?: string) 
     .where(eq(activity.id, rowId))
 }
 
-// ── Tally handler ─────────────────────────────────────────────────────────────
-
-export async function handleTally(
-  channel: string,
-  userId: string | undefined,
-  rawText: string,
-): Promise<void> {
-  const { rowId, startMs } = await logActivity('tally_parse', rawText, userId)
-  const config = loadVictoriaConfig()
-
-  // Strip client names — any token that looks like a proper noun (capitalised word not at
-  // sentence start and not a metric/number). Simple heuristic: warn if 2+ consecutive caps words.
-  const properNounPattern = /(?:(?<=\s)|(?<=,\s))([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g
-  const clientNameMatches = rawText.match(properNounPattern)
-  let noteWarning = ''
-  if (clientNameMatches) {
-    noteWarning = '\n_Names stay in the deVere CRM — I\'ve stored the count only._'
-  }
-
-  let { parsed, needsClaude, found } = parseTally(rawText, config.metrics)
-
-  if (Object.keys(parsed).length === 0 && !needsClaude) {
-    await postMessage(channel,
-      `_VICTORIA: couldn't read any numbers — try something like "8 calls, 2 meetings booked, 5 follow-ups"._`)
-    await succeedActivity(rowId, startMs, 'parse failed — no numbers found')
-    return
-  }
-
-  if (needsClaude) {
-    try {
-      const claudeResult = await parseTallyWithClaude(rawText, config.metrics)
-      if (Object.keys(claudeResult).length === 0) {
-        await postMessage(channel,
-          `_VICTORIA: couldn't read any numbers from that — could you rephrase? (e.g. "8 calls, 2 meetings booked")_`)
-        await succeedActivity(rowId, startMs, 'claude fallback: no metrics found')
-        return
-      }
-      parsed = claudeResult
-      found = Object.keys(claudeResult)
-    } catch (err) {
-      console.error('[victoria] parseTallyWithClaude failed:', err)
-      await postMessage(channel,
-        `_VICTORIA: that one's a bit ambiguous — could you rephrase? (e.g. "8 calls, 2 meetings booked")_`)
-      await succeedActivity(rowId, startMs, 'claude fallback failed')
-      return
-    }
-  }
-
-  const dateStamp = toDateStamp()
-  const existing = await getDay(dateStamp)
-  const isOverwrite = !!existing
-
-  const echo = formatEchoConfirm(parsed, isOverwrite) + noteWarning
-
-  // Store pending; wait for "yes" confirmation
-  if (userId) {
-    setPendingTally(userId, { metrics: parsed, dateStamp, isOverwrite })
-  }
-
-  await postMessage(channel, echo)
-  await succeedActivity(rowId, startMs, `pending confirm — found: ${found.join(', ')}`)
-}
-
-// ── Confirmation handler ──────────────────────────────────────────────────────
-
-export async function handleTallyConfirm(
-  channel: string,
-  userId: string | undefined,
-): Promise<void> {
-  if (!userId) {
-    await postMessage(channel, `_VICTORIA: can't find a pending tally to confirm._`)
-    return
-  }
-
-  const pending = getPendingTally(userId)
-  if (!pending) {
-    await postMessage(channel, `_VICTORIA: no pending tally — send your numbers first._`)
-    return
-  }
-
-  clearPendingTally(userId)
-
-  const { rowId, startMs } = await logActivity('tally_store', JSON.stringify(pending.metrics), userId)
-
-  await logTally(pending.metrics, undefined, pending.dateStamp)
-
-  const action = pending.isOverwrite ? 'Updated' : 'Saved'
-  await postMessage(channel, `_${action}. Good work — keep it up._`)
-  await succeedActivity(rowId, startMs, `stored: ${JSON.stringify(pending.metrics)}`)
-}
-
 // ── Scorecard builder (also used by cron) ────────────────────────────────────
 
-export async function buildScorecard(channel: string, userId?: string): Promise<void> {
-  const { rowId, startMs } = await logActivity('scorecard', 'on-demand scorecard', userId)
+export async function buildScorecard(): Promise<string> {
+  const { rowId, startMs } = await logActivity('scorecard', 'on-demand scorecard')
 
   const [thisWeekLogs, prevWeekLogs, recentWeeklies] = await Promise.all([
     getCurrentWeekLogs(),
@@ -306,10 +142,9 @@ export async function buildScorecard(channel: string, userId?: string): Promise<
   const config = loadVictoriaConfig()
 
   if (thisWeekLogs.length === 0) {
-    await postMessage(channel,
-      `*VICTORIA*\n\n_No tallies logged this week yet — send your end-of-day numbers to start tracking._`)
+    const empty = 'No tallies logged this week yet — send your end-of-day numbers to start tracking.'
     await succeedActivity(rowId, startMs, 'no data this week')
-    return
+    return empty
   }
 
   // Zero-fill every tracked metric so a fixed 6-metric funnel always renders a complete
@@ -380,36 +215,6 @@ export async function buildScorecard(channel: string, userId?: string): Promise<
   // Save to kpi_weekly
   await saveWeekly(toWeekStart(), thisTotals, fullText)
 
-  await postMessage(channel, fullText)
   await succeedActivity(rowId, startMs, `scorecard: ${thisWeekLogs.length} days, first=${isFirstWeek}`)
-}
-
-// ── End-of-day nudge (also used by cron) ─────────────────────────────────────
-
-export async function buildEveningNudge(channel: string, userId?: string): Promise<void> {
-  const { rowId, startMs } = await logActivity('nudge', 'end-of-day nudge', userId)
-
-  const todayLog = await getDay()
-
-  if (todayLog) {
-    // Already logged — skip silently (cron path) or confirm
-    const parts = Object.entries(todayLog.metrics)
-      .map(([k, v]) => `${v} ${k.replace(/_/g, ' ')}`)
-      .join(' · ')
-    console.log(`[victoria] nudge skipped — today already logged: ${parts}`)
-    await succeedActivity(rowId, startMs, 'skipped — already logged')
-    return
-  }
-
-  const config = loadVictoriaConfig()
-  const metricHints = config.metrics
-    .slice(0, 4)
-    .map(m => m.replace(/_/g, ' '))
-    .join(' / ')
-
-  await postMessage(
-    channel,
-    `*VICTORIA — End of day*\n\nQuick tally for today? (${metricHints}…)\n\n_Reply with your numbers, e.g. "8 calls, 2 meetings booked, 5 follow-ups"_`,
-  )
-  await succeedActivity(rowId, startMs, 'nudge sent')
+  return fullText
 }

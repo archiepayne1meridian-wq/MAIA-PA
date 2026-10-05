@@ -9,6 +9,7 @@ import {
   completeQuizSession,
 } from '../../../../../../../../tools/study-db'
 import { resultFeedback, currentQuestion, isComplete, moduleBreakdown } from '../../../../../../../../tools/mcq'
+import { checkMuseHarvest } from '@/lib/muse-handler'
 import { getDb } from '@/db'
 import { mcq_attempts } from '@/db/schema'
 import { eq } from 'drizzle-orm'
@@ -61,6 +62,12 @@ export async function POST(
     const finalSession = updated ?? session
     const breakdown = moduleBreakdown(finalSession, attempts)
     const finalScore = finalSession.score + (correct ? 1 : 0)
+
+    // Flags MUSE to suggest a study brief when a module keeps scoring low —
+    // fires once per module covered in this session.
+    for (const b of breakdown) {
+      checkMuseHarvest('ATHENA', 'quiz_complete', { moduleId: b.module, score: b.correct, total: b.total })
+    }
 
     return NextResponse.json({
       correct,

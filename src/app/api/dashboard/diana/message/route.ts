@@ -1,4 +1,8 @@
-// Web adapter for DIANA roleplay turns.
+// Web adapter for DIANA roleplay turns. Returns the prospect's reply as text
+// + Simon TTS audio bundled together, plus the silently-tracked call stage
+// and whether the session just ended (goodbye said, or the prospect
+// themselves said goodbye) — see src/lib/diana.ts's inferCallStage/
+// detectGoodbye/detectMeetingBooked.
 
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
@@ -7,9 +11,14 @@ import {
   appendTurn,
   parseTranscript,
 } from '../../../../../../tools/diana-db'
-import { roleplayTurn, parseGeneratedProspect } from '@/lib/diana'
+import {
+  roleplayTurn, parseGeneratedProspect, inferCallStage,
+  detectGoodbye, detectMeetingBooked,
+} from '@/lib/diana'
+import { textToSpeechBase64 } from '@/lib/elevenlabs'
 
 const WEB_USER = 'web'
+const SIMON_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? 'Ln7FbpLNuLn2OdYq2w7S'
 
 export async function POST(req: Request) {
   if (!(await requireDashboardAuth())) {
@@ -28,19 +37,20 @@ export async function POST(req: Request) {
 
   // Capture transcript BEFORE appending the user's message — roleplayTurn
   // receives history, then the new adviser line.
-  const _existingTranscript = parseTranscript(session.transcript_json)
+  const existingTranscript = parseTranscript(session.transcript_json)
   await appendTurn(session.id, 'user', text.trim())
 
-  // DIANA never speaks first. Archie's very first line of the call gets the
-  // generated prospect's exact opening line — deterministic, no Claude call.
-  // Every turn after that is a real Claude reply.
+  // DIANA never speaks first on legacy (/session-started) sessions — the very
+  // first adviser turn there gets the generated prospect's exact opening line
+  // deterministically. /start-created sessions already have the opening line
+  // in history, so this branch is a no-op for them.
   const prospect = parseGeneratedProspect(session.generated_prospect)
   let reply: string
-  if (_existingTranscript.length === 0 && prospect) {
+  if (existingTranscript.length === 0 && prospect) {
     reply = prospect.openingLine
   } else {
     reply = await roleplayTurn(
-      _existingTranscript,
+      existingTranscript,
       text.trim(),
       session.scenario,
       (session.difficulty as 'warm' | 'neutral' | 'tough') || 'neutral',
@@ -49,6 +59,20 @@ export async function POST(req: Request) {
     )
   }
 
-  await appendTurn(session.id, 'diana', reply)
-  return NextResponse.json({ reply })
+  const updatedTranscript = await appendTurn(session.id, 'diana', reply)
+
+  const archieSaidGoodbye = detectGoodbye(text)
+  const prospectSaidGoodbye = detectGoodbye(reply)
+  const goodbyeSaid = archieSaidGoodbye || prospectSaidGoodbye
+  const meetingBooked = updatedTranscript.some(t => t.role === 'diana' && detectMeetingBooked(t.text))
+  const stage = inferCallStage(updatedTranscript, meetingBooked, goodbyeSaid)
+
+  const audio = await textToSpeechBase64(reply, SIMON_VOICE_ID)
+
+  return NextResponse.json({
+    text: reply,
+    audio,
+    stage,
+    session_ended: goodbyeSaid,
+  })
 }

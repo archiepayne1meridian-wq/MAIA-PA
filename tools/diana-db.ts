@@ -92,6 +92,12 @@ export async function setSessionScore(sessionId: string, total: number): Promise
   await getDb().update(diana_sessions).set({ score_total: total }).where(eq(diana_sessions.id, sessionId))
 }
 
+// Pre-serialised JSON string in, same principle as generatedProspect above —
+// parsing/typing (SessionReview + CallScoreResult fields) stays in src/lib/diana.ts.
+export async function setSessionReview(sessionId: string, reviewJson: string): Promise<void> {
+  await getDb().update(diana_sessions).set({ review_json: reviewJson }).where(eq(diana_sessions.id, sessionId))
+}
+
 // Raw JSON strings only — parsing/typing stays in src/lib/diana.ts (parseGeneratedProspect)
 // so this file has no dependency on diana.ts's domain types.
 export async function getRecentGeneratedProspects(slackUser: string, limit: number): Promise<string[]> {
@@ -190,6 +196,34 @@ export async function getTodayAngle(): Promise<string | null> {
     // malformed JSON — no angle today, don't force it
   }
   return null
+}
+
+export interface RecentSessionRow {
+  id: string
+  created_at: number
+  ended_at: number | null
+  status: string
+  generated_prospect: string | null
+  review_json: string | null
+}
+
+// Raw rows for the Practice context panel / focus card — interpretation of
+// generated_prospect/review_json JSON stays in src/lib/diana.ts.
+export async function getRecentSessions(limit: number): Promise<RecentSessionRow[]> {
+  const rows = await getDb()
+    .select({
+      id: diana_sessions.id,
+      created_at: diana_sessions.created_at,
+      ended_at: diana_sessions.ended_at,
+      status: diana_sessions.status,
+      generated_prospect: diana_sessions.generated_prospect,
+      review_json: diana_sessions.review_json,
+    })
+    .from(diana_sessions)
+    .where(eq(diana_sessions.slack_user, 'web'))
+    .orderBy(desc(diana_sessions.created_at))
+    .limit(limit)
+  return rows
 }
 
 // Records which objection was drilled, for pattern visibility later.

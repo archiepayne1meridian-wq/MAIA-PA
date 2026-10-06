@@ -1666,6 +1666,16 @@
 .dianaStartFullBtn:hover:not(:disabled) { opacity: 0.85; }
 .dianaStartFullBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 .dianaAutonomousNote { font-size: 11px; color: var(--idle); text-align: center; line-height: 1.5; }
+
+.dianaFocusCard {
+  background: var(--raised); border: 1px solid var(--border); border-top: 2px solid var(--accent);
+  border-radius: var(--r); padding: 14px 16px;
+}
+.dianaFocusText { font-size: 13px; color: var(--text-mid); line-height: 1.6; margin-top: 6px; }
+.dianaFocusSub { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+
+.dianaBlockLabel { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; color: var(--text-dim); margin-bottom: 4px; }
+.dianaAngleSection { border-left: 3px solid var(--border); padding: 4px 0 4px 10px; }
 .dianaEndBtn {
   font-family: var(--mono); font-size: 10.5px; padding: 5px 13px;
   background: none; border: 1px solid var(--alert); border-radius: 100px;

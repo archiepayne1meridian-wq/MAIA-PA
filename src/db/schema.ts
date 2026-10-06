@@ -206,6 +206,7 @@ export const diana_sessions = sqliteTable('diana_sessions', {
   created_at: integer('created_at').notNull(),
   last_active_at: integer('last_active_at').notNull(),              // updated on each turn; used for 4h timeout
   ended_at: integer('ended_at'),
+  review_json: text('review_json'),                                 // JSON SessionReview (stages/deductions/knowledge/whatWorked/whatToImprove/focusNext/stageReached/outcome) — set on /end, null until scored
 })
 
 export const muse_entries = sqliteTable('muse_entries', {

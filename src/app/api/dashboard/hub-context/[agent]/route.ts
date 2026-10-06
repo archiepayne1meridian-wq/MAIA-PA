@@ -6,12 +6,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { getDb } from '@/db'
-import { iris_posts, iris_voice_learnings, kpi_logs, kpi_weekly, diana_sessions, study_cards } from '@/db/schema'
+import { iris_posts, iris_voice_learnings, kpi_logs, kpi_weekly, study_cards } from '@/db/schema'
 import { desc, gte, eq, and, lte } from 'drizzle-orm'
 import { getGoals } from '../../../../../../tools/goals'
 import { getProgress, getWeaknessReport } from '../../../../../../tools/study-db'
 import { getFillerWordsForDate, getCallbacksDue } from '../../../../../../tools/apollo'
 import { buildNewsContextSections } from '@/lib/cassandra-handler'
+import { getRecentSessions } from '../../../../../../tools/diana-db'
+import { buildPracticeContext } from '@/lib/diana'
 
 function weekStartSecs(): number {
   const d = new Date()
@@ -20,11 +22,6 @@ function weekStartSecs(): number {
   d.setHours(0, 0, 0, 0)
   return Math.floor(d.getTime() / 1000)
 }
-function todayStartSecs(): number {
-  const d = new Date(); d.setHours(0, 0, 0, 0)
-  return Math.floor(d.getTime() / 1000)
-}
-
 type Section =
   | { type: 'reminders'; title: string; items: { text: string; sub?: string }[] }
   | { type: 'goals'; title: string; shortTerm: { text: string; completed: boolean }[]; longTerm: { text: string; completed: boolean }[] }
@@ -143,16 +140,37 @@ async function linkedinSections(): Promise<Section[]> {
 }
 
 async function practiceSections(): Promise<Section[]> {
-  const db = getDb()
-  const thirtyAgo = todayStartSecs() - 30 * 86400
-  const rows = await db.select({ created_at: diana_sessions.created_at, status: diana_sessions.status })
-    .from(diana_sessions).where(gte(diana_sessions.created_at, thirtyAgo))
-  const distinctDays = new Set(rows.filter(r => r.status === 'ended').map(r => new Date(r.created_at * 1000).toISOString().slice(0, 10)))
+  const rows = await getRecentSessions(100)
+  const ctx = buildPracticeContext(rows)
 
-  const streak: Section = { type: 'stats', title: 'STREAK', rows: [{ label: 'Days practiced (30d)', value: String(distinctDays.size) }] }
-  const weak: Section = { type: 'empty', title: 'WEAK POINTS', message: 'Not tracked yet.' }
-  const successful: Section = { type: 'empty', title: 'SUCCESSFUL CALLS', message: 'Nothing tagged yet.' }
-  return [weak, successful, streak]
+  const weak: Section = ctx.weakPoints.length > 0
+    ? { type: 'tags', title: 'WEAK POINTS', tags: ctx.weakPoints.map(w => ({ text: w.label, tone: w.tone })) }
+    : { type: 'empty', title: 'WEAK POINTS', message: 'Not tracked yet.' }
+
+  const sessionsThisWeek: Section = {
+    type: 'stats', title: 'SESSIONS THIS WEEK',
+    rows: ctx.sessionsThisWeek.map(d => ({ label: d.day, value: d.done ? '✅' : '□' })),
+  }
+
+  const streak: Section = {
+    type: 'stats', title: 'STREAK',
+    rows: [
+      { label: 'Days practiced', value: String(ctx.streak.current) },
+      { label: 'Best', value: String(ctx.streak.best) },
+    ],
+  }
+
+  const lastSession: Section = ctx.lastSession
+    ? {
+      type: 'list', title: 'LAST SESSION',
+      items: [
+        { text: `Stage reached: ${ctx.lastSession.stageReached}` },
+        { text: `Prospect: ${ctx.lastSession.role}`, sub: [ctx.lastSession.company, ctx.lastSession.timeInSwitzerland].filter(Boolean).join(' · ') },
+      ],
+    }
+    : { type: 'empty', title: 'LAST SESSION', message: 'No sessions yet.' }
+
+  return [weak, sessionsThisWeek, streak, lastSession]
 }
 
 async function studySections(): Promise<Section[]> {

@@ -1,0 +1,1 @@
+ALTER TABLE `diana_sessions` ADD `review_json` text;

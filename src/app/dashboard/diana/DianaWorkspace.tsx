@@ -8,7 +8,7 @@ type Difficulty = 'warm' | 'neutral' | 'tough'
 type Phase = 'idle' | 'active' | 'ended'
 type VoiceInputMode = 'text' | 'voice'
 type SpeakState = 'idle' | 'speaking' | 'listening'
-type CallStage = 'introduction' | 'factFind' | 'enlarge' | 'disturb' | 'close' | 'softLanding'
+type Tone = 'red' | 'amber' | 'green'
 
 interface Message {
   role: 'user' | 'diana'
@@ -20,8 +20,8 @@ interface ProfileInfo {
   name: string
   company: string
   location: string
-  background: string  // work history only — no assets, no target product
-  todayAngle: string | null  // today's CASSANDRA angle, if any — display-only reminder
+  background: string
+  todayAngle: string | null
 }
 
 interface StageScore {
@@ -53,39 +53,10 @@ interface CallScore {
   summary: string
 }
 
-const STAGE_ORDER: { key: CallStage; label: string }[] = [
-  { key: 'introduction', label: 'Introduction' },
-  { key: 'factFind', label: 'Fact Find' },
-  { key: 'enlarge', label: 'Enlarge' },
-  { key: 'disturb', label: 'Disturb' },
-  { key: 'close', label: 'Close' },
-  { key: 'softLanding', label: 'Soft Landing' },
-]
-
-// Simple, deterministic heuristic — keyword + turn-count based. Not a Claude
-// call: this just drives a lightweight progress indicator, updated locally
-// after every turn as `messages` changes. Checked most-advanced-stage-first so
-// a later signal always wins once the call has moved on.
-function inferCallStage(messages: Message[]): CallStage {
-  const adviserTurns = messages.filter(m => m.role === 'user').length
-  if (adviserTurns === 0) return 'introduction'
-
-  const allText = messages.map(m => m.text.toLowerCase()).join(' \n ')
-
-  if (/\b(before we wrap up|finalise a few details|precise information|as valuable as possible)\b/.test(allText)) {
-    return 'softLanding'
-  }
-  if (/\b(stephen smith|senior consultant|this week or next week|wednesday or friday|when works best|looking at his calendar|beginning or end of|morning or afternoon)\b/.test(allText)) {
-    return 'close'
-  }
-  if (/\b(is it safe to say|two most important things|hard to maintain|maintain your current lifestyle|underperforming)\b/.test(allText)) {
-    return 'disturb'
-  }
-  if (/\b(last time your (pension )?provider|risk level|tax implications|scale of 1|1-10|1 to 10|kept you with|manage.{0,10}yourself|platform or structure|regular savings account|interest rate|inflation rate)\b/.test(allText)) {
-    return 'enlarge'
-  }
-  if (adviserTurns <= 1) return 'introduction'
-  return 'factFind'
+interface SessionReview {
+  whatWorked: string[]
+  whatToImprove: string[]
+  focusNext: string
 }
 
 interface ObjStat {
@@ -97,13 +68,26 @@ interface ObjStat {
 
 interface SessionRecord {
   id: string
-  scenario: string        // generated prospect's "FirstName L." — see performance/route.ts
+  scenario: string
   company: string | null
-  score: number | null    // out of 100, set once the call is scored; null until then
+  score: number | null
   difficulty: string
   status: string
   date: string
   completed: boolean
+}
+
+interface PracticeContext {
+  weakPoints: { label: string; tone: Tone }[]
+  sessionsThisWeek: { day: string; done: boolean }[]
+  streak: { current: number; best: number }
+  lastSession: { stageReached: string; role: string; company: string; timeInSwitzerland: string } | null
+}
+
+interface FocusData {
+  focus: string | null
+  weakStageLabel: string | null
+  hasData: boolean
 }
 
 const DIFF_COLORS: Record<Difficulty, string> = {
@@ -112,19 +96,12 @@ const DIFF_COLORS: Record<Difficulty, string> = {
   tough: 'var(--alert)',
 }
 
-// Best-effort heuristic on DIANA's (the prospect's) own reply — just drives the
-// "Meeting Booked ✓" banner, nothing auto-ends the call on a match any more (the
-// call continues into Soft Landing after a yes; Archie ends it manually).
-const MEETING_BOOKED_PHRASES = [
-  'works for me', 'wednesday works', 'friday works', 'that works',
-  'sounds good', 'ok, book', 'okay, book', 'yeah, let\'s do', 'let\'s do that',
-  'i\'ll do wednesday', 'i\'ll do friday', 'put me down', 'that\'s fine, book',
-]
-
-function detectMeetingBooked(text: string): boolean {
-  const lower = text.toLowerCase()
-  return MEETING_BOOKED_PHRASES.some(p => lower.includes(p))
+const TONE_COLORS: Record<Tone, string> = {
+  red: 'var(--alert)',
+  amber: 'var(--idle)',
+  green: 'var(--online)',
 }
+const TONE_DOT: Record<Tone, string> = { red: '🔴', amber: '🟡', green: '🟢' }
 
 // ── Audio queue: plays blobs sequentially, never overlaps ────────────────────
 class AudioQueue {
@@ -170,94 +147,109 @@ class AudioQueue {
   }
 }
 
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes.buffer
+}
+
 export default function DianaWorkspace() {
   // ── Live session state ────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('idle')
   const [messages, setMessages] = useState<Message[]>([])
   const [difficulty, setDifficulty] = useState<Difficulty>('neutral')
-  const [currentScenario, setCurrentScenario] = useState<string | null>(null)
   const [profile, setProfile] = useState<ProfileInfo | null>(null)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [score, setScore] = useState<CallScore | null>(null)
+  const [review, setReview] = useState<SessionReview | null>(null)
+  const [outcome, setOutcome] = useState<'completed' | 'lost' | null>(null)
+  const [stageReached, setStageReached] = useState<string | null>(null)
   const [scoreNote, setScoreNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [startingCall, setStartingCall] = useState(false)
+  const [showDetailedScore, setShowDetailedScore] = useState(false)
 
-  // ── Performance column state ──────────────────────────────────────────────
+  // ── Focus + context state ─────────────────────────────────────────────────
+  const [focusData, setFocusData] = useState<FocusData | null>(null)
+  const [context, setContext] = useState<PracticeContext | null>(null)
+
+  // ── Performance column state (session history) ────────────────────────────
   const [objStats, setObjStats] = useState<ObjStat[]>([])
   const [sessions, setSessions] = useState<SessionRecord[]>([])
   const [expandedSessId, setExpandedSessId] = useState<string | null>(null)
   const [perfLoading, setPerfLoading] = useState(true)
 
-  // ── Voice state ───────────────────────────────────────────────────────────
-  const [voiceMode, setVoiceMode] = useState<VoiceInputMode>('text')
+  // ── Voice state — voice is the default mode (CHANGE 2) ───────────────────
+  const [voiceMode, setVoiceMode] = useState<VoiceInputMode>('voice')
   const [speakState, setSpeakState] = useState<SpeakState>('idle')
-  const [listenStatus, setListenStatus] = useState<string | null>(null) // 'Listening…' | 'DIANA is speaking…' | null
+  const [listenStatus, setListenStatus] = useState<string | null>(null)
   const [voiceUnavailable, setVoiceUnavailable] = useState(false)
   const [meetingBooked, setMeetingBooked] = useState(false)
   const audioQueueRef = useRef<AudioQueue | null>(null)
+  const sendMessageRef = useRef<(text: string) => void>(() => {})
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // Initialise audio queue once
   useEffect(() => {
     audioQueueRef.current = new AudioQueue(setSpeakState)
   }, [])
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/dashboard/diana/session').then(r => r.json() as Promise<{ session: { id: string; transcript: Message[]; difficulty: string; scenario?: string; profile?: ProfileInfo | null } | null }>),
+      fetch('/api/dashboard/diana/session').then(r => r.json() as Promise<{ session: { id: string; transcript: Message[]; difficulty: string; profile?: ProfileInfo | null } | null }>),
       fetch('/api/dashboard/diana/performance').then(r => r.json() as Promise<{ objectionStats: ObjStat[]; sessions: SessionRecord[] }>),
+      fetch('/api/dashboard/diana/focus').then(r => r.json() as Promise<FocusData>),
+      fetch('/api/dashboard/diana/context').then(r => r.json() as Promise<PracticeContext>),
     ])
-      .then(([sessData, perfData]) => {
+      .then(([sessData, perfData, focus, ctx]) => {
         if (sessData.session) {
           setPhase('active')
           setMessages(sessData.session.transcript ?? [])
           setDifficulty((sessData.session.difficulty as Difficulty) || 'neutral')
-          setCurrentScenario(sessData.session.scenario ?? null)
           setProfile(sessData.session.profile ?? null)
         }
         setObjStats(perfData.objectionStats ?? [])
         setSessions(perfData.sessions ?? [])
+        setFocusData(focus)
+        setContext(ctx)
       })
       .catch(e => setError(String(e)))
       .finally(() => { setLoading(false); setPerfLoading(false) })
+    setVoiceUnavailable(!hasSpeechRecognition())
   }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, sending])
 
-  // ── TTS: speak a text string, then optionally start mic ──────────────────
-  const speakText = useCallback((text: string, afterDone?: () => void) => {
-    if (voiceMode !== 'voice') return
-    setListenStatus('DIANA is speaking…')
-    fetch('/api/dashboard/diana/speak', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('TTS unavailable')
-        return res.arrayBuffer()
-      })
-      .then(buf => {
-        audioQueueRef.current?.enqueue(buf, () => {
-          setListenStatus(null)
-          afterDone?.()
-        })
-      })
-      .catch(err => {
-        console.error('[diana] TTS error', err)
+  function hasSpeechRecognition(): boolean {
+    type AnyWindow = Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }
+    const w = window as AnyWindow
+    return Boolean(w.SpeechRecognition ?? w.webkitSpeechRecognition)
+  }
+
+  // ── TTS: play base64 audio already returned alongside text, then optionally start mic ──
+  const playAudio = useCallback((base64: string | null, afterDone?: () => void) => {
+    if (voiceMode !== 'voice' || !base64) { afterDone?.(); return }
+    setListenStatus('Prospect is speaking…')
+    try {
+      const buf = base64ToArrayBuffer(base64)
+      audioQueueRef.current?.enqueue(buf, () => {
         setListenStatus(null)
         afterDone?.()
       })
+    } catch (err) {
+      console.error('[diana] audio decode error', err)
+      setListenStatus(null)
+      afterDone?.()
+    }
   }, [voiceMode])
 
-  // ── Start mic via Web Speech API ─────────────────────────────────────────
+  // ── Start mic via Web Speech API — auto-sends on result (CHANGE 2) ───────
   const startMic = useCallback(() => {
-    // Web Speech API is not in standard TS lib — use window cast
     type AnyWindow = Window & {
       SpeechRecognition?: new () => SpeechRecognitionInstance
       webkitSpeechRecognition?: new () => SpeechRecognitionInstance
@@ -285,9 +277,12 @@ export default function DianaWorkspace() {
 
     recognition.onresult = (e) => {
       const transcript = e.results[0]?.[0]?.transcript ?? ''
-      setInput(transcript)
       setListenStatus(null)
       setSpeakState('idle')
+      if (transcript.trim()) {
+        setInput('')
+        sendMessageRef.current(transcript.trim())
+      }
     }
     recognition.onerror = () => {
       setListenStatus(null)
@@ -295,38 +290,97 @@ export default function DianaWorkspace() {
     }
     recognition.onend = () => {
       setListenStatus(null)
-      if (speakState === 'listening') setSpeakState('idle')
     }
     recognition.start()
-  }, [speakState])
+  }, [])
 
   async function startSession() {
     setError(null)
     setMeetingBooked(false)
-    const res = await fetch('/api/dashboard/diana/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ difficulty, mode: voiceMode }),
-    })
-    const data = await res.json() as { session?: { transcript: Message[]; scenario?: string; profile?: ProfileInfo | null } }
-    if (data.session) {
-      // DIANA never speaks first — transcript starts empty. Archie opens the call.
-      setMessages(data.session.transcript ?? [])
-      setCurrentScenario(data.session.scenario ?? null)
+    setStartingCall(true)
+    try {
+      const res = await fetch('/api/dashboard/diana/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ difficulty }),
+      })
+      const data = await res.json() as {
+        session?: { profile?: ProfileInfo | null }
+        openingLine?: string
+        audio?: string | null
+        error?: string
+      }
+      if (data.error || !data.session) {
+        setError(data.error ?? 'Could not start session')
+        return
+      }
       setProfile(data.session.profile ?? null)
+      setMessages(data.openingLine ? [{ role: 'diana', text: data.openingLine }] : [])
       setScore(null)
+      setReview(null)
+      setOutcome(null)
+      setStageReached(null)
       setScoreNote(null)
+      setShowDetailedScore(false)
       setPhase('active')
 
-      // In voice mode there's nothing for DIANA to say yet — go straight to
-      // listening so Archie can open the call by speaking.
-      if (voiceMode === 'voice') startMic()
+      // "Starting your call — mic is active" → Simon plays "Hello?" → mic activates.
+      if (voiceMode === 'voice') {
+        playAudio(data.audio ?? null, startMic)
+      }
+    } finally {
+      setStartingCall(false)
     }
   }
 
-  async function sendMessage() {
-    if (!input.trim() || sending) return
-    const text = input.trim()
+  async function endCall() {
+    setSending(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/dashboard/diana/end', { method: 'POST' })
+      const data = await res.json() as {
+        score?: CallScore | null
+        review?: SessionReview | null
+        stageReached?: string
+        outcome?: 'completed' | 'lost'
+        note?: string
+        audio?: string | null
+        error?: string
+      }
+      if (data.error) {
+        setError(data.error)
+        return
+      }
+      setScore(data.score ?? null)
+      setReview(data.review ?? null)
+      setOutcome(data.outcome ?? null)
+      setStageReached(data.stageReached ?? null)
+      setScoreNote(data.note ?? null)
+      setPhase('ended')
+
+      // Ava reads the scorecard aloud.
+      if (voiceMode === 'voice' && data.audio) playAudio(data.audio)
+
+      void Promise.all([
+        fetch('/api/dashboard/diana/performance').then(r => r.json() as Promise<{ objectionStats: ObjStat[]; sessions: SessionRecord[] }>),
+        fetch('/api/dashboard/diana/focus').then(r => r.json() as Promise<FocusData>),
+        fetch('/api/dashboard/diana/context').then(r => r.json() as Promise<PracticeContext>),
+      ]).then(([perfData, focus, ctx]) => {
+        setObjStats(perfData.objectionStats ?? [])
+        setSessions(perfData.sessions ?? [])
+        setFocusData(focus)
+        setContext(ctx)
+      })
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const sendMessage = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim()
+    if (!text || sending) return
     setInput('')
     setMessages(prev => [...prev, { role: 'user', text }])
     setSending(true)
@@ -337,15 +391,21 @@ export default function DianaWorkspace() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, mode: voiceMode }),
       })
-      const data = await res.json() as { reply?: string; error?: string }
-      if (data.reply) {
-        setMessages(prev => [...prev, { role: 'diana', text: data.reply! }])
-        // Just a milestone banner now — the call continues into Soft Landing
-        // after a yes, Archie ends it manually with "End Call — get feedback".
-        if (detectMeetingBooked(data.reply)) setMeetingBooked(true)
+      const data = await res.json() as { text?: string; audio?: string | null; session_ended?: boolean; error?: string }
+      if (data.text) {
+        setMessages(prev => [...prev, { role: 'diana', text: data.text! }])
+        if (detectMeetingBookedClient(data.text)) setMeetingBooked(true)
 
-        if (voiceMode === 'voice') {
-          speakText(data.reply, startMic)
+        if (data.session_ended) {
+          // Prospect/Archie said goodbye — end the call automatically rather
+          // than waiting for a button press.
+          if (voiceMode === 'voice') {
+            playAudio(data.audio ?? null, () => void endCall())
+          } else {
+            void endCall()
+          }
+        } else if (voiceMode === 'voice') {
+          playAudio(data.audio ?? null, startMic)
         }
       } else if (data.error) {
         setError(data.error)
@@ -355,38 +415,20 @@ export default function DianaWorkspace() {
     } finally {
       setSending(false)
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input, sending, voiceMode, playAudio, startMic])
 
-  async function exitSession() {
-    setSending(true)
-    setError(null)
-    try {
-      const res = await fetch('/api/dashboard/diana/exit', { method: 'POST' })
-      const data = await res.json() as { score?: CallScore | null; note?: string; error?: string }
-      if (data.error) {
-        setError(data.error)
-      } else {
-        setScore(data.score ?? null)
-        setScoreNote(data.note ?? null)
-        setPhase('ended')
-        void fetch('/api/dashboard/diana/performance')
-          .then(r => r.json() as Promise<{ objectionStats: ObjStat[]; sessions: SessionRecord[] }>)
-          .then(d => { setObjStats(d.objectionStats ?? []); setSessions(d.sessions ?? []) })
-      }
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setSending(false)
-    }
-  }
+  useEffect(() => { sendMessageRef.current = sendMessage }, [sendMessage])
 
   async function resetSession() {
     await fetch('/api/dashboard/diana/session', { method: 'DELETE' })
     setPhase('idle')
     setMessages([])
     setScore(null)
+    setReview(null)
+    setOutcome(null)
+    setStageReached(null)
     setScoreNote(null)
-    setCurrentScenario(null)
     setProfile(null)
     setError(null)
     setMeetingBooked(false)
@@ -398,8 +440,10 @@ export default function DianaWorkspace() {
     setPhase('idle')
     setMessages([])
     setScore(null)
+    setReview(null)
+    setOutcome(null)
+    setStageReached(null)
     setScoreNote(null)
-    setCurrentScenario(null)
     setProfile(null)
     setError(null)
     setMeetingBooked(false)
@@ -440,7 +484,7 @@ export default function DianaWorkspace() {
       <div className={s.fullPageTopbar}>
         <a href="/dashboard" className={s.fpBack}>← Dashboard</a>
         <span className={s.fpPageTitle}>DIANA</span>
-        <span className={s.fpPageSubtitle}>Objection Roleplay Coach</span>
+        <span className={s.fpPageSubtitle}>Full Cold Call Practice</span>
         {totalSessions > 0 && (
           <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-dim)' }}>
             {completedSessions}/{totalSessions} sessions completed
@@ -455,8 +499,7 @@ export default function DianaWorkspace() {
           <div className={s.fpColHead}>
             <div className={s.fpColTitle}>Live Session</div>
 
-            {/* Voice toggle — only shown when session is active */}
-            {phase === 'active' && !voiceUnavailable && (
+            {(phase === 'active' || phase === 'idle') && !voiceUnavailable && (
               <div className={s.dianaVoiceToggleWrap}>
                 <div className={s.dianaVoiceToggle}>
                   <button
@@ -469,25 +512,7 @@ export default function DianaWorkspace() {
                   >Voice</button>
                 </div>
                 {voiceMode === 'voice' && (
-                  <span className={s.dianaVoiceHint}>Voice mode uses ElevenLabs + your microphone</span>
-                )}
-              </div>
-            )}
-            {/* Voice toggle on idle screen too */}
-            {phase === 'idle' && !voiceUnavailable && (
-              <div className={s.dianaVoiceToggleWrap}>
-                <div className={s.dianaVoiceToggle}>
-                  <button
-                    className={`${s.dianaVoicePill} ${voiceMode === 'text' ? s.dianaVoicePillActive : ''}`}
-                    onClick={() => setVoiceMode('text')}
-                  >Text</button>
-                  <button
-                    className={`${s.dianaVoicePill} ${voiceMode === 'voice' ? s.dianaVoicePillActive : ''}`}
-                    onClick={() => setVoiceMode('voice')}
-                  >Voice</button>
-                </div>
-                {voiceMode === 'voice' && (
-                  <span className={s.dianaVoiceHint}>Voice mode uses ElevenLabs + your microphone</span>
+                  <span className={s.dianaVoiceHint}>Voice first — mic activates automatically</span>
                 )}
               </div>
             )}
@@ -495,15 +520,27 @@ export default function DianaWorkspace() {
 
           {voiceUnavailable && (
             <p style={{ fontSize: 11, color: 'var(--alert)', marginBottom: 8 }}>
-              Voice input unavailable in this browser — use text mode.
+              Voice input unavailable in this browser — using text mode.
             </p>
           )}
 
           {error && <p style={{ fontSize: 12, color: 'var(--alert)', marginBottom: 8 }}>{error}</p>}
 
-          {/* IDLE — start controls */}
+          {/* IDLE — today's focus card + start controls */}
           {phase === 'idle' && (
             <div className={s.dianaStartBlock}>
+              <div className={s.dianaFocusCard}>
+                <div className={s.fpSectionLabel}>🎯 TODAY&apos;S FOCUS</div>
+                <p className={s.dianaFocusText}>
+                  {focusData?.hasData && focusData.focus
+                    ? focusData.focus
+                    : 'No call data yet — generic focus: nail the opener. Get past "who is this?" calmly before anything else.'}
+                </p>
+                {focusData?.weakStageLabel && (
+                  <p className={s.dianaFocusSub}>Weakest stage last time: {focusData.weakStageLabel}</p>
+                )}
+              </div>
+
               <div style={{ display: 'flex', gap: 8 }}>
                 {(['warm', 'neutral', 'tough'] as Difficulty[]).map(d => (
                   <button
@@ -514,69 +551,41 @@ export default function DianaWorkspace() {
                   >{d}</button>
                 ))}
               </div>
-              <button className={s.dianaStartFullBtn} onClick={() => void startSession()}>
-                Start Session
+              <button className={s.dianaStartFullBtn} onClick={() => void startSession()} disabled={startingCall}>
+                {startingCall ? 'Starting your call — mic is active' : 'Start session →'}
               </button>
               <p className={s.dianaAutonomousNote}>
-                You'll be matched with one of four random prospects — pick up the phone and open the call.
+                You&apos;ll be matched with one of many random prospects — pick up the phone and open the call.
               </p>
             </div>
           )}
 
-          {/* ACTIVE — chat surface */}
+          {/* ACTIVE — call transcript */}
           {phase === 'active' && (
             <div className={s.dianaChatArea}>
               {profile && (
                 <div className={s.dianaProfileLine}>
-                  <div>
-                    <span className={s.dianaProfileName}>Prospect: {profile.name}</span>
-                    <span className={s.dianaProfileDesc}> — {profile.company}, {profile.location}</span>
-                  </div>
-                  <div className={s.dianaProfileDesc}>Background: {profile.background}</div>
-                  {profile.todayAngle && (
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--idle)', marginTop: 2 }}>
-                      Today&apos;s angle: {profile.todayAngle}
-                    </div>
-                  )}
+                  <div className={s.dianaProfileDesc}>Call in progress — {profile.location}</div>
                 </div>
               )}
 
-              <div className={s.dianaStageBar}>
-                {STAGE_ORDER.map((st, i) => {
-                  const current = inferCallStage(messages)
-                  const currentIdx = STAGE_ORDER.findIndex(s2 => s2.key === current)
-                  const state = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'upcoming'
-                  return (
-                    <span key={st.key} className={`${s.dianaStageStep} ${s[`dianaStage_${state}`]}`}>
-                      {st.label}
-                      {i < STAGE_ORDER.length - 1 && <span className={s.dianaStageArrow}>→</span>}
-                    </span>
-                  )
-                })}
-              </div>
-
               <div className={s.dianaChatSessionHeader}>
-                {currentScenario && (
-                  <span className={s.dianaScenarioBadge}>{currentScenario}</span>
-                )}
                 <button
                   className={s.dianaEndBtn}
-                  onClick={() => void exitSession()}
+                  onClick={() => void endCall()}
                   disabled={sending || isSpeaking}
-                  style={{ marginLeft: currentScenario ? 'auto' : undefined }}
+                  style={{ marginLeft: 'auto' }}
                 >
                   End Call — get feedback
                 </button>
               </div>
 
-              {/* Meeting booked banner */}
               {meetingBooked && (
                 <div className={s.dianaMeetingBooked}>
                   Meeting Booked ✓
                 </div>
               )}
 
-              {/* Voice speaking indicator */}
               {effectiveVoiceMode && isSpeaking && (
                 <div className={s.dianaOrbRow}>
                   <div className={`${s.orbWrap} ${s.isSpeaking}`} style={{ width: 40, height: 40 }}>
@@ -584,10 +593,11 @@ export default function DianaWorkspace() {
                     <div className={s.pulse} />
                     <div className={s.orb} />
                   </div>
-                  <span className={s.dianaSpeakingLabel}>DIANA is speaking…</span>
+                  <span className={s.dianaSpeakingLabel}>Prospect is speaking…</span>
                 </div>
               )}
 
+              {/* Call transcript — prospect left/grey, Archie right/orange (CHANGE 2) */}
               <div className={s.dianaChatMessages}>
                 {messages.length === 0 && !sending && (
                   <p style={{ fontSize: 11.5, color: 'var(--text-dim)', fontStyle: 'italic' }}>
@@ -596,7 +606,7 @@ export default function DianaWorkspace() {
                 )}
                 {messages.map((msg, i) => (
                   <div key={i} className={msg.role === 'user' ? s.dianaMsgUser : s.dianaMsgDiana}>
-                    <span className={s.dianaMsgLabel}>{msg.role === 'diana' ? 'PROSPECT' : 'YOU'}</span>
+                    <span className={s.dianaMsgLabel}>{msg.role === 'diana' ? 'PROSPECT' : 'ARCHIE'}</span>
                     <div className={msg.role === 'user' ? s.dianaMsgBubbleUser : s.dianaMsgBubbleDiana}>
                       {msg.text}
                     </div>
@@ -616,16 +626,15 @@ export default function DianaWorkspace() {
                   }}
                   placeholder={
                     isSpeaking
-                      ? 'DIANA is speaking…'
+                      ? 'Prospect is speaking…'
                       : isListening
                         ? 'Listening…'
-                        : 'Your response…'
+                        : 'Your response… (fallback if mic not working)'
                   }
                   disabled={inputBlocked}
                   autoFocus={voiceMode === 'text'}
                 />
 
-                {/* In voice mode: mic button replaces Send when idle, Send when transcript ready */}
                 {effectiveVoiceMode && !input.trim() && !inputBlocked ? (
                   <button
                     className={s.dianaMicBtn}
@@ -644,7 +653,6 @@ export default function DianaWorkspace() {
                 )}
               </div>
 
-              {/* Voice status label */}
               {effectiveVoiceMode && listenStatus && (
                 <p className={s.dianaVoiceStatus}>{listenStatus}</p>
               )}
@@ -657,7 +665,7 @@ export default function DianaWorkspace() {
             </div>
           )}
 
-          {/* ENDED — feedback */}
+          {/* ENDED — session review (CHANGE 6) */}
           {phase === 'ended' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {meetingBooked && (
@@ -667,10 +675,10 @@ export default function DianaWorkspace() {
               )}
 
               {messages.length > 0 && (
-                <div className={`${s.dianaMessages} ${s.dianaMessagesEnded}`} style={{ maxHeight: 240 }}>
+                <div className={`${s.dianaMessages} ${s.dianaMessagesEnded}`} style={{ maxHeight: 200 }}>
                   {messages.map((msg, i) => (
                     <div key={i} className={msg.role === 'user' ? s.dianaMsgUser : s.dianaMsgDiana}>
-                      <span className={s.dianaMsgLabel}>{msg.role === 'diana' ? 'PROSPECT' : 'YOU'}</span>
+                      <span className={s.dianaMsgLabel}>{msg.role === 'diana' ? 'PROSPECT' : 'ARCHIE'}</span>
                       <div className={msg.role === 'user' ? s.dianaMsgBubbleUser : s.dianaMsgBubbleDiana}>
                         {msg.text}
                       </div>
@@ -686,70 +694,101 @@ export default function DianaWorkspace() {
                 </div>
               )}
 
-              {score && (
+              {review && (
                 <div className={s.dianaChatFeedback}>
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <span className={s.eyebrow}>Call scorecard</span>
-                    <span className={s.dianaScoreTotal}>{score.total} / {score.maxTotal}</span>
+                    <span className={s.eyebrow}>📊 Session Review</span>
+                    {score && <span className={s.dianaScoreTotal}>{score.total} / {score.maxTotal}</span>}
                   </div>
 
-                  {profile && (
-                    <div style={{ marginBottom: 12 }}>
-                      <p className={s.dianaChatFeedbackText}>
-                        Prospect: {profile.name} — {profile.company}, {profile.location}
-                      </p>
-                      <p className={s.dianaChatFeedbackText}>Background: {profile.background}</p>
+                  {stageReached && (
+                    <p className={s.dianaChatFeedbackText} style={{ marginBottom: 10 }}>
+                      Stage reached: <strong>{stageReached}</strong>
+                      {outcome === 'completed' ? ' — Meeting booked ✓' : ''}
+                    </p>
+                  )}
+
+                  {review.whatWorked.length > 0 && (
+                    <div className={s.dianaAngleSection} style={{ borderLeftColor: 'var(--online)' }}>
+                      <div className={s.dianaBlockLabel}>✅ WHAT WORKED</div>
+                      {review.whatWorked.map((w, i) => <p key={i} className={s.dianaChatFeedbackText}>• {w}</p>)}
                     </div>
                   )}
 
-                  <div className={s.dianaStageScoreList}>
-                    {score.stages.map(st => (
-                      <div key={st.stage} className={s.dianaStageScoreRow}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span className={s.dianaStageScoreLabel}>{st.label}</span>
-                          <span className={s.dianaStageScorePoints}>{st.points} / {st.maxPoints}</span>
-                        </div>
-                        {st.notes && <p className={s.dianaStageScoreNotes}>{st.notes}</p>}
+                  {review.whatToImprove.length > 0 && (
+                    <div className={s.dianaAngleSection} style={{ borderLeftColor: 'var(--alert)', marginTop: 10 }}>
+                      <div className={s.dianaBlockLabel}>❌ WHAT TO IMPROVE</div>
+                      {review.whatToImprove.map((w, i) => <p key={i} className={s.dianaChatFeedbackText}>• {w}</p>)}
+                    </div>
+                  )}
+
+                  <div className={s.dianaAngleSection} style={{ borderLeftColor: 'var(--accent)', marginTop: 10 }}>
+                    <div className={s.dianaBlockLabel}>🎯 FOCUS NEXT SESSION</div>
+                    <p className={s.dianaChatFeedbackText}>{review.focusNext}</p>
+                  </div>
+
+                  {score && (
+                    <button
+                      className={`${s.hBtn ?? ''} ${s.dianaResetBtn}`}
+                      style={{ marginTop: 12 }}
+                      onClick={() => setShowDetailedScore(v => !v)}
+                    >
+                      {showDetailedScore ? 'Hide' : 'Show'} detailed rubric score
+                    </button>
+                  )}
+
+                  {score && showDetailedScore && (
+                    <div style={{ marginTop: 12 }}>
+                      <div className={s.dianaStageScoreList}>
+                        {score.stages.map(st => (
+                          <div key={st.stage} className={s.dianaStageScoreRow}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span className={s.dianaStageScoreLabel}>{st.label}</span>
+                              <span className={s.dianaStageScorePoints}>{st.points} / {st.maxPoints}</span>
+                            </div>
+                            {st.notes && <p className={s.dianaStageScoreNotes}>{st.notes}</p>}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
 
-                  {score.deductions.length > 0 && (
-                    <div className={s.dianaDeductionList}>
-                      <span className={s.fpSectionLabel} style={{ display: 'block', marginBottom: 6 }}>Deductions</span>
-                      {score.deductions.map(d => (
-                        <div key={d.type} className={s.dianaDeductionRow}>
-                          <span>{d.label}</span>
-                          <span className={s.dianaDeductionPoints}>{d.points}</span>
+                      {score.deductions.length > 0 && (
+                        <div className={s.dianaDeductionList}>
+                          <span className={s.fpSectionLabel} style={{ display: 'block', marginBottom: 6 }}>Deductions</span>
+                          {score.deductions.map(d => (
+                            <div key={d.type} className={s.dianaDeductionRow}>
+                              <span>{d.label}</span>
+                              <span className={s.dianaDeductionPoints}>{d.points}</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      )}
 
-                  {score.knowledgeEvents.length > 0 && (
-                    <div className={s.dianaKnowledgeList}>
-                      <span className={s.fpSectionLabel} style={{ display: 'block', marginBottom: 6 }}>Knowledge accuracy</span>
-                      {score.knowledgeEvents.map((k, i) => (
-                        <div key={i} className={s.dianaKnowledgeRow}>
-                          <span>{k.type === 'correct' ? 'Correct claim' : 'Wrong claim'} — {k.topic}</span>
-                          <span
-                            className={s.dianaKnowledgePoints}
-                            style={{ color: k.points > 0 ? 'var(--online)' : 'var(--alert)' }}
-                          >
-                            {k.points > 0 ? `+${k.points}` : k.points}
-                          </span>
+                      {score.knowledgeEvents.length > 0 && (
+                        <div className={s.dianaKnowledgeList}>
+                          <span className={s.fpSectionLabel} style={{ display: 'block', marginBottom: 6 }}>Knowledge accuracy</span>
+                          {score.knowledgeEvents.map((k, i) => (
+                            <div key={i} className={s.dianaKnowledgeRow}>
+                              <span>{k.type === 'correct' ? 'Correct claim' : 'Wrong claim'} — {k.topic}</span>
+                              <span
+                                className={s.dianaKnowledgePoints}
+                                style={{ color: k.points > 0 ? 'var(--online)' : 'var(--alert)' }}
+                              >
+                                {k.points > 0 ? `+${k.points}` : k.points}
+                              </span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      )}
 
-                  {score.summary && (
-                    <p className={s.dianaChatFeedbackText} style={{ marginTop: 12 }}>{score.summary}</p>
+                      {score.summary && (
+                        <p className={s.dianaChatFeedbackText} style={{ marginTop: 12 }}>{score.summary}</p>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
 
-              <button className={s.dianaNewSessionBtn} onClick={newSession}>New session</button>
+              <button className={s.dianaNewSessionBtn} onClick={newSession}>Start another session</button>
             </div>
           )}
         </div>
@@ -763,7 +802,58 @@ export default function DianaWorkspace() {
 
           {perfLoading && <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>Loading…</p>}
 
-          {/* Weakest objection alert */}
+          {/* CHANGE 7 — weak points, sessions this week, streak, last session */}
+          {context && (
+            <>
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>WEAK POINTS</span>
+                {context.weakPoints.length === 0 ? (
+                  <p className={s.dianaWeakCardNote}>Not tracked yet.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                    {context.weakPoints.map((w, i) => (
+                      <div key={i} style={{ fontSize: 12, color: TONE_COLORS[w.tone] }}>
+                        {TONE_DOT[w.tone]} {w.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>SESSIONS THIS WEEK</span>
+                <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+                  {context.sessionsThisWeek.map(d => (
+                    <span key={d.day} style={{ fontSize: 11, color: 'var(--text-mid)' }}>
+                      {d.day} {d.done ? '✅' : '□'}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className={s.fpSection}>
+                <span className={s.fpSectionLabel}>STREAK</span>
+                <p className={s.dianaChatFeedbackText} style={{ marginTop: 4 }}>
+                  {context.streak.current} day{context.streak.current !== 1 ? 's' : ''} practiced
+                </p>
+                <p className={s.dianaWeakCardNote}>Best: {context.streak.best} days</p>
+              </div>
+
+              {context.lastSession && (
+                <div className={s.fpSection}>
+                  <span className={s.fpSectionLabel}>LAST SESSION</span>
+                  <p className={s.dianaChatFeedbackText} style={{ marginTop: 4 }}>
+                    Stage reached: {context.lastSession.stageReached}
+                  </p>
+                  <p className={s.dianaWeakCardNote}>
+                    {context.lastSession.role} — {context.lastSession.company}
+                    {context.lastSession.timeInSwitzerland ? ` · ${context.lastSession.timeInSwitzerland}` : ''}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
           {weakestObjection && (
             <div className={s.dianaWeakCard}>
               <div className={s.fpSectionLabel} style={{ marginBottom: 6 }}>Needs most work</div>
@@ -775,7 +865,6 @@ export default function DianaWorkspace() {
             </div>
           )}
 
-          {/* Per-objection scorecard */}
           {objStats.length > 0 && (
             <div className={s.fpSection}>
               <span className={s.fpSectionLabel}>Objection breakdown</span>
@@ -793,7 +882,6 @@ export default function DianaWorkspace() {
             </div>
           )}
 
-          {/* Session trend chart */}
           {trendData.length > 1 && (
             <div className={s.fpSection}>
               <span className={s.fpSectionLabel}>Session activity</span>
@@ -813,7 +901,6 @@ export default function DianaWorkspace() {
             </div>
           )}
 
-          {/* Session history */}
           {sessions.length > 0 && (
             <div className={s.fpSection}>
               <span className={s.fpSectionLabel}>Session history</span>
@@ -858,4 +945,17 @@ export default function DianaWorkspace() {
       </div>
     </div>
   )
+}
+
+// Best-effort heuristic on the prospect's reply text — just drives the
+// "Meeting Booked ✓" banner; the server independently tracks outcome for scoring.
+const MEETING_BOOKED_PHRASES = [
+  'works for me', 'wednesday works', 'friday works', 'that works',
+  'sounds good', 'ok, book', 'okay, book', "yeah, let's do", "let's do that",
+  "i'll do wednesday", "i'll do friday", 'put me down', "that's fine, book",
+]
+
+function detectMeetingBookedClient(text: string): boolean {
+  const lower = text.toLowerCase()
+  return MEETING_BOOKED_PHRASES.some(p => lower.includes(p))
 }

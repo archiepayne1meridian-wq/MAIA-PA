@@ -7,6 +7,7 @@ import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } fro
 import { extractJson } from './format'
 
 const HAIKU = 'claude-haiku-4-5-20251001'
+const SONNET = 'claude-sonnet-4-6'
 
 // ── Dynamic prospect generation — the deVere BDA call rebuild ────────────────
 //
@@ -655,7 +656,82 @@ export async function roleplayTurn(
   return askWith(systemPrompt, userText, 120, HAIKU)
 }
 
-// ── scoreCall (Haiku, structured JSON) — the new 7-stage deVere rubric ───────
+// ── Live call-stage tracking (CHANGE 5) — silent, never shown to Archie ─────
+//
+// A cheap keyword heuristic over the growing transcript, re-computed on every
+// turn (same "stateless recompute" approach the client-side stage bar used
+// before this rebuild — no extra Claude call, no stored stage history needed).
+// 'completed'/'lost' are terminal and override the ladder once a meeting is
+// booked or either party says goodbye.
+
+export type CallStage =
+  | 'ringing' | 'opener' | 'reasonable_ask' | 'fact_find'
+  | 'enlarge' | 'disturb' | 'close' | 'completed' | 'lost'
+
+const MEETING_BOOKED_PATTERN = /\b(works for me|wednesday works|friday works|that works|sounds good|ok,? book|okay,? book|yeah,? let'?s do|let'?s do that|i'?ll do wednesday|i'?ll do friday|put me down|that'?s fine,? book)\b/i
+
+const GOODBYE_PATTERN = /\b(goodbye|bye[- ]?bye|bye for now|thanks for your time|thank you for your time|have a good (day|one|evening)|talk soon|take care)\b/i
+
+export function detectMeetingBooked(text: string): boolean {
+  return MEETING_BOOKED_PATTERN.test(text)
+}
+
+export function detectGoodbye(text: string): boolean {
+  return GOODBYE_PATTERN.test(text)
+}
+
+const REASONABLE_ASK_PATTERN = /\b(two quick questions|just two questions|few quick questions|be very quick|won'?t take (a )?minute|quick question|two questions)\b/i
+const CLOSE_PATTERN = /\b(stephen smith|senior consultant|this week or next week|wednesday or friday|when works best|looking at his calendar|beginning or end of|morning or afternoon)\b/i
+const DISTURB_PATTERN = /\b(is it safe to say|two most important things|hard to maintain|maintain your current lifestyle|underperforming)\b/i
+const ENLARGE_PATTERN = /\b(last time your (pension )?provider|risk level|tax implications|scale of 1|1-10|1 to 10|kept you with|manage.{0,10}yourself|platform or structure|regular savings account|interest rate|inflation rate)\b/i
+
+// `meetingBooked`/`goodbyeSaid` are passed in rather than re-detected here —
+// the caller already has to scan the latest turn for both signals to decide
+// whether to end the session, so this just reuses that verdict.
+export function inferCallStage(
+  transcript: DianaTranscriptTurn[],
+  meetingBooked: boolean,
+  goodbyeSaid: boolean,
+): CallStage {
+  if (goodbyeSaid) return meetingBooked ? 'completed' : 'lost'
+  if (meetingBooked) return 'completed'
+
+  const adviserTurns = transcript.filter(t => t.role === 'user')
+  if (adviserTurns.length === 0) return 'ringing'
+
+  const allText = transcript.map(t => t.text.toLowerCase()).join(' \n ')
+
+  if (CLOSE_PATTERN.test(allText)) return 'close'
+  if (DISTURB_PATTERN.test(allText)) return 'disturb'
+  if (ENLARGE_PATTERN.test(allText)) return 'enlarge'
+  if (adviserTurns.length === 1) return 'opener'
+
+  // Reasonable-ask is a one-off transition line ("can I ask you two quick
+  // questions?") — checked only on the latest adviser turn since it's
+  // transient, not something that persists as a transcript-wide signal like
+  // the other stages above.
+  const lastAdviserText = adviserTurns[adviserTurns.length - 1]!.text.toLowerCase()
+  if (REASONABLE_ASK_PATTERN.test(lastAdviserText)) return 'reasonable_ask'
+  return 'fact_find'
+}
+
+const STAGE_DISPLAY_LABEL: Record<CallStage, string> = {
+  ringing: 'Ringing',
+  opener: 'Opener',
+  reasonable_ask: 'Reasonable Ask',
+  fact_find: 'Fact Find',
+  enlarge: 'Enlarge',
+  disturb: 'Disturb',
+  close: 'Close',
+  completed: 'Completed',
+  lost: 'Lost',
+}
+
+export function stageDisplayLabel(stage: CallStage): string {
+  return STAGE_DISPLAY_LABEL[stage]
+}
+
+// ── scoreCall (Sonnet, structured JSON) — the new 7-stage deVere rubric ─────
 //
 // Stage points and deduction values are fixed and applied deterministically here —
 // Haiku judges quality against the criteria and returns points within each stage's
@@ -814,8 +890,9 @@ export async function scoreCall(
 
   // 1600, not 900 — six stage notes + knowledge events + deductions + summary
   // was truncating mid-JSON on longer calls even with concise notes; this leaves
-  // real headroom rather than trimming it to the wire.
-  const raw = await askWith(systemPrompt, userText, 1600, HAIKU)
+  // real headroom rather than trimming it to the wire. Sonnet, not Haiku — the
+  // scorecard is Archie's main feedback loop, worth the better judgment call.
+  const raw = await askWith(systemPrompt, userText, 1600, SONNET)
 
   let parsed: {
     stages?: Record<string, { points?: number; notes?: string }>
@@ -879,6 +956,78 @@ export async function scoreCall(
   }
 }
 
+// ── generateSessionReview (Sonnet) — the post-call narrative scorecard ──────
+//
+// Takes the already-computed, deterministic scoreCall() result as grounding
+// (so the narrative never contradicts the points) and the transcript itself,
+// so it can quote real moments rather than writing generically. Separate from
+// scoreCall deliberately — the rubric scoring stays Haiku-cheap and fully
+// deterministic in its point maths; this is the one call that benefits from
+// a stronger model's writing judgement.
+
+export interface SessionReview {
+  whatWorked: string[]
+  whatToImprove: string[]
+  focusNext: string
+}
+
+const REVIEW_SYSTEM = `You are DIANA, giving a trainee deVere BDA specific, honest feedback on a cold call
+practice session they just finished. You played the prospect in this call.
+
+You are given the rubric scoring already computed for this call (stage points, deductions,
+knowledge events) and the full transcript. Write feedback that references REAL moments and
+actual lines from the transcript — never generic advice that could apply to any call.
+
+Return exactly three sections as JSON:
+- "whatWorked": array of 1-3 short bullet strings — specific things the adviser did well,
+  quoting or closely paraphrasing an actual line where possible.
+- "whatToImprove": array of 1-3 short bullet strings — specific things to improve, tied to an
+  actual moment in this call (a weak stage, a deduction that fired, a missed opportunity).
+- "focusNext": one or two sentences naming the single highest-leverage thing to work on next
+  session, ending with a concrete suggested line to try (in quotes).
+
+Base every point on what is actually in the transcript and the rubric scoring given — never
+invent a moment that didn't happen. Warm, specific, never harsh. Respond with ONLY valid JSON,
+no markdown, no prose outside the JSON:
+{"whatWorked":["..."],"whatToImprove":["..."],"focusNext":"..."}`
+
+export async function generateSessionReview(
+  transcript: DianaTranscriptTurn[],
+  score: CallScoreResult,
+): Promise<SessionReview> {
+  const numbered = transcript
+    .map((t, i) => `${i + 1}. ${t.role === 'diana' ? 'PROSPECT' : 'ADVISER'}: ${t.text}`)
+    .join('\n')
+
+  const scoreDigest = [
+    ...score.stages.map(s => `${s.label}: ${s.points}/${s.maxPoints} — ${s.notes || '(no notes)'}`),
+    ...score.deductions.map(d => `Deduction: ${d.label} (${d.points})`),
+    ...score.knowledgeEvents.map(k => `Knowledge ${k.type}: ${k.topic} (${k.points})`),
+    `Overall: ${score.summary}`,
+  ].join('\n')
+
+  const userText = `RUBRIC SCORING ALREADY COMPUTED:\n${scoreDigest}\n\nTRANSCRIPT:\n${numbered}\n\nWrite the three-section review now.`
+
+  const fallback: SessionReview = {
+    whatWorked: [],
+    whatToImprove: [],
+    focusNext: 'Keep practising the fact-find ladder — one follow-up question per answer, never a new unrelated question.',
+  }
+
+  try {
+    const raw = await askWith(REVIEW_SYSTEM, userText, 700, SONNET)
+    const parsed = JSON.parse(extractJson(raw)) as Partial<SessionReview>
+    return {
+      whatWorked: Array.isArray(parsed.whatWorked) ? parsed.whatWorked.filter((s): s is string => typeof s === 'string').slice(0, 3) : fallback.whatWorked,
+      whatToImprove: Array.isArray(parsed.whatToImprove) ? parsed.whatToImprove.filter((s): s is string => typeof s === 'string').slice(0, 3) : fallback.whatToImprove,
+      focusNext: typeof parsed.focusNext === 'string' && parsed.focusNext.trim() ? parsed.focusNext.trim() : fallback.focusNext,
+    }
+  } catch (err) {
+    console.error('[diana] generateSessionReview failed, using fallback:', err)
+    return fallback
+  }
+}
+
 // ── objectionGuide fallback (Haiku, 300 tok) ─────────────────────────────────
 //
 // Only called when context/diana.md has no curated entry for an objection.
@@ -900,6 +1049,142 @@ RULES:
 - The goal of the call is to book a complimentary meeting — never to give advice or pitch product.
 - No manufactured urgency, no pressure tactics, no misleading claims.
 - Every response must be a question-led re-engagement, not a rebuttal.`
+
+// Natural spoken version of the review, for Ava's TTS readout — the thread
+// card shows the full bulleted scorecard; this is the condensed version read
+// aloud immediately after the call ends.
+export function buildSpokenReview(review: SessionReview, stageLabel: string): string {
+  const parts: string[] = [`Here's how that call went. You reached the ${stageLabel} stage.`]
+  if (review.whatWorked.length > 0) {
+    parts.push(`What worked: ${review.whatWorked.join('. ')}.`)
+  }
+  if (review.whatToImprove.length > 0) {
+    parts.push(`What to improve: ${review.whatToImprove.join('. ')}.`)
+  }
+  parts.push(`Focus for next session: ${review.focusNext}`)
+  return parts.join(' ')
+}
+
+// ── Practice context panel (CHANGE 7) — pure aggregation over raw rows ──────
+//
+// Takes RecentSessionRow[] (tools/diana-db.ts — no domain-type dependency
+// there) and does all the JSON parsing/interpretation here, where the shapes
+// (GeneratedProspect, the persisted review blob) already live.
+
+export type ContextTone = 'red' | 'amber' | 'green'
+
+export interface WeakPointItem {
+  label: string
+  tone: ContextTone
+}
+
+export interface PracticeContext {
+  weakPoints: WeakPointItem[]
+  sessionsThisWeek: { day: string; done: boolean }[]
+  streak: { current: number; best: number }
+  lastSession: { stageReached: string; role: string; company: string; timeInSwitzerland: string } | null
+}
+
+interface StoredReview {
+  stages?: { label?: string; points?: number; maxPoints?: number }[]
+  stageReached?: string
+}
+
+function toneForPct(pct: number): ContextTone {
+  if (pct < 50) return 'red'
+  if (pct < 75) return 'amber'
+  return 'green'
+}
+
+export function buildPracticeContext(rows: { id: string; created_at: number; ended_at: number | null; status: string; generated_prospect: string | null; review_json: string | null }[]): PracticeContext {
+  const reviews: StoredReview[] = []
+  for (const r of rows) {
+    if (!r.review_json) continue
+    try {
+      reviews.push(JSON.parse(r.review_json) as StoredReview)
+    } catch { /* skip malformed */ }
+  }
+
+  // Weak points — average % per stage across all scored sessions, worst first.
+  const stageTotals = new Map<string, { points: number; max: number }>()
+  for (const review of reviews) {
+    for (const s of review.stages ?? []) {
+      if (!s.label || typeof s.points !== 'number' || typeof s.maxPoints !== 'number' || s.maxPoints === 0) continue
+      const e = stageTotals.get(s.label) ?? { points: 0, max: 0 }
+      e.points += s.points
+      e.max += s.maxPoints
+      stageTotals.set(s.label, e)
+    }
+  }
+  const weakPoints: WeakPointItem[] = Array.from(stageTotals.entries())
+    .map(([label, { points, max }]) => ({ label, pct: max > 0 ? Math.round((points / max) * 100) : 0 }))
+    .sort((a, b) => a.pct - b.pct)
+    .slice(0, 4)
+    .map(w => ({ label: w.label, tone: toneForPct(w.pct) }))
+
+  // Sessions this week — Mon-Fri, done if an ended session's created_at falls on that day.
+  // UTC-consistent throughout (Date.UTC / getUTCDay / setUTCDate) — endedDates below is
+  // built from toISOString too, which is always UTC; mixing in local-midnight Date math
+  // here would silently shift every label by a day whenever local time is ahead of UTC
+  // (e.g. BST) and local midnight rolls back into the previous UTC calendar day.
+  const now = new Date()
+  const todayUtcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const dayIdx = todayUtcMidnight.getUTCDay()
+  const monday = new Date(todayUtcMidnight)
+  monday.setUTCDate(todayUtcMidnight.getUTCDate() - (dayIdx === 0 ? 6 : dayIdx - 1))
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+  const endedDates = new Set(
+    rows.filter(r => r.status === 'ended').map(r => new Date(r.created_at * 1000).toISOString().slice(0, 10)),
+  )
+  const sessionsThisWeek = DAYS.map((day, i) => {
+    const d = new Date(monday)
+    d.setUTCDate(monday.getUTCDate() + i)
+    return { day, done: endedDates.has(d.toISOString().slice(0, 10)) }
+  })
+
+  // Streak — consecutive distinct practiced days ending today (or yesterday,
+  // so a day not yet practiced doesn't zero out an ongoing streak at a glance),
+  // and the longest run across all fetched history.
+  const practicedDays = Array.from(endedDates).sort()
+  let current = 0
+  {
+    for (let i = 0; ; i++) {
+      const d = new Date(todayUtcMidnight)
+      d.setUTCDate(todayUtcMidnight.getUTCDate() - i)
+      const key = d.toISOString().slice(0, 10)
+      if (endedDates.has(key)) current++
+      else if (i === 0) continue // today not yet practiced — don't break the streak on that alone
+      else break
+    }
+  }
+  let best = 0, run = 0
+  for (let i = 0; i < practicedDays.length; i++) {
+    if (i === 0) { run = 1 } else {
+      const prev = new Date(practicedDays[i - 1]!)
+      const cur = new Date(practicedDays[i]!)
+      const diffDays = Math.round((cur.getTime() - prev.getTime()) / 86400000)
+      run = diffDays === 1 ? run + 1 : 1
+    }
+    best = Math.max(best, run)
+  }
+  best = Math.max(best, current)
+
+  // Last session
+  const lastEnded = rows.find(r => r.status === 'ended')
+  let lastSession: PracticeContext['lastSession'] = null
+  if (lastEnded) {
+    const prospect = parseGeneratedProspect(lastEnded.generated_prospect)
+    const review = lastEnded.review_json ? (() => { try { return JSON.parse(lastEnded.review_json!) as StoredReview } catch { return null } })() : null
+    lastSession = {
+      stageReached: review?.stageReached ?? 'Not scored',
+      role: prospect?.occupation ?? 'Unknown role',
+      company: prospect?.company ?? 'Unknown company',
+      timeInSwitzerland: prospect?.timeInSwitzerland ?? '',
+    }
+  }
+
+  return { weakPoints, sessionsThisWeek, streak: { current, best }, lastSession }
+}
 
 export async function objectionGuide(objection: string): Promise<string> {
   const userText = `Generate a practice guide for this prospect objection: "${objection}"`

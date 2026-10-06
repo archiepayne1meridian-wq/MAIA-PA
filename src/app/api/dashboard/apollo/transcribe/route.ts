@@ -127,18 +127,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ callId, transcript: formatted, duration })
   } catch (err) {
     console.error('[apollo] transcription failed:', err)
+    const message = err instanceof Error ? err.message : String(err)
     await getDb().insert(activity).values({
       id: activityId,
       event_id: `apollo_transcribe_${Date.now()}`,
       type: 'transcribe',
       agent: 'APOLLO',
       input: file.name,
-      output: err instanceof Error ? err.message : String(err),
+      output: message,
       status: 'error',
       duration_ms: Date.now() - startMs,
       created_at: Math.floor(Date.now() / 1000),
     }).catch(() => {})
-    return NextResponse.json({ error: 'Transcription failed' }, { status: 500 })
+    // Surface the real reason — a generic "Transcription failed" with no detail
+    // left Archie unable to tell a missing API key apart from a bad file apart
+    // from an OpenAI outage. The SDK's own error messages are safe to show
+    // (they never echo the key itself), so pass them straight through.
+    return NextResponse.json({ error: `Transcription failed — ${message}` }, { status: 500 })
   } finally {
     fs.unlink(tmpPath, () => {})
   }

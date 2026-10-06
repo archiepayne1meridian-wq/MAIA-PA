@@ -10,7 +10,7 @@ const MAX_SIZE_BYTES = 200 * 1024 * 1024
 
 type Outcome = 'booked' | 'follow_up' | 'drop'
 type Speaker = 'Archie' | 'Prospect'
-type SessionStage = 'idle' | 'upload' | 'uploading' | 'transcribing' | 'confirm' | 'analysing'
+type SessionStage = 'upload' | 'uploading' | 'transcribing' | 'confirm' | 'analysing'
 
 interface Turn {
   id: string
@@ -115,7 +115,13 @@ export default function ApolloWorkspace() {
   const [calls, setCalls] = useState<ApolloCallSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const [sessionStage, setSessionStage] = useState<SessionStage>('idle')
+  // Starts on 'upload', not 'idle' — the drop card must be there waiting the
+  // moment the thread loads, not gated behind a click or typed command. This
+  // also matters functionally: FileDropZone's window-level drag guard only
+  // exists while it's mounted, so if the card isn't showing yet, a drag
+  // anywhere on the page has no guard at all and the browser just navigates
+  // away with the file instead of accepting it.
+  const [sessionStage, setSessionStage] = useState<SessionStage>('upload')
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -139,7 +145,7 @@ export default function ApolloWorkspace() {
   useEffect(() => { load() }, [load])
 
   function resetSession() {
-    setSessionStage('idle')
+    setSessionStage('upload')
     setSessionError(null)
     setCallId(null)
     setTurns([])
@@ -269,15 +275,18 @@ export default function ApolloWorkspace() {
 
   return (
     <div className={a.page}>
-      <button className={a.newCallBtn} onClick={startNewCall} disabled={sessionStage !== 'idle'}>+ New call</button>
+      <button
+        className={a.newCallBtn}
+        onClick={startNewCall}
+        disabled={sessionStage === 'uploading' || sessionStage === 'transcribing' || sessionStage === 'analysing'}
+      >+ New call</button>
 
       <div className={a.thread}>
         {error && <p className={a.errorText}>{error}</p>}
 
-        {/* In-progress session */}
-        {sessionStage !== 'idle' && (
-          <div className={a.uploadCard}>
-            <div className={a.cardHeader}><span className={a.cardTitle}>📞 NEW CALL</span></div>
+        {/* Upload card — always present; never gated behind a click or typed command */}
+        <div className={a.uploadCard}>
+          <div className={a.cardHeader}><span className={a.cardTitle}>📞 NEW CALL</span></div>
 
             {sessionStage === 'upload' && (
               <div style={{ margin: '12px 14px 14px' }}>
@@ -369,13 +378,10 @@ export default function ApolloWorkspace() {
               </>
             )}
           </div>
-        )}
 
         {/* Completed calls — most recent first */}
         {calls === null ? (
           <p className={a.emptyThread}>Loading…</p>
-        ) : calls.length === 0 && sessionStage === 'idle' ? (
-          <p className={a.emptyThread}>No calls yet. Click &quot;+ New call&quot; to upload your first recording.</p>
         ) : (
           calls.map(call => (
             <div key={call.id} className={a.callGroup}>

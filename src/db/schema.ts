@@ -527,3 +527,53 @@ export const nexus_prospects = sqliteTable('nexus_prospects', {
   created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })
+
+// ATHENA rebuild — R01 qualification flashcards + deVere product knowledge base.
+// Separate from the original study_cards/study_reviews tables (R01+R06+products,
+// 287 real rows of existing progress) — those are left untouched per "do not
+// drop existing tables", just no longer surfaced by the new two-tab UI.
+//
+// next_review is a plain ISO date string ('YYYY-MM-DD'), not a unix timestamp —
+// SM2 here is day-granularity ("due today"), and comparing calendar days via
+// epoch seconds invites the exact local-vs-UTC-midnight bug already hit once
+// this session (DIANA's week/streak math) — a plain date string sidesteps it.
+export const athena_cards = sqliteTable('athena_cards', {
+  id: text('id').primaryKey(),
+  tab: text('tab').notNull(),              // 'r01' | 'product'
+  front: text('front').notNull(),
+  back: text('back').notNull(),
+  note: text('note'),                       // "why this matters" one-liner, shown with the answer
+  product_id: text('product_id'),           // null for R01 cards
+  difficulty: integer('difficulty').notNull().default(0),   // unused by SM2 math itself — schema fidelity only, per spec
+  interval: integer('interval').notNull().default(1),       // days until next review
+  ease_factor: real('ease_factor').notNull().default(2.5),
+  next_review: text('next_review').notNull(),                // ISO date string, e.g. '2026-10-10'
+  total_reviews: integer('total_reviews').notNull().default(0),
+  correct_streak: integer('correct_streak').notNull().default(0),
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+})
+
+export const athena_products = sqliteTable('athena_products', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  summary: text('summary').notNull(),
+  sales_angles: text('sales_angles').notNull(),   // JSON array of strings
+  mcqs: text('mcqs').notNull(),                   // JSON array of MCQ objects — spec's route description names this column; the given schema snippet omitted it
+  podcast_script: text('podcast_script'),
+  podcast_audio_url: text('podcast_audio_url'),
+  source_filename: text('source_filename').notNull(),
+  mcq_count: integer('mcq_count').notNull().default(0),
+  card_count: integer('card_count').notNull().default(0),
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+})
+
+export const athena_sessions = sqliteTable('athena_sessions', {
+  id: text('id').primaryKey(),
+  tab: text('tab').notNull(),
+  cards_reviewed: integer('cards_reviewed').notNull().default(0),
+  correct_count: integer('correct_count').notNull().default(0),
+  started_at: text('started_at').notNull(),
+  ended_at: text('ended_at'),
+})

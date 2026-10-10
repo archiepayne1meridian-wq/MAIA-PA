@@ -6,6 +6,7 @@ import s from '../hub.module.css'
 interface Props {
   accept: string[]        // file extensions e.g. ['.mp3', '.pdf', '.png'] — dot optional
   onFile: (file: File) => void
+  onRejected?: (file: File) => void   // fires instead of onFile when the extension doesn't match — callers that want feedback (a toast, an error message) opt in via this; silent by default to match prior behaviour
   label?: string           // "Drop audio file" / "Drop image or paste URL"
   hint?: string             // small print under the label, e.g. accepted formats + size limit
   compact?: boolean         // small inline version vs full card
@@ -41,7 +42,7 @@ function useWindowDragGuard() {
   }, [])
 }
 
-export default function FileDropZone({ accept, onFile, label, hint, compact, disabled, icon }: Props) {
+export default function FileDropZone({ accept, onFile, onRejected, label, hint, compact, disabled, icon }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [lastFile, setLastFile] = useState<{ name: string; size: number } | null>(null)
@@ -58,7 +59,7 @@ export default function FileDropZone({ accept, onFile, label, hint, compact, dis
 
   function handleFile(file: File) {
     if (disabled) return
-    if (!validate(file)) return
+    if (!validate(file)) { onRejected?.(file); return }
     setLastFile({ name: file.name, size: file.size })
     onFile(file)
   }

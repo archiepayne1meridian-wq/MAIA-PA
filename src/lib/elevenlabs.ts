@@ -6,7 +6,7 @@
 
 const MODEL_ID = 'eleven_flash_v2_5'
 
-export async function textToSpeechBase64(text: string, voiceId: string): Promise<string | null> {
+export async function textToSpeechBuffer(text: string, voiceId: string): Promise<Buffer | null> {
   const apiKey = process.env.ELEVENLABS_API_KEY
   if (!apiKey || !text.trim()) return null
 
@@ -30,9 +30,14 @@ export async function textToSpeechBase64(text: string, voiceId: string): Promise
     }
 
     const buf = await res.arrayBuffer()
-    return Buffer.from(buf).toString('base64')
+    return Buffer.from(buf)
   } catch (err) {
     console.error('[elevenlabs] fetch error', err)
     return null
   }
+}
+
+export async function textToSpeechBase64(text: string, voiceId: string): Promise<string | null> {
+  const buf = await textToSpeechBuffer(text, voiceId)
+  return buf ? buf.toString('base64') : null
 }

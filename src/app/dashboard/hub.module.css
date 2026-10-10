@@ -74,6 +74,7 @@
 
 .agentRowTop { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
 .hDot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.hAgentIcon { font-size: 13px; line-height: 1; flex-shrink: 0; }
 .hDotOn { background: var(--accent); box-shadow: 0 0 5px rgba(232,114,28,0.5); }
 .hDotOff { background: var(--idle); }
 

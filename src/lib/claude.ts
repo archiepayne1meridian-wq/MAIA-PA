@@ -94,6 +94,34 @@ export interface ToolDef {
   }
 }
 
+// Forces a single structured response by requiring Claude to call exactly one
+// tool and returning its (already-parsed, API-validated) input directly — no
+// free-text JSON.parse needed. Avoids a real failure mode hit with large
+// generations: a multi-line field (e.g. a podcast script) coming back with
+// literal newlines inside a free-text JSON string instead of escaped \n,
+// which breaks JSON.parse but is a non-issue for tool-call input, since the
+// API itself is responsible for producing valid structured content there.
+export async function askForTool<T>(
+  systemPrompt: string,
+  userText: string,
+  tool: ToolDef,
+  maxTokens = 4096,
+  model?: string,
+): Promise<T> {
+  const message = await getClient().messages.create({
+    model: model ?? env.ANTHROPIC_MODEL(),
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userText }],
+    tools: [{ type: 'custom' as const, name: tool.name, description: tool.description, input_schema: tool.input_schema }],
+    tool_choice: { type: 'tool', name: tool.name },
+  })
+
+  const toolUse = message.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
+  if (!toolUse) throw new Error(`Claude did not call the expected tool (${tool.name})`)
+  return toolUse.input as T
+}
+
 // Generic multi-tool loop: grants Claude a set of custom tools (not Claude's
 // own built-in web_search) and dispatches to `executor` by tool name whenever
 // it calls one, feeding the result back until Claude produces its final text

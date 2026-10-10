@@ -58,6 +58,7 @@ export default function AgentRailNew({ activeId, onSelect, collapsed, onToggleCo
           >
             <div className={s.agentRowTop}>
               <div className={`${s.hDot} ${a.dotOn ? s.hDotOn : s.hDotOff}`} />
+              <span className={s.hAgentIcon}>{a.icon}</span>
               <span className={s.hAgentName}>{a.name}</span>
               <span className={s.hAgentTime}>{a.time}</span>
             </div>

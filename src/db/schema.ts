@@ -473,7 +473,7 @@ export const hermes_scenarios = sqliteTable('hermes_scenarios', {
 
 export const maia_conversations = sqliteTable('maia_conversations', {
   id: text('id').primaryKey(),
-  agent: text('agent').notNull().unique(),   // 'hub' | 'news' | 'calls' | 'linkedin' | 'social' | 'practice' | 'outreach' | 'study' | 'prospects' | 'pipeline'
+  agent: text('agent').notNull().unique(),   // 'hub' | 'news' | 'calls' | 'linkedin' | 'social' | 'practice' | 'outreach' | 'study' | 'prospects'
   messages: text('messages').notNull().default('[]'),   // JSON array of message objects
   last_updated: integer('last_updated').notNull().default(sql`(unixepoch())`),
 })
@@ -505,6 +505,25 @@ export const maia_goals = sqliteTable('maia_goals', {
   goal_type: text('goal_type').notNull(),   // 'short_term' | 'long_term'
   completed: integer('completed').notNull().default(0),
   sort_order: integer('sort_order').notNull().default(0),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
+})
+
+// NEXUS — prospect tracking (Excel-replacement spreadsheet grid). batch is a
+// free-text label for a data-mine/import run, so a wash update can be scoped
+// to "everyone washed from last Tuesday's batch" if ever needed.
+export const nexus_prospects = sqliteTable('nexus_prospects', {
+  id: text('id').primaryKey(),
+  last_name: text('last_name'),
+  first_name: text('first_name'),
+  company: text('company'),
+  job_role: text('job_role'),
+  employment_status: text('employment_status').notNull().default('Employee'),
+  lead_channel: text('lead_channel').notNull().default('Cold - LinkedIn'),
+  country: text('country').notNull().default('Switzerland'),
+  linkedin_url: text('linkedin_url'),
+  wash_result: text('wash_result'),   // 'Green' | 'Red' | 'Do Not Contact' | null
+  batch: text('batch'),
   created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })

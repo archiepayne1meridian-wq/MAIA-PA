@@ -7,7 +7,7 @@ import type { ChatTurn } from '@/lib/cassandra'
 import { getCurrentDraft } from '../../../../../../tools/iris'
 
 const VALID_AGENTS = new Set<ConversationAgent>([
-  'hub', 'news', 'calls', 'linkedin', 'social', 'practice', 'outreach', 'study', 'prospects', 'pipeline',
+  'hub', 'news', 'calls', 'linkedin', 'social', 'practice', 'outreach', 'study', 'prospects',
 ])
 
 function isValidAgent(agent: string): agent is ConversationAgent {

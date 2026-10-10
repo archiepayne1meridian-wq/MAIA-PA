@@ -3,12 +3,14 @@
 .shell {
   display: grid;
   grid-template-columns: 260px 1fr 290px;
+  transition: grid-template-columns 200ms ease;
   height: 100vh;
   overflow: hidden;
   font-family: var(--display), 'Space Grotesk', sans-serif;
   background: var(--base);
   color: var(--text);
 }
+.shellRailCollapsed { grid-template-columns: 56px 1fr 290px; }
 
 /* LEFT — agent rail */
 .rail {
@@ -27,6 +29,30 @@
   gap: 11px;
   flex-shrink: 0;
 }
+
+.railToggleBtn {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-dim); width: 22px; height: 22px; flex-shrink: 0;
+  font-size: 13px; line-height: 1; cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center;
+  margin-left: auto;
+}
+.railToggleBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Collapsed rail — icon strip only */
+.railCollapsed { align-items: center; }
+.railCollapsed .railToggleBtn { margin: 10px auto 4px; }
+.railStrip { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px 0; width: 100%; }
+.railStripItem {
+  position: relative; width: 36px; height: 36px; border-radius: 10px;
+  background: none; border: 2px solid transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; transition: all 0.15s; flex-shrink: 0;
+}
+.railStripItem:hover { background: var(--raised); }
+.railStripItem.active { border-color: var(--accent); background: var(--accent-dim); }
+.railStripDot { position: absolute; top: 1px; right: 1px; width: 6px; height: 6px; }
+.railStripIcon { line-height: 1; }
 
 .dvLogo {
   width: 38px;
@@ -71,6 +97,10 @@
 .centreRole { font-family: var(--mono), monospace; font-size: 10px; color: var(--text-dim); margin-left: auto; }
 
 .chatThread { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+/* Pinned action bar above the thread (e.g. Calls' permanent "New call" button) —
+   always visible regardless of what's in the thread below it. */
+.callActionBar { padding: 10px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .chatThread::-webkit-scrollbar { width: 2px; }
 .chatThread::-webkit-scrollbar-thumb { background: var(--border); }
 .chatEmpty { font-family: var(--mono), monospace; font-size: 11px; color: var(--text-dim); text-align: center; padding: 30px 0; }

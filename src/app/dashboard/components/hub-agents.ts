@@ -5,7 +5,7 @@
 
 export type ConversationAgent =
   | 'hub' | 'news' | 'calls' | 'linkedin' | 'social'
-  | 'practice' | 'outreach' | 'study' | 'prospects' | 'pipeline'
+  | 'practice' | 'outreach' | 'study' | 'prospects'
 
 export interface HubAgentMeta {
   id: ConversationAgent
@@ -15,17 +15,17 @@ export interface HubAgentMeta {
   time: string
   preview: string
   dotOn: boolean
+  icon: string   // single emoji — shown alone in the collapsed rail strip
 }
 
 export const HUB_AGENTS: HubAgentMeta[] = [
-  { id: 'hub', name: 'MAIA', role: 'Orchestrator', contextTitle: 'MAIA HUB', time: 'now', preview: "Good morning. Today's angle ready →", dotOn: true },
-  { id: 'news', name: 'News', role: 'Financial Intelligence', contextTitle: 'NEWS', time: '8:02', preview: 'UK pension IHT confirmed Apr 2027', dotOn: true },
-  { id: 'calls', name: 'Calls', role: 'Transcription & Coaching', contextTitle: 'CALLS', time: '17:34', preview: 'CRM notes ready — John S. booked', dotOn: true },
-  { id: 'practice', name: 'Practice', role: 'Full Call Drills', contextTitle: 'PRACTICE', time: 'yesterday', preview: 'Weak point today: opener resistance', dotOn: false },
-  { id: 'linkedin', name: 'LinkedIn', role: 'Posts & Conversations', contextTitle: 'LINKEDIN', time: '8:05', preview: 'Draft ready — IHT pension angle', dotOn: true },
-  { id: 'social', name: 'Instagram & Facebook', role: 'Managed autonomously', contextTitle: 'INSTAGRAM & FACEBOOK', time: '8:10', preview: '2 posts scheduled · 3 comments to approve', dotOn: true },
-  { id: 'outreach', name: 'Outreach', role: 'Email Sequences', contextTitle: 'OUTREACH', time: '9:15', preview: 'Sarah M. — email 3 due today', dotOn: true },
-  { id: 'study', name: 'Study', role: 'CII & Products', contextTitle: 'STUDY', time: '8:00', preview: '5 cards due — R01 Financial Crime', dotOn: true },
-  { id: 'prospects', name: 'Prospects', role: 'NEXUS · List Management', contextTitle: 'PROSPECTS', time: 'yesterday', preview: '307 total · 23 unwashed', dotOn: false },
-  { id: 'pipeline', name: 'Pipeline', role: 'With Steven', contextTitle: 'PIPELINE', time: 'Mon', preview: '3 meetings this week · 1 sat', dotOn: false },
+  { id: 'hub', name: 'MAIA', role: 'Orchestrator', contextTitle: 'MAIA HUB', time: 'now', preview: "Good morning. Today's angle ready →", dotOn: true, icon: '🏠' },
+  { id: 'news', name: 'News', role: 'Financial Intelligence', contextTitle: 'NEWS', time: '8:02', preview: 'UK pension IHT confirmed Apr 2027', dotOn: true, icon: '📰' },
+  { id: 'calls', name: 'Calls', role: 'Transcription & Coaching', contextTitle: 'CALLS', time: '17:34', preview: 'CRM notes ready — John S. booked', dotOn: true, icon: '📞' },
+  { id: 'practice', name: 'Practice', role: 'Full Call Drills', contextTitle: 'PRACTICE', time: 'yesterday', preview: 'Weak point today: opener resistance', dotOn: false, icon: '🎯' },
+  { id: 'linkedin', name: 'LinkedIn', role: 'Posts & Conversations', contextTitle: 'LINKEDIN', time: '8:05', preview: 'Draft ready — IHT pension angle', dotOn: true, icon: '💼' },
+  { id: 'social', name: 'Instagram & Facebook', role: 'Managed autonomously', contextTitle: 'INSTAGRAM & FACEBOOK', time: '8:10', preview: '2 posts scheduled · 3 comments to approve', dotOn: true, icon: '📱' },
+  { id: 'outreach', name: 'Outreach', role: 'Email Sequences', contextTitle: 'OUTREACH', time: '9:15', preview: 'Sarah M. — email 3 due today', dotOn: true, icon: '✉️' },
+  { id: 'study', name: 'Study', role: 'CII & Products', contextTitle: 'STUDY', time: '8:00', preview: '5 cards due — R01 Financial Crime', dotOn: true, icon: '📚' },
+  { id: 'prospects', name: 'Prospects', role: 'NEXUS · List Management', contextTitle: 'PROSPECTS', time: 'yesterday', preview: '307 total · 23 unwashed', dotOn: false, icon: '📋' },
 ]

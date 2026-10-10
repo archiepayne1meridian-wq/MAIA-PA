@@ -1,7 +1,7 @@
 // Right-panel context data for the new three-column dashboard shell.
 // Real data where a cheap query exists; explicit empty states otherwise —
-// several of these agents (Social, Outreach, Prospects, Pipeline) have no
-// backing tables yet, so their sections are honestly empty rather than fake.
+// Social and Outreach have no backing tables yet, so their sections are
+// honestly empty rather than fake.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
@@ -14,6 +14,7 @@ import { getFillerWordsForDate, getCallbacksDue } from '../../../../../../tools/
 import { buildNewsContextSections } from '@/lib/cassandra-handler'
 import { getRecentSessions } from '../../../../../../tools/diana-db'
 import { buildPracticeContext } from '@/lib/diana'
+import { buildNexusContextSections } from '@/lib/nexus'
 
 function weekStartSecs(): number {
   const d = new Date()
@@ -210,14 +211,6 @@ const EMPTY_AGENT_SECTIONS: Record<string, Section[]> = {
     { type: 'empty', title: 'ACTIVE SEQUENCES', message: 'Not connected yet.' },
     { type: 'empty', title: 'THIS MONTH', message: 'Not connected yet.' },
   ],
-  prospects: [
-    { type: 'empty', title: 'LIST STATUS', message: 'NEXUS not built yet.' },
-    { type: 'empty', title: 'TOP CLUSTERS', message: 'NEXUS not built yet.' },
-  ],
-  pipeline: [
-    { type: 'empty', title: 'THIS WEEK', message: 'Not connected yet.' },
-    { type: 'empty', title: 'FOLLOW-UP DUE', message: 'Nothing due.' },
-  ],
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ agent: string }> }) {
@@ -235,6 +228,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ age
       case 'linkedin': sections = await linkedinSections(); break
       case 'practice': sections = await practiceSections(); break
       case 'study': sections = await studySections(); break
+      case 'prospects': sections = await buildNexusContextSections(); break
       default: sections = EMPTY_AGENT_SECTIONS[agent] ?? [{ type: 'empty', title: 'CONTEXT', message: 'Unknown agent.' }]
     }
     return NextResponse.json({ sections })

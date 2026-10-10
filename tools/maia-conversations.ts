@@ -6,7 +6,7 @@ import { maia_conversations } from '@/db/schema'
 
 export type ConversationAgent =
   | 'hub' | 'news' | 'calls' | 'linkedin' | 'social'
-  | 'practice' | 'outreach' | 'study' | 'prospects' | 'pipeline'
+  | 'practice' | 'outreach' | 'study' | 'prospects'
 
 export type MessageRole = 'maia' | 'user'
 export type MessageType =

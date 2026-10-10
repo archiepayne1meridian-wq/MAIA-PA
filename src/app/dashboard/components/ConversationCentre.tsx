@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import s from '../hub.module.css'
 import type { ConversationAgent, HubAgentMeta } from './hub-agents'
 import FileDropZone from './FileDropZone'
+import CallUploadFlow from '../apollo/CallUploadFlow'
 
 // What the empty-state CTA does for each agent — most just focus the input
 // (it's the only thing that works for them so far), but News/LinkedIn retry
@@ -14,6 +15,7 @@ const EMPTY_STATE_CTA: Partial<Record<ConversationAgent, { label: string; action
   linkedin: { label: 'Open LinkedIn workspace', action: '/dashboard/iris' },
   calls: { label: 'Open Calls workspace', action: '/dashboard/apollo' },
   practice: { label: 'Open Practice workspace', action: '/dashboard/diana' },
+  prospects: { label: 'Open Prospects workspace', action: '/dashboard/nexus' },
 }
 
 // Mirrors the server-side allow-list in /api/dashboard/conversations/[agent]/upload —
@@ -62,6 +64,18 @@ function timeAgo(ts: number): string {
   return `${Math.round(diffSecs / 86400)}d ago`
 }
 
+// News cards should show how long ago the ARTICLE was published, not how long
+// ago the brief message was written — all cards from the same batch share one
+// message.timestamp, so without this every card in a brief shows the same
+// "Xd ago" regardless of how old the underlying article actually is.
+function publishedTimeAgo(published: string | undefined, fallbackTs: number): string {
+  if (published) {
+    const parsed = Date.parse(published)
+    if (!Number.isNaN(parsed)) return timeAgo(Math.floor(parsed / 1000))
+  }
+  return timeAgo(fallbackTs)
+}
+
 const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function ConversationCentre({ agent, onMessageSent, onSwitchAgent }, ref) {
   const router = useRouter()
   const [messages, setMessages] = useState<ConversationMessage[] | null>(null)
@@ -74,6 +88,18 @@ const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function 
   const [toast, setToast] = useState<string | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+
+  // Calls' permanent upload card — reachable at any time via the pinned "New
+  // call" button above the thread, regardless of how much chat history is
+  // already there. callUploadKey is bumped on every click so each open starts
+  // a fresh CallUploadFlow instance (discarding any abandoned transcript).
+  const [callUploadOpen, setCallUploadOpen] = useState(false)
+  const [callUploadKey, setCallUploadKey] = useState(0)
+
+  function openCallUpload() {
+    setCallUploadOpen(true)
+    setCallUploadKey(k => k + 1)
+  }
 
   useImperativeHandle(ref, () => ({ focusInput: () => inputRef.current?.focus() }))
 
@@ -218,6 +244,12 @@ const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function 
         <span className={s.centreRole}>{agent.role} · {fmtDate()}</span>
       </div>
 
+      {agent.id === 'calls' && (
+        <div className={s.callActionBar}>
+          <button className={`${s.hBtn} ${s.hBtnP}`} onClick={openCallUpload}>📞 New call</button>
+        </div>
+      )}
+
       <div ref={threadRef} className={s.chatThread}>
         {messages === null ? (
           <div className={s.chatEmpty}>Loading conversation...</div>
@@ -253,6 +285,9 @@ const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function 
               onPostIdea={postIdea}
             />
           ))
+        )}
+        {agent.id === 'calls' && callUploadOpen && (
+          <CallUploadFlow key={callUploadKey} onComplete={() => onMessageSent?.()} />
         )}
         {toast && <div className={s.toast}>{toast}</div>}
       </div>
@@ -311,13 +346,13 @@ function MessageItem({ message, onNotConnected, onCopy, onReadArticle, onUseOnCa
 
   if (message.type === 'news_card') {
     const meta = message.metadata as {
-      itemId?: string; title?: string; source?: string; url?: string
+      itemId?: string; title?: string; source?: string; url?: string; published?: string
       keyQuote?: string | null; callAngle?: string; categoryLabel?: string
     } | undefined
     return (
       <div className={s.newsCard}>
         <div className={s.newsTitle}>📰 {meta?.title ?? message.content}</div>
-        <div className={s.newsMeta}>{meta?.source ?? ''} · {timeAgo(message.timestamp)}{meta?.categoryLabel ? ` · ${meta.categoryLabel}` : ''}</div>
+        <div className={s.newsMeta}>{meta?.source ?? ''} · {publishedTimeAgo(meta?.published, message.timestamp)}{meta?.categoryLabel ? ` · ${meta.categoryLabel}` : ''}</div>
         <div className={s.newsSummary}>{message.content}</div>
         {meta?.keyQuote && (
           <div className={s.newsQuoteBlock}>
@@ -332,7 +367,7 @@ function MessageItem({ message, onNotConnected, onCopy, onReadArticle, onUseOnCa
           </div>
         )}
         <div className={s.newsActions}>
-          <button className={`${s.hBtn} ${s.hBtnG}`} onClick={() => onReadArticle(meta?.url)} disabled={!meta?.url}>Read full article ↗</button>
+          <button className={`${s.hBtn} ${s.hBtnG}`} onClick={() => onReadArticle(meta?.url)} disabled={!meta?.url}>Read more ↗</button>
           <button className={`${s.hBtn} ${s.hBtnP}`} onClick={() => onUseOnCall(meta?.itemId, meta?.callAngle ?? '')}>Use on a call</button>
           <button className={`${s.hBtn} ${s.hBtnG}`} onClick={() => onPostIdea(meta?.itemId)}>Post idea</button>
         </div>

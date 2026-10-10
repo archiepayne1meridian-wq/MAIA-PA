@@ -10,7 +10,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { askForTool, type ToolDef } from './claude'
-import { env } from './env'
+import { dataSubdir } from './data-dir'
 import { textToSpeechBuffer } from './elevenlabs'
 import { createCardsBulk, countR01Cards, type AthenaTab } from '../../tools/athena-db'
 
@@ -149,15 +149,8 @@ function parsePodcastScript(script: string): ScriptLine[] {
   return lines
 }
 
-// Podcasts live next to the DB file — DATABASE_URL is './maia.db' locally and
-// '/data/maia.db' on Railway's volume, so deriving from it gives the right
-// path in both places with no separate env var to keep in sync.
-function podcastsDir(): string {
-  return path.join(path.dirname(path.resolve(/* turbopackIgnore: true */ process.cwd(), env.DATABASE_URL())), 'podcasts')
-}
-
 export function podcastPath(productId: string): string {
-  return path.join(podcastsDir(), `${productId}.mp3`)
+  return path.join(dataSubdir('podcasts'), `${productId}.mp3`)
 }
 
 // Generates each line's audio separately (alternating Ava/Simon) and
@@ -176,7 +169,7 @@ export async function generatePodcastAudio(script: string, productId: string): P
   }
   if (buffers.length === 0) return null
 
-  const dir = podcastsDir()
+  const dir = dataSubdir('podcasts')
   await fs.mkdir(dir, { recursive: true })
   const filePath = podcastPath(productId)
   await fs.writeFile(filePath, Buffer.concat(buffers))

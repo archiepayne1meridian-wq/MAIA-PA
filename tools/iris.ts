@@ -174,6 +174,10 @@ export async function getApprovedPosts(limit = 7): Promise<IrisPost[]> {
   return rows as IrisPost[]
 }
 
+export async function setPostImage(id: string, imageUrl: string, imagePrompt: string): Promise<void> {
+  await getDb().update(iris_posts).set({ image_url: imageUrl, image_prompt: imagePrompt }).where(eq(iris_posts.id, id))
+}
+
 export async function updatePostStatus(id: string, status: string): Promise<void> {
   await getDb().update(iris_posts).set({ status }).where(eq(iris_posts.id, id))
 }

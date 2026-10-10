@@ -577,3 +577,20 @@ export const athena_sessions = sqliteTable('athena_sessions', {
   started_at: text('started_at').notNull(),
   ended_at: text('ended_at'),
 })
+
+// Social — Instagram & Facebook slideshow agent. image_urls stores real
+// filesystem paths (per spec); API responses additionally embed each slide
+// as a base64 data URL for direct <img src> use, read back from disk.
+export const social_posts = sqliteTable('social_posts', {
+  id: text('id').primaryKey(),
+  source_type: text('source_type').notNull(),       // 'linkedin' | 'idea' | 'news'
+  source_content: text('source_content').notNull(),
+  hook_text: text('hook_text').notNull(),
+  slides: text('slides').notNull(),                  // JSON array of slide objects
+  caption: text('caption').notNull(),
+  hashtags: text('hashtags').notNull(),
+  image_urls: text('image_urls'),                    // JSON array of generated image paths
+  status: text('status').notNull().default('draft'), // 'draft' | 'approved' | 'posted'
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+})

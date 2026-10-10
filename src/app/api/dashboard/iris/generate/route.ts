@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { generateDraft, type PostType } from '@/lib/iris'
-import { getTodaysBrief, savePost, getCurrentDraft, supersedeDraft, saveChatMessage } from '../../../../../../tools/iris'
+import { generateAndSaveHeroImage, buildHeroImagePrompt } from '@/lib/iris-image'
+import { getTodaysBrief, savePost, setPostImage, getCurrentDraft, supersedeDraft, saveChatMessage } from '../../../../../../tools/iris'
 
 export async function POST(req: NextRequest) {
   if (!(await requireDashboardAuth())) {
@@ -36,6 +37,11 @@ export async function POST(req: NextRequest) {
       post_type: draft.postType,
     })
     await saveChatMessage('maia', "Here's a draft:", postId)
+
+    if (!/\bno image\b/i.test(ideaText ?? '')) {
+      const imageUrl = await generateAndSaveHeroImage(postId, draft.copy, draft.topic)
+      if (imageUrl) await setPostImage(postId, imageUrl, buildHeroImagePrompt(draft.topic))
+    }
 
     return NextResponse.json({
       id: postId,

@@ -37,8 +37,10 @@ yarn-error.log*
 *.db-shm
 *.db-wal
 
-# Generated podcast audio (local dev — Railway writes to its own /data volume)
+# Generated podcast/image assets (local dev — Railway writes to its own /data volume)
 /podcasts/
+/linkedin/
+/social/
 
 # Google OAuth credentials
 credentials.json

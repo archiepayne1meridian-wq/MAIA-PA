@@ -17,6 +17,7 @@ const EMPTY_STATE_CTA: Partial<Record<ConversationAgent, { label: string; action
   practice: { label: 'Open Practice workspace', action: '/dashboard/diana' },
   prospects: { label: 'Open Prospects workspace', action: '/dashboard/nexus' },
   study: { label: 'Open Study workspace', action: '/dashboard/athena' },
+  social: { label: 'Open Social workspace', action: '/dashboard/social' },
 }
 
 // Mirrors the server-side allow-list in /api/dashboard/conversations/[agent]/upload —

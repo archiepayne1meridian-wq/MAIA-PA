@@ -10,9 +10,11 @@ import {
   getVoiceLearnings,
   type PostType,
 } from './iris'
+import { generateAndSaveHeroImage, buildHeroImagePrompt } from './iris-image'
 import {
   getRecentTopics,
   savePost,
+  setPostImage,
   getCurrentDraft,
   supersedeDraft,
   saveChatMessage,
@@ -21,6 +23,18 @@ import {
 } from '../../tools/iris'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
+
+// "no image" anywhere in Archie's message skips automatic hero-image
+// generation for the draft that message produces — image generation is
+// otherwise automatic on every new post.
+function wantsNoImage(message: string): boolean {
+  return /\bno image\b/i.test(message)
+}
+
+async function attachHeroImage(postId: string, copy: string, topic: string): Promise<void> {
+  const imageUrl = await generateAndSaveHeroImage(postId, copy, topic)
+  if (imageUrl) await setPostImage(postId, imageUrl, buildHeroImagePrompt(topic))
+}
 
 // ─── Morning auto-draft (called by GET /api/cron/iris/morning-draft) ─────────
 
@@ -60,6 +74,7 @@ export async function buildMorningDraft(): Promise<{ postId: string; topic: stri
     })
 
     await saveChatMessage('maia', "Good morning — here's today's draft:", postId)
+    await attachHeroImage(postId, draft.copy, draft.topic)
 
     await getDb()
       .update(activity)
@@ -91,6 +106,7 @@ async function dropDraft(
   todayAngle: string | null | undefined,
   postType: PostType | 'auto',
   maiaIntro: string,
+  skipImage = false,
 ): Promise<ChatDispatchResult> {
   const current = await getCurrentDraft()
   if (current) await supersedeDraft(current.id)
@@ -105,6 +121,7 @@ async function dropDraft(
     post_type: draft.postType,
   })
   await saveChatMessage('maia', maiaIntro, postId)
+  if (!skipImage) await attachHeroImage(postId, draft.copy, draft.topic)
   return { kind: 'draft', postId, maiaMessage: maiaIntro }
 }
 
@@ -114,17 +131,18 @@ export async function dispatchChatMessage(
 ): Promise<ChatDispatchResult> {
   const current = await getCurrentDraft()
   await saveChatMessage('archie', message)
+  const skipImage = wantsNoImage(message)
 
   // An explicit pill selection always wins over the free-text classifier.
   if (requestedPostType && requestedPostType !== 'auto') {
-    return dropDraft(message, null, requestedPostType, "Here's a new draft:")
+    return dropDraft(message, null, requestedPostType, "Here's a new draft:", skipImage)
   }
 
   const classified = await classifyChatMessage(message, Boolean(current))
 
   switch (classified.action) {
     case 'refine': {
-      if (!current) return dropDraft(message, null, 'auto', "Here's a new draft:")
+      if (!current) return dropDraft(message, null, 'auto', "Here's a new draft:", skipImage)
       const voiceLearnings = await getVoiceLearnings(10)
       const refined = await refinePost({ currentDraft: current.copy, instruction: classified.instruction, voiceLearnings })
       await supersedeDraft(current.id)
@@ -137,6 +155,7 @@ export async function dispatchChatMessage(
         post_type: current.post_type,
       })
       await saveChatMessage('maia', 'Refined:', postId)
+      if (!skipImage) await attachHeroImage(postId, refined, current.topic)
       return { kind: 'draft', postId, maiaMessage: 'Refined:' }
     }
 
@@ -157,18 +176,18 @@ export async function dispatchChatMessage(
         await saveChatMessage('maia', text)
         return { kind: 'text', maiaMessage: text }
       }
-      return dropDraft(undefined, brief, 'auto', "Here's a draft on today's news angle:")
+      return dropDraft(undefined, brief, 'auto', "Here's a draft on today's news angle:", skipImage)
     }
 
     case 'restart':
-      return dropDraft(current?.topic, null, 'auto', 'Starting again:')
+      return dropDraft(current?.topic, null, 'auto', 'Starting again:', skipImage)
 
     case 'show_history':
       return { kind: 'text', maiaMessage: '__show_history__' }
 
     case 'idea':
     default:
-      return dropDraft(classified.action === 'idea' ? classified.topic : message, null, 'auto', "Here's a draft:")
+      return dropDraft(classified.action === 'idea' ? classified.topic : message, null, 'auto', "Here's a draft:", skipImage)
   }
 }
 

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import s from '../dashboard.module.css'
 
 type PostType = 'personal_story' | 'news_angle' | 'fact_drop' | 'tool_guide' | 'expat_reality' | 'reframe'
@@ -12,6 +13,7 @@ interface IrisPost {
   copy: string
   status: string
   post_type: string | null
+  image_url: string | null
   created_at: number
 }
 
@@ -58,6 +60,7 @@ function firstLine(text: string): string {
 }
 
 export default function IrisWorkspace() {
+  const router = useRouter()
   const [data, setData] = useState<ThreadData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [postType, setPostType] = useState<PostTypeChoice>('auto')
@@ -125,6 +128,10 @@ export default function IrisWorkspace() {
     }
   }
 
+  function repurposeForSocial(copy: string) {
+    router.push(`/dashboard/social?repurpose=${encodeURIComponent(copy)}`)
+  }
+
   async function markPosted(postId: string) {
     setActingOnId(postId)
     try {
@@ -180,6 +187,7 @@ export default function IrisWorkspace() {
                     onRefine={focusForRefine}
                     onRedo={() => void send('Start again on the same topic')}
                     onMarkPosted={() => void markPosted(item.draft!.id)}
+                    onRepurpose={() => repurposeForSocial(item.draft!.copy)}
                   />
                 )}
               </div>
@@ -263,7 +271,7 @@ export default function IrisWorkspace() {
 }
 
 function DraftCard({
-  post, isActive, acting, onApprove, onRefine, onRedo, onMarkPosted,
+  post, isActive, acting, onApprove, onRefine, onRedo, onMarkPosted, onRepurpose,
 }: {
   post: IrisPost
   isActive: boolean
@@ -272,6 +280,7 @@ function DraftCard({
   onRefine: () => void
   onRedo: () => void
   onMarkPosted: () => void
+  onRepurpose: () => void
 }) {
   const charCount = post.copy.length
   const typeLabel = post.post_type ? POST_TYPE_LABEL[post.post_type] ?? post.post_type : 'Auto'
@@ -282,6 +291,16 @@ function DraftCard({
         <span>LinkedIn draft</span>
         <span>{post.status}</span>
       </div>
+
+      {post.image_url && (
+        <div className={s.irisHeroImageWrap}>
+          <img src={post.image_url} alt="" className={s.irisHeroImage} />
+          <a href={post.image_url} download={`iris-post-${post.id}.png`} className={s.irisDownloadImageBtn}>
+            ⬇ Download image
+          </a>
+        </div>
+      )}
+
       <div className={s.irisChatDraftCopy}>{post.copy}</div>
       <div className={s.irisChatDraftMeta}>
         <span>{charCount} chars</span>
@@ -298,16 +317,18 @@ function DraftCard({
           <button className={s.irisRegenBtn} onClick={onRedo}>🔄 Redo</button>
         </div>
       )}
-      {isActive && post.status === 'approved' && (
+      {post.status === 'approved' && (
         <div className={s.irisChatDraftActions}>
           <button className={s.irisApproveBtn} onClick={onMarkPosted} disabled={acting}>
             {acting ? 'Marking…' : 'Posted ✓'}
           </button>
+          <button className={s.irisRegenBtn} onClick={onRepurpose}>Repurpose for Instagram/Facebook →</button>
         </div>
       )}
       {post.status === 'posted' && (
         <div className={s.irisChatDraftActions}>
           <span className={s.irisReadyBadge}>Posted ✓</span>
+          <button className={s.irisRegenBtn} onClick={onRepurpose}>Repurpose for Instagram/Facebook →</button>
         </div>
       )}
     </div>

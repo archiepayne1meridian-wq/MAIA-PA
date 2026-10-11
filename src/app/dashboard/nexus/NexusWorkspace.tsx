@@ -1,10 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import s from '../dashboard.module.css'
 import ContextPanel from '../components/ContextPanel'
 import FileDropZone from '../components/FileDropZone'
-import CrmExportPanel, { type CrmRow } from './CrmExportPanel'
 
 interface NexusProspect {
   id: string
@@ -30,6 +29,7 @@ interface NexusProspect {
 
 type WashFilter = 'all' | 'green' | 'red' | 'dnc' | 'unwashed'
 type SortKey = 'name' | 'company' | 'date_washed'
+type CellPos = { row: number; col: number }
 
 interface SalesNavCandidate {
   firstName: string
@@ -39,7 +39,8 @@ interface SalesNavCandidate {
   isDuplicate: boolean
 }
 
-const PAGE_SIZE = 50
+// First Name, Last Name, Job Title, Company, LinkedIn URL, Wash Result, Date Washed
+const COL_COUNT = 7
 
 function rowClass(p: NexusProspect): string {
   if (p.wash_result === 'Green') return s.nexusRowGreen
@@ -62,14 +63,36 @@ function washPill(wash: string | null): { emoji: string; label: string; cls: str
   return { emoji: '⬜', label: '—', cls: s.nexusPillNone }
 }
 
-function toProspectCrmRow(p: NexusProspect): CrmRow {
-  return {
-    firstName: p.first_name ?? '',
-    lastName: p.last_name ?? '',
-    company: p.company ?? '',
-    jobRole: p.job_role ?? '',
-    linkedinUrl: p.linkedin_url ?? '',
+// Plain-text value for a given column, in TSV copy order — used for clipboard
+// output only, independent of how each cell is rendered on screen (e.g. the
+// Wash Result pill shows an emoji; the copy value is just "Green"/"Red"/"DNC").
+function cellCopyValue(p: NexusProspect, col: number): string {
+  switch (col) {
+    case 0: return p.first_name ?? ''
+    case 1: return p.last_name ?? ''
+    case 2: return p.job_role ?? ''
+    case 3: return p.company ?? ''
+    case 4: return p.linkedin_url ?? ''
+    case 5: { const label = washPill(p.wash_result).label; return label === '—' ? '' : label }
+    case 6: return p.date_washed ?? ''
+    default: return ''
   }
+}
+
+function buildTSV(rows: NexusProspect[], anchor: CellPos, focus: CellPos): string {
+  const r0 = Math.min(anchor.row, focus.row)
+  const r1 = Math.max(anchor.row, focus.row)
+  const c0 = Math.min(anchor.col, focus.col)
+  const c1 = Math.max(anchor.col, focus.col)
+  const lines: string[] = []
+  for (let r = r0; r <= r1; r++) {
+    const p = rows[r]
+    if (!p) continue
+    const cells: string[] = []
+    for (let c = c0; c <= c1; c++) cells.push(cellCopyValue(p, c))
+    lines.push(cells.join('\t'))
+  }
+  return lines.join('\n')
 }
 
 // Cosmetic-only reformat for display — the upload API only returns unmatched
@@ -87,13 +110,15 @@ export default function NexusWorkspace() {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
-  const [page, setPage] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
   const [drawerId, setDrawerId] = useState<string | null>(null)
 
   const [salesNavOpen, setSalesNavOpen] = useState(false)
   const [washUploadOpen, setWashUploadOpen] = useState(false)
-  const [crmExportOpen, setCrmExportOpen] = useState(false)
+
+  const [anchor, setAnchor] = useState<CellPos | null>(null)
+  const [focus, setFocus] = useState<CellPos | null>(null)
+  const draggingRef = useRef(false)
 
   const load = useCallback(() => {
     fetch('/api/dashboard/nexus/prospects?filter=all')
@@ -120,7 +145,6 @@ export default function NexusWorkspace() {
 
   function selectFilter(f: WashFilter) {
     setFilter(f)
-    setPage(0)
     // Red prospects need rewashing periodically — default to oldest-washed-first
     // so the highest-priority rewash candidates sit at the top.
     if (f === 'red') { setSortKey('date_washed'); setSortDir('asc') }
@@ -153,11 +177,6 @@ export default function NexusWorkspace() {
     })
   }, [searched, sortKey, sortDir])
 
-  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
-  const paginated = useMemo(() => sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [sorted, page])
-
-  useEffect(() => { setPage(0) }, [search, filter])
-
   function headerSort(key: SortKey) {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortKey(key); setSortDir('asc') }
@@ -166,6 +185,74 @@ export default function NexusWorkspace() {
   function sortArrow(key: SortKey): string {
     return sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
   }
+
+  // ── Excel-style cell selection ────────────────────────────────────────────
+
+  useEffect(() => { setAnchor(null); setFocus(null) }, [filter, search, sortKey, sortDir])
+
+  useEffect(() => {
+    function onMouseUp() { draggingRef.current = false }
+    window.addEventListener('mouseup', onMouseUp)
+    return () => window.removeEventListener('mouseup', onMouseUp)
+  }, [])
+
+  function onCellMouseDown(row: number, col: number, e: React.MouseEvent) {
+    if (e.button !== 0) return
+    if (e.shiftKey && anchor) {
+      setFocus({ row, col })
+    } else {
+      setAnchor({ row, col })
+      setFocus({ row, col })
+    }
+    draggingRef.current = true
+  }
+
+  function onCellMouseEnter(row: number, col: number) {
+    if (draggingRef.current) setFocus({ row, col })
+  }
+
+  function selCls(row: number, col: number): string {
+    if (!anchor || !focus) return ''
+    const r0 = Math.min(anchor.row, focus.row)
+    const r1 = Math.max(anchor.row, focus.row)
+    const c0 = Math.min(anchor.col, focus.col)
+    const c1 = Math.max(anchor.col, focus.col)
+    if (row < r0 || row > r1 || col < c0 || col > c1) return ''
+    let cls = s.nexusCellSelected
+    if (row === r0) cls += ` ${s.nexusCellSelTop}`
+    if (row === r1) cls += ` ${s.nexusCellSelBottom}`
+    if (col === c0) cls += ` ${s.nexusCellSelLeft}`
+    if (col === c1) cls += ` ${s.nexusCellSelRight}`
+    return cls
+  }
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const activeEl = document.activeElement as HTMLElement | null
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return
+      const meta = e.ctrlKey || e.metaKey
+      if (!meta) return
+
+      if (e.key.toLowerCase() === 'a') {
+        if (sorted.length === 0) return
+        e.preventDefault()
+        setAnchor({ row: 0, col: 0 })
+        setFocus({ row: sorted.length - 1, col: COL_COUNT - 1 })
+        return
+      }
+      if (e.key.toLowerCase() === 'c') {
+        if (!anchor || !focus) return
+        e.preventDefault()
+        const tsv = buildTSV(sorted, anchor, focus)
+        if (!tsv) return
+        void navigator.clipboard.writeText(tsv)
+        const rows = Math.abs(anchor.row - focus.row) + 1
+        showToast(`${rows} row${rows === 1 ? '' : 's'} copied — ready to paste`)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [anchor, focus, sorted])
 
   async function saveDrawerField(id: string, field: string, value: string) {
     setProspects(prev => prev?.map(p => p.id === id ? { ...p, [field]: value } : p) ?? prev)
@@ -186,7 +273,6 @@ export default function NexusWorkspace() {
   }
 
   const drawerProspect = drawerId ? all.find(p => p.id === drawerId) ?? null : null
-  const canExport = filter === 'all' || filter === 'green' || filter === 'unwashed'
 
   return (
     <div className={s.fullPage}>
@@ -243,7 +329,7 @@ export default function NexusWorkspace() {
             </div>
           )}
 
-          {/* Toolbar — search + export */}
+          {/* Toolbar — search only */}
           <div className={s.nexusSearchRow}>
             <input
               className={s.nexusSearchInput}
@@ -251,9 +337,6 @@ export default function NexusWorkspace() {
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
-            {canExport && (
-              <button className={s.nexusPasteBtn} onClick={() => setCrmExportOpen(true)}>Export for CRM ↓</button>
-            )}
           </div>
 
           <div className={s.nexusGridWrap}>
@@ -272,42 +355,48 @@ export default function NexusWorkspace() {
               <tbody>
                 {prospects === null ? (
                   <tr><td colSpan={7} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
-                ) : paginated.length === 0 ? (
+                ) : sorted.length === 0 ? (
                   <tr><td colSpan={7} style={{ color: 'var(--text-dim)' }}>No prospects in this view.</td></tr>
                 ) : (
-                  paginated.map(p => {
+                  sorted.map((p, i) => {
                     const pill = washPill(p.wash_result)
                     return (
                       <tr
                         key={p.id}
                         className={`${s.nexusRow} ${rowClass(p)}`}
-                        onClick={() => setDrawerId(p.id)}
+                        onDoubleClick={() => setDrawerId(p.id)}
                       >
-                        <td className={s.nexusNameCell}>{p.first_name || '—'}</td>
-                        <td className={s.nexusNameCell}>{p.last_name || '—'}</td>
-                        <td className={s.nexusMutedCell}>{p.job_role || '—'}</td>
-                        <td className={s.nexusMutedCell}>{p.company || '—'}</td>
-                        <td>
+                        <td className={`${s.nexusNameCell} ${selCls(i, 0)}`} onMouseDown={e => onCellMouseDown(i, 0, e)} onMouseEnter={() => onCellMouseEnter(i, 0)}>
+                          {p.first_name || '—'}
+                        </td>
+                        <td className={`${s.nexusNameCell} ${selCls(i, 1)}`} onMouseDown={e => onCellMouseDown(i, 1, e)} onMouseEnter={() => onCellMouseEnter(i, 1)}>
+                          {p.last_name || '—'}
+                        </td>
+                        <td className={`${s.nexusMutedCell} ${selCls(i, 2)}`} onMouseDown={e => onCellMouseDown(i, 2, e)} onMouseEnter={() => onCellMouseEnter(i, 2)}>
+                          {p.job_role || '—'}
+                        </td>
+                        <td className={`${s.nexusMutedCell} ${selCls(i, 3)}`} onMouseDown={e => onCellMouseDown(i, 3, e)} onMouseEnter={() => onCellMouseEnter(i, 3)}>
+                          {p.company || '—'}
+                        </td>
+                        <td className={selCls(i, 4)} onMouseDown={e => onCellMouseDown(i, 4, e)} onMouseEnter={() => onCellMouseEnter(i, 4)}>
                           {p.linkedin_url ? (
-                            <a href={p.linkedin_url} target="_blank" rel="noopener noreferrer" className={s.nexusLinkIcon} onClick={e => e.stopPropagation()} title="Open LinkedIn profile">
+                            <a href={p.linkedin_url} target="_blank" rel="noopener noreferrer" className={s.nexusLinkIcon} title="Open LinkedIn profile">
                               🔗
                             </a>
                           ) : <span className={s.nexusEmptyLink}>—</span>}
                         </td>
-                        <td><span className={`${s.nexusPill} ${pill.cls}`}>{pill.emoji} {pill.label}</span></td>
-                        <td className={p.date_washed ? '' : s.nexusMutedCell}>{p.date_washed || '—'}</td>
+                        <td className={selCls(i, 5)} onMouseDown={e => onCellMouseDown(i, 5, e)} onMouseEnter={() => onCellMouseEnter(i, 5)}>
+                          <span className={`${s.nexusPill} ${pill.cls}`}>{pill.emoji} {pill.label}</span>
+                        </td>
+                        <td className={`${p.date_washed ? '' : s.nexusMutedCell} ${selCls(i, 6)}`} onMouseDown={e => onCellMouseDown(i, 6, e)} onMouseEnter={() => onCellMouseEnter(i, 6)}>
+                          {p.date_washed || '—'}
+                        </td>
                       </tr>
                     )
                   })
                 )}
               </tbody>
             </table>
-          </div>
-
-          <div className={s.nexusPaginationRow}>
-            <button className={s.nexusPageBtn} onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>← Prev</button>
-            <span>Showing {sorted.length === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min(sorted.length, (page + 1) * PAGE_SIZE)} of {sorted.length}</span>
-            <button className={s.nexusPageBtn} onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={page >= pageCount - 1}>Next →</button>
           </div>
 
           {/* Bottom action bar — always pinned to the bottom of the page */}
@@ -346,27 +435,20 @@ export default function NexusWorkspace() {
           onDone={load}
         />
       )}
-
-      {crmExportOpen && (
-        <ModalShell title={`Export for CRM — ${searched.length} prospect${searched.length === 1 ? '' : 's'}`} wide onClose={() => setCrmExportOpen(false)}>
-          <CrmExportPanel rows={searched.map(toProspectCrmRow)} />
-        </ModalShell>
-      )}
     </div>
   )
 }
 
 // ── Shared modal shell ───────────────────────────────────────────────────────
 
-function ModalShell({ title, wide, onClose, children }: {
+function ModalShell({ title, onClose, children }: {
   title: string
-  wide?: boolean
   onClose: () => void
   children: React.ReactNode
 }) {
   return (
     <div className={s.nexusModalOverlay} onClick={onClose}>
-      <div className={`${s.nexusModal} ${wide ? s.nexusModalWide : ''}`} onClick={e => e.stopPropagation()}>
+      <div className={s.nexusModal} onClick={e => e.stopPropagation()}>
         <div className={s.nexusModalHead}>
           <span className={s.nexusModalTitle}>{title}</span>
           <button className={s.nexusModalClose} onClick={onClose}>✕</button>
@@ -386,7 +468,7 @@ function SalesNavModal({ onClose, showToast, onDone }: {
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ imported: number; skipped: number; addedRows: CrmRow[] } | null>(null)
+  const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null)
 
   async function importNames() {
     if (!text.trim()) return
@@ -404,11 +486,7 @@ function SalesNavModal({ onClose, showToast, onDone }: {
       })
       const confirmed = await confirmRes.json() as { added: number }
 
-      const addedRows: CrmRow[] = parsed.candidates
-        .filter(c => !c.isDuplicate)
-        .map(c => ({ firstName: c.firstName, lastName: c.lastName, company: c.company ?? '', jobRole: c.jobRole ?? '', linkedinUrl: '' }))
-
-      setResult({ imported: confirmed.added, skipped: parsed.duplicates, addedRows })
+      setResult({ imported: confirmed.added, skipped: parsed.duplicates })
       setText('')
       showToast(`${confirmed.added} prospect${confirmed.added === 1 ? '' : 's'} imported`)
       onDone()
@@ -420,7 +498,7 @@ function SalesNavModal({ onClose, showToast, onDone }: {
   }
 
   return (
-    <ModalShell title="Sales Nav Import" wide={!!result?.addedRows.length} onClose={onClose}>
+    <ModalShell title="Sales Nav Import" onClose={onClose}>
       <p className={s.nexusModalHint}>Paste your Sales Navigator search results below.</p>
       <textarea
         className={s.nexusTextarea}
@@ -436,10 +514,9 @@ function SalesNavModal({ onClose, showToast, onDone }: {
       </div>
 
       {result && (
-        <>
-          <div className={s.nexusImportResult}>✓ {result.imported} imported · {result.skipped} skipped (already in database)</div>
-          {result.addedRows.length > 0 && <CrmExportPanel rows={result.addedRows} />}
-        </>
+        <div className={s.nexusImportResult}>
+          ✓ {result.imported} imported · {result.skipped} skipped (already in database)
+        </div>
       )}
     </ModalShell>
   )

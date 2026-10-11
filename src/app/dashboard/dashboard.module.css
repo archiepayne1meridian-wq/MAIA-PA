@@ -2983,6 +2983,13 @@
 
 /* ── NEXUS full-page specifics ────────────────────────────────────────────── */
 
+/* Two-track version of hub.module.css's .shell/.shellRailCollapsed grid —
+   nexus/layout.tsx uses this to keep the agent rail visible on the Prospects
+   page without touching the shared 3-track grid every other full-page agent
+   deliberately does NOT use. */
+.nexusShell { display: grid; grid-template-columns: 260px 1fr; transition: grid-template-columns 200ms ease; height: 100vh; overflow: hidden; }
+.nexusShellRailCollapsed { grid-template-columns: 56px 1fr; }
+
 /* MaiaChatBar.tsx now suppresses itself entirely on /dashboard/nexus (never
    shows a chat input on this page), so this column no longer needs bottom
    padding to clear it — the bottom action bar is the page's own last row. */
@@ -3017,11 +3024,19 @@
 .nexusThSortable:hover { color: var(--accent); }
 .nexusTable td {
   height: 36px; max-height: 36px; padding: 0 12px; border: 1px solid var(--hairline); color: var(--text); white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 220px; cursor: default;
+  overflow: hidden; text-overflow: ellipsis; max-width: 220px; cursor: cell;
 }
 .nexusMutedCell { color: var(--text-mid); }
-.nexusRow { border-left: 3px solid transparent; cursor: pointer; }
+.nexusRow { border-left: 3px solid transparent; }
 .nexusRow:hover td { background: rgba(245,240,235,0.04); }
+
+/* Excel/Sheets-style cell selection — !important wins over row wash-colour
+   backgrounds and the hover tint above, same visual regardless of row state. */
+.nexusCellSelected { background: rgba(59,130,246,0.15) !important; }
+.nexusCellSelTop { border-top: 2px solid rgba(59,130,246,0.6) !important; }
+.nexusCellSelBottom { border-bottom: 2px solid rgba(59,130,246,0.6) !important; }
+.nexusCellSelLeft { border-left: 2px solid rgba(59,130,246,0.6) !important; }
+.nexusCellSelRight { border-right: 2px solid rgba(59,130,246,0.6) !important; }
 .nexusRowGreen td { background: rgba(34,197,94,0.08); }
 .nexusRowGreen { border-left-color: #22c55e; }
 .nexusRowRed td { background: rgba(220,38,38,0.08); }

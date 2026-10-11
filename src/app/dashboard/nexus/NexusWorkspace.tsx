@@ -29,7 +29,7 @@ interface NexusProspect {
 }
 
 type WashFilter = 'all' | 'green' | 'red' | 'dnc' | 'unwashed'
-type SortKey = 'name' | 'company' | 'date_washed'
+type SortKey = 'name' | 'company' | 'date_washed' | 'created_at'
 type CellPos = { row: number; col: number }
 
 interface SalesNavCandidate {
@@ -110,8 +110,8 @@ export default function NexusWorkspace() {
   const [prospects, setProspects] = useState<NexusProspect[] | null>(null)
   const [filter, setFilter] = useState<WashFilter>('all')
   const [search, setSearch] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('name')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [sortKey, setSortKey] = useState<SortKey>('created_at')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [toast, setToast] = useState<string | null>(null)
   const [drawerId, setDrawerId] = useState<string | null>(null)
 
@@ -152,7 +152,7 @@ export default function NexusWorkspace() {
     // Red prospects need rewashing periodically — default to oldest-washed-first
     // so the highest-priority rewash candidates sit at the top.
     if (f === 'red') { setSortKey('date_washed'); setSortDir('asc') }
-    else { setSortKey('name'); setSortDir('asc') }
+    else { setSortKey('created_at'); setSortDir('desc') }
   }
 
   const filtered = useMemo(() => {
@@ -177,6 +177,7 @@ export default function NexusWorkspace() {
     return [...searched].sort((a, b) => {
       if (sortKey === 'company') return dir * (a.company ?? '').localeCompare(b.company ?? '')
       if (sortKey === 'date_washed') return dir * (a.date_washed ?? '').localeCompare(b.date_washed ?? '')
+      if (sortKey === 'created_at') return dir * (a.created_at - b.created_at)
       return dir * `${a.last_name ?? ''}${a.first_name ?? ''}`.localeCompare(`${b.last_name ?? ''}${b.first_name ?? ''}`)
     })
   }, [searched, sortKey, sortDir])
@@ -184,6 +185,13 @@ export default function NexusWorkspace() {
   function headerSort(key: SortKey) {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortKey(key); setSortDir('asc') }
+  }
+
+  // Quick toggle between the two most common views — label describes the
+  // CURRENT state; clicking flips to the other one.
+  function toggleSortOrder() {
+    if (sortKey === 'created_at' && sortDir === 'desc') { setSortKey('name'); setSortDir('asc') }
+    else { setSortKey('created_at'); setSortDir('desc') }
   }
 
   function sortArrow(key: SortKey): string {
@@ -333,7 +341,7 @@ export default function NexusWorkspace() {
             </div>
           )}
 
-          {/* Toolbar — search only */}
+          {/* Toolbar — search + sort toggle */}
           <div className={s.nexusSearchRow}>
             <input
               className={s.nexusSearchInput}
@@ -341,6 +349,9 @@ export default function NexusWorkspace() {
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
+            <button className={s.nexusPasteBtn} onClick={toggleSortOrder}>
+              {sortKey === 'created_at' && sortDir === 'desc' ? 'Newest first ↓' : 'A–Z ↑'}
+            </button>
           </div>
 
           <div className={s.nexusGridWrap}>

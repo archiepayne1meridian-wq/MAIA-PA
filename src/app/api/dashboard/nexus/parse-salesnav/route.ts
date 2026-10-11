@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     }
 
     const existing = await getAllNamesLower()
-    const candidates = parseSalesNav(body.text, existing)
+    const candidates = await parseSalesNav(body.text, existing)
     const duplicateCount = candidates.filter(c => c.isDuplicate).length
 
     return NextResponse.json({

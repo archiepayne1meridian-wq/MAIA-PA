@@ -1,30 +1,17 @@
-// NEXUS — pure parsing logic (Sales Navigator paste, wash-result paste) and
-// the right-context-panel builder. No Claude calls — deterministic parsing,
-// same principle as VICTORIA's tally parser: cheap and fast, no model needed
-// for extracting structured text from a predictable paste format.
+// NEXUS — parsing logic (Sales Navigator paste, wash-result paste) and the
+// right-context-panel builder. The Sales Nav parser calls Claude — a prior
+// deterministic regex/block-splitter version kept hitting new Sales
+// Navigator UI-chrome wordings it hadn't seen before (e.g. "<Name>'s
+// profile picture…was last active N days ago", "Second-degree connection"
+// spelled out rather than "2nd") and leaking them into job_role/company.
+// An LLM generalises across wording variants a fixed noise-list can't.
 
+import { askWith } from './claude'
 import { getStats, getWashRateByBatch, getLastImport, type NexusStats } from '../../tools/nexus-db'
 
 export interface NameLookup { id: string; firstLower: string; lastLower: string }
 
-// ─── Sales Navigator paste parser ────────────────────────────────────────────
-//
-// A raw Sales Navigator lead-list copy-paste is a flat sequence of DOM text,
-// not clean rows — reverse-engineered from real pasted output, each person's
-// entry looks like:
-//
-//   Select <Full Name>      (checkbox aria-label — the block delimiter)
-//   <Full Name>             (the visible name link text, sometimes repeated)
-//   Saved Badge             (UI chrome)
-//   [Job Title line]        (optional)
-//   [Company line]          (optional)
-//   [Location line]         (optional, e.g. "Geneva Metropolitan Area")
-//
-// Splitting on "Select " is what turns that flat stream back into one block
-// per person — without it, every capitalised-looking line (job titles,
-// companies, "Saved Badge", "Add Account", column headers) gets misread as
-// its own fake person, which is exactly what the previous naive line-scanner
-// did.
+// ─── Sales Navigator paste parser (Claude-based) ────────────────────────────
 
 export interface SalesNavCandidate {
   firstName: string
@@ -37,106 +24,65 @@ export interface SalesNavCandidate {
   flagged: boolean
 }
 
-// Known Sales Navigator UI chrome that shows up in the same position a real
-// job title/company would — matched case-insensitively against a whole,
-// trimmed line (not a substring match, so it never eats real data).
-const NOISE_LINES = new Set([
-  'saved badge', 'add account', 'name account geography notes tooltip',
-  'message', 'connect', 'follow', 'pending', 'inmail', 'premium',
-  'view profile', 'save', 'saved', 'following',
-])
+const SALESNAV_PARSER_SYSTEM_PROMPT = `You are a data parser. Extract people from LinkedIn Sales Navigator paste text.
 
-function isNoiseLine(line: string): boolean {
-  const l = line.toLowerCase().trim()
-  if (NOISE_LINES.has(l)) return true
-  // "1st", "2nd degree connection", "(3rd)" etc.
-  if (/^\(?\d+(st|nd|rd|th)\)?(\s+degree)?(\s+connection)?\.?$/i.test(l)) return true
-  return false
+Return a JSON array ONLY — no markdown, no code blocks, no explanation:
+[{"firstName":"","lastName":"","jobTitle":"","company":"","location":"","flagSurname":false}]
+
+Rules:
+- Each person block starts with "Select <Name>"
+- Strip qualifications from names before splitting first/last: MBA, MSc, BSc, BA, MA, PhD, DPhil, CFA, CFP, ACCA, ACA, FCA, FCCA, MCSI, CPA, CIM, LLB, LLM, PMP, MBE, OBE, CBE, CIMA, IMC, CMT, CAIA
+- Strip pre-nominal titles: Dr, Dr., Prof, Prof., Sir, Dame, Lord, Lady, Baron, Baroness
+- Split name on last space: "James Hill" → firstName "James", lastName "Hill"
+- If company looks like a location (contains: Switzerland, Geneva, Zürich, Zurich, London, Paris, Area, Metropolitan, Region) → set company to null
+- Set flagSurname: true if last name is a single letter or single letter + period (e.g. "O.", "A.")
+- location field: the city/country line (3rd meaningful field after job title and company)
+- Noise to completely ignore: "2nd"/"3rd"/"1st" connection lines (abbreviated OR spelled out, e.g. "Second-degree connection"), "Saved Badge", "<Name>'s profile picture" / "was last active N days ago", "Add note", "No activity", dates like "10/7/2026", "1 List", "(+"
+- A person may have no company — that is valid, set company to null`
+
+interface ClaudeParsedPerson {
+  firstName?: string
+  lastName?: string
+  jobTitle?: string | null
+  company?: string | null
+  location?: string | null
+  flagSurname?: boolean
 }
 
-// Rule 2 — a line that's actually a location must never land in the Company
-// (or Job Title) slot. LinkedIn/Sales Nav location strings reliably end in
-// "Area"/"Metropolitan Area"/"Region", which catches cities beyond the
-// explicit list below too.
-const LOCATION_KEYWORDS = /\b(switzerland|geneva|zurich|zürich|lausanne|basel|bern|zug|vaud|london|england|united kingdom)\b/i
-
-function looksLikeLocation(line: string): boolean {
-  const l = line.trim()
-  if (LOCATION_KEYWORDS.test(l)) return true
-  if (/\b(metropolitan area|area|region)$/i.test(l)) return true
-  return false
+// Claude is told to return a bare JSON array, but models sometimes wrap it
+// in a markdown fence anyway — strip that, then slice to the outermost
+// brackets so stray prose before/after doesn't break JSON.parse.
+function extractJsonArray(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+  const text = fenced?.[1] ? fenced[1].trim() : raw.trim()
+  const first = text.indexOf('[')
+  const last = text.lastIndexOf(']')
+  if (first !== -1 && last > first) return text.slice(first, last + 1)
+  return text
 }
 
-// ─── Rule 4 — strip post-nominal qualifications / pre-nominal titles ───────
-// before the name is split into first/last, so e.g. "Dr. Sarah Jones MSc
-// ACCA" parses as "Sarah" / "Jones", not "Dr." / "Jones MSc ACCA".
-
-const PRE_NOMINAL = /^\s*(dr|prof|sir|dame|lord|lady|baron(ess)?|rev(erend)?)\.?\s+/i
-
-const POST_NOMINAL_TOKENS = [
-  'chartered fcsi', 'dphil', 'dippfs', 'mba', 'msc', 'bsc', 'phd', 'cfa', 'cfp', 'acca', 'aca',
-  'fcca', 'cisi', 'apfs', 'mcsi', 'llb', 'llm', 'mbe', 'obe', 'cbe', 'frsa', 'frs', 'pmp', 'caia',
-  'cmt', 'cpa', 'cima', 'cgma', 'cim', 'imc', 'qc', 'kc', 'ba', 'ma',
-]
-const POST_NOMINAL_PATTERN = new RegExp(
-  `\\s+(${POST_NOMINAL_TOKENS.map(t => t.replace(/\s+/g, '\\s+')).join('|')})\\.?\\s*$`,
-  'i',
-)
-
-function stripQualifications(raw: string): string {
-  let name = raw.trim().replace(PRE_NOMINAL, '')
-  const commaIdx = name.indexOf(',')
-  if (commaIdx !== -1) name = name.slice(0, commaIdx)
-  let changed = true
-  while (changed) {
-    const next = name.replace(POST_NOMINAL_PATTERN, '').trim()
-    changed = next !== name
-    name = next
-  }
-  return name.trim()
-}
-
-function splitFullName(full: string): { first: string; last: string } {
-  const parts = full.trim().split(/\s+/).filter(Boolean)
-  if (parts.length <= 1) return { first: parts[0] ?? '', last: '' }
-  return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1]! }
-}
-
-// Rule 3 — "O.", "B", "O" etc.
-function isSingleLetterSurname(last: string): boolean {
-  return /^[A-Za-zÀ-ÿ]\.?$/.test(last.trim())
-}
-
-export function parseSalesNav(text: string, existing: NameLookup[]): SalesNavCandidate[] {
+export async function parseSalesNav(text: string, existing: NameLookup[]): Promise<SalesNavCandidate[]> {
   const existingKeys = new Set(existing.map(n => `${n.firstLower} ${n.lastLower}`))
+  // 8192 gives headroom for a large paste (~100+ people) without truncating
+  // mid-array — a cut-off response fails JSON.parse below rather than
+  // silently returning a partial list.
+  const raw = await askWith(SALESNAV_PARSER_SYSTEM_PROMPT, text.trim(), 8192, 'claude-sonnet-4-6')
+
+  let people: ClaudeParsedPerson[]
+  try {
+    const parsed = JSON.parse(extractJsonArray(raw))
+    if (!Array.isArray(parsed)) throw new Error('not an array')
+    people = parsed
+  } catch {
+    throw new Error('Claude returned an unparseable response for the Sales Nav paste')
+  }
+
   const seenInPaste = new Set<string>()
   const candidates: SalesNavCandidate[] = []
-
-  // Prepend a newline so a paste that starts with "Select " (no leading
-  // blank line) splits the same way as one that doesn't.
-  const blocks = (`\n${text}`).split(/\n[ \t]*Select[ \t]+/i).slice(1)
-
-  for (const block of blocks) {
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
-    if (lines.length === 0) continue
-
-    const rawNameLine = lines[0]!
-    const cleanName = stripQualifications(rawNameLine)
-    if (!cleanName) continue
-    const { first, last } = splitFullName(cleanName)
+  for (const p of people) {
+    const first = (p.firstName ?? '').trim()
+    const last = (p.lastName ?? '').trim()
     if (!first || !last) continue
-
-    const meaningful = lines.slice(1).filter(l => {
-      if (l.toLowerCase() === rawNameLine.toLowerCase()) return false
-      if (l.toLowerCase() === cleanName.toLowerCase()) return false
-      if (isNoiseLine(l)) return false
-      if (looksLikeLocation(l)) return false
-      return true
-    })
-
-    const jobRole = meaningful[0] ?? null
-    const company = meaningful[1] ?? null
-
     const key = `${first.toLowerCase()} ${last.toLowerCase()}`
     if (seenInPaste.has(key)) continue
     seenInPaste.add(key)
@@ -144,10 +90,10 @@ export function parseSalesNav(text: string, existing: NameLookup[]): SalesNavCan
     candidates.push({
       firstName: first,
       lastName: last,
-      company,
-      jobRole,
+      company: p.company?.trim() || null,
+      jobRole: p.jobTitle?.trim() || null,
       isDuplicate: existingKeys.has(key),
-      flagged: isSingleLetterSurname(last),
+      flagged: Boolean(p.flagSurname),
     })
   }
 

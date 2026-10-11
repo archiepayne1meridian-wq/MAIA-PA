@@ -2,7 +2,7 @@ import { buildDashboardData } from '../data'
 import AgentPageShell from '../components/AgentPageShell'
 import MercuryWorkspace from './MercuryWorkspace'
 
-export const metadata = { title: 'MERCURY — Message Drafts' }
+export const metadata = { title: 'MERCURY — Outreach' }
 
 export default async function MercuryPage() {
   const { agents } = await buildDashboardData()

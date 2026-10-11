@@ -36,6 +36,28 @@ export async function askWith(
   return block.text
 }
 
+// Full-history chat turn — unlike askWith (single user turn), this takes the
+// whole conversation so far and returns just the next assistant reply. Used by
+// the standalone chat-tab UIs (e.g. MERCURY's LinkedIn Messages / Quick
+// Replies) that keep their own in-memory message list client-side.
+export async function askChat(
+  systemPrompt: string,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  maxTokens = 1024,
+  model?: string,
+): Promise<string> {
+  const message = await getClient().messages.create({
+    model: model ?? env.ANTHROPIC_MODEL(),
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages,
+  })
+
+  const block = message.content[0]
+  if (block.type !== 'text') throw new Error('Unexpected response type from Claude')
+  return block.text
+}
+
 export interface WebSearchTrace {
   query: string | null
   results: { title: string; url: string }[]

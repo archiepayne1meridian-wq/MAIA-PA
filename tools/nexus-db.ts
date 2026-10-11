@@ -133,6 +133,14 @@ export async function deleteProspect(id: string): Promise<void> {
   await getDb().delete(nexus_prospects).where(eq(nexus_prospects.id, id))
 }
 
+// Hard delete an entire batch — for undoing a bad import (e.g. a parser bug
+// that produced garbage candidates), not for normal prospect lifecycle
+// management, which stays soft-delete-only via softDeleteProspect above.
+export async function deleteProspectsByBatch(batch: string): Promise<number> {
+  const result = await getDb().delete(nexus_prospects).where(eq(nexus_prospects.batch, batch))
+  return result.changes ?? 0
+}
+
 // Soft delete — DNC the prospect and note why, rather than removing the row.
 export async function softDeleteProspect(id: string, note: string): Promise<void> {
   const current = await getProspectById(id)

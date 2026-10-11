@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
-import { listProspects, addProspect, type WashFilter } from '../../../../../../tools/nexus-db'
+import { listProspects, getStats, addProspect, type WashFilter } from '../../../../../../tools/nexus-db'
 
 const VALID_FILTERS: WashFilter[] = ['all', 'green', 'red', 'dnc', 'unwashed']
 
@@ -13,8 +13,11 @@ export async function GET(req: NextRequest) {
   const filter: WashFilter = VALID_FILTERS.includes(filterParam as WashFilter) ? (filterParam as WashFilter) : 'all'
 
   try {
-    const prospects = await listProspects(filter)
-    return NextResponse.json({ prospects })
+    const [prospects, stats] = await Promise.all([listProspects(filter), getStats()])
+    return NextResponse.json({
+      prospects,
+      totals: { total: stats.total, green: stats.green, red: stats.red, dnc: stats.dnc, unwashed: stats.unwashed },
+    })
   } catch (err) {
     console.error('[nexus/prospects] GET failed:', err)
     return NextResponse.json({ error: 'Failed to load prospects' }, { status: 500 })
@@ -29,7 +32,9 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as {
     last_name?: string; first_name?: string; company?: string; job_role?: string
     employment_status?: string; lead_channel?: string; country?: string
-    linkedin_url?: string; wash_result?: string | null; batch?: string
+    linkedin_url?: string; email?: string; phone?: string
+    wash_result?: string | null; wash_reason?: string; date_washed?: string; rewash_after?: string; notes?: string
+    batch?: string
   }
 
   if (!body.first_name?.trim() && !body.last_name?.trim()) {

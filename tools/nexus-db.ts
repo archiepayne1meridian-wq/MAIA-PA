@@ -14,7 +14,13 @@ export interface NexusProspect {
   lead_channel: string
   country: string
   linkedin_url: string | null
+  email: string | null
+  phone: string | null
   wash_result: string | null
+  wash_reason: string | null
+  date_washed: string | null
+  rewash_after: string | null
+  notes: string | null
   batch: string | null
   created_at: number
   updated_at: number
@@ -45,7 +51,13 @@ export interface NewProspectInput {
   lead_channel?: string
   country?: string
   linkedin_url?: string | null
+  email?: string | null
+  phone?: string | null
   wash_result?: string | null
+  wash_reason?: string | null
+  date_washed?: string | null
+  rewash_after?: string | null
+  notes?: string | null
   batch?: string | null
 }
 
@@ -62,7 +74,13 @@ export async function addProspect(input: NewProspectInput): Promise<string> {
     lead_channel: input.lead_channel ?? 'Cold - LinkedIn',
     country: input.country ?? 'Switzerland',
     linkedin_url: input.linkedin_url ?? null,
+    email: input.email ?? null,
+    phone: input.phone ?? null,
     wash_result: input.wash_result ?? null,
+    wash_reason: input.wash_reason ?? null,
+    date_washed: input.date_washed ?? null,
+    rewash_after: input.rewash_after ?? null,
+    notes: input.notes ?? null,
     batch: input.batch ?? null,
     created_at: now,
     updated_at: now,
@@ -70,7 +88,7 @@ export async function addProspect(input: NewProspectInput): Promise<string> {
   return id
 }
 
-// Bulk insert for the Sales Nav confirm step and the one-time seed script —
+// Bulk insert for the Sales Nav confirm step and one-time seed scripts —
 // a loop of addProspect would also work but this keeps a batch import to a
 // single statement.
 export async function addProspectsBulk(inputs: NewProspectInput[]): Promise<number> {
@@ -87,7 +105,13 @@ export async function addProspectsBulk(inputs: NewProspectInput[]): Promise<numb
       lead_channel: input.lead_channel ?? 'Cold - LinkedIn',
       country: input.country ?? 'Switzerland',
       linkedin_url: input.linkedin_url ?? null,
+      email: input.email ?? null,
+      phone: input.phone ?? null,
       wash_result: input.wash_result ?? null,
+      wash_reason: input.wash_reason ?? null,
+      date_washed: input.date_washed ?? null,
+      rewash_after: input.rewash_after ?? null,
+      notes: input.notes ?? null,
       batch: input.batch ?? null,
       created_at: now,
       updated_at: now,
@@ -102,8 +126,61 @@ export async function updateProspect(id: string, fields: Partial<NewProspectInpu
     .where(eq(nexus_prospects.id, id))
 }
 
+// Hard delete — kept as a low-level primitive, but the API route no longer
+// calls this directly. "Never hard-delete a prospect" is enforced at the
+// route layer via softDeleteProspect below.
 export async function deleteProspect(id: string): Promise<void> {
   await getDb().delete(nexus_prospects).where(eq(nexus_prospects.id, id))
+}
+
+// Soft delete — DNC the prospect and note why, rather than removing the row.
+export async function softDeleteProspect(id: string, note: string): Promise<void> {
+  const current = await getProspectById(id)
+  const notes = current?.notes ? `${current.notes}\n${note}` : note
+  await getDb().update(nexus_prospects)
+    .set({ wash_result: 'Do Not Contact', notes, updated_at: Math.floor(Date.now() / 1000) })
+    .where(eq(nexus_prospects.id, id))
+}
+
+// Wash-result upgrade path is append-only: Unwashed -> anything; Red -> Green
+// or DNC; Green -> DNC only; DNC -> nothing. A row never moves "backwards"
+// (e.g. Green can't be downgraded to Red/Unwashed by a later upload) — this
+// mirrors how compliance re-washes work in practice: a later wash can only
+// confirm or escalate risk, never un-confirm an earlier clean result.
+const WASH_RANK: Record<string, number> = { 'Do Not Contact': 3, 'Red': 2, 'Green': 2, 'Unwashed': 0 }
+function canUpgradeWash(current: string | null, next: string): boolean {
+  const currentLabel = current ?? 'Unwashed'
+  if (currentLabel === 'Do Not Contact') return false
+  if (currentLabel === next) return true
+  if (currentLabel === 'Unwashed') return true
+  if (currentLabel === 'Red') return next === 'Green' || next === 'Do Not Contact'
+  if (currentLabel === 'Green') return next === 'Do Not Contact'
+  return false
+}
+
+export interface WashUpgradeInput {
+  washResult: 'Green' | 'Red' | 'Do Not Contact'
+  washReason?: string | null
+  dateWashed?: string | null
+  rewashAfter?: string | null
+}
+
+// Returns whether the upgrade was actually applied (false if blocked by the
+// append-only rule above — the caller surfaces these as "skipped" so Archie
+// can see a downgrade attempt was ignored, not silently lost).
+export async function applyWashUpgrade(id: string, input: WashUpgradeInput): Promise<boolean> {
+  const current = await getProspectById(id)
+  if (!current) return false
+  if (!canUpgradeWash(current.wash_result, input.washResult)) return false
+
+  await getDb().update(nexus_prospects).set({
+    wash_result: input.washResult,
+    wash_reason: input.washReason ?? current.wash_reason,
+    date_washed: input.dateWashed ?? current.date_washed,
+    rewash_after: input.washResult === 'Red' ? (input.rewashAfter ?? current.rewash_after) : null,
+    updated_at: Math.floor(Date.now() / 1000),
+  }).where(eq(nexus_prospects.id, id))
+  return true
 }
 
 // All (first_name, last_name) pairs, lower-cased, for duplicate detection on

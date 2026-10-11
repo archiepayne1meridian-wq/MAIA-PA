@@ -522,7 +522,13 @@ export const nexus_prospects = sqliteTable('nexus_prospects', {
   lead_channel: text('lead_channel').notNull().default('Cold - LinkedIn'),
   country: text('country').notNull().default('Switzerland'),
   linkedin_url: text('linkedin_url'),
+  email: text('email'),
+  phone: text('phone'),
   wash_result: text('wash_result'),   // 'Green' | 'Red' | 'Do Not Contact' | null
+  wash_reason: text('wash_reason'),   // reason given in the wash-result file
+  date_washed: text('date_washed'),   // DD/MM/YYYY string, as supplied by compliance
+  rewash_after: text('rewash_after'), // DD/MM/YYYY string — Red only
+  notes: text('notes'),
   batch: text('batch'),
   created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),

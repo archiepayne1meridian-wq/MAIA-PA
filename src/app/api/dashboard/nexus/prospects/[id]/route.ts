@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
-import { updateProspect, deleteProspect } from '../../../../../../../tools/nexus-db'
+import { updateProspect, softDeleteProspect } from '../../../../../../../tools/nexus-db'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!(await requireDashboardAuth())) {
@@ -18,13 +18,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 }
 
+// Never hard-deletes — DNCs the prospect and notes why, per the Prospects
+// agent's "never lose a name" rule.
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const { id } = await params
   try {
-    await deleteProspect(id)
+    await softDeleteProspect(id, 'Removed by Archie (soft delete — set to Do Not Contact)')
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error('[nexus/prospects/[id]] DELETE failed:', err)

@@ -237,7 +237,10 @@ export default function MaiaChatBar() {
   // The new three-column dashboard home has its own chat input bar — this
   // global floating one would sit directly on top of it with no scroll
   // clearance (that shell is height:100vh, overflow:hidden by design).
-  if (pathname === '/dashboard') return null
+  //
+  // Prospects is an Excel-style data grid — it must never show a chat input
+  // at all, not even this global one.
+  if (pathname === '/dashboard' || pathname === '/dashboard/nexus') return null
 
   return (
     <div className={s.maiaChatBarWrap}>

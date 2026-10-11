@@ -15,7 +15,6 @@ const EMPTY_STATE_CTA: Partial<Record<ConversationAgent, { label: string; action
   linkedin: { label: 'Open LinkedIn workspace', action: '/dashboard/iris' },
   calls: { label: 'Open Calls workspace', action: '/dashboard/apollo' },
   practice: { label: 'Open Practice workspace', action: '/dashboard/diana' },
-  prospects: { label: 'Open Prospects workspace', action: '/dashboard/nexus' },
   study: { label: 'Open Study workspace', action: '/dashboard/athena' },
   social: { label: 'Open Social workspace', action: '/dashboard/social' },
 }
@@ -27,7 +26,6 @@ const AGENT_FILE_ACCEPT: Partial<Record<ConversationAgent, string[]>> = {
   linkedin: ['png', 'jpg', 'jpeg', 'webp'],
   news: ['pdf', 'png', 'jpg'],
   study: ['pdf', 'docx'],
-  prospects: ['csv', 'xlsx'],
 }
 const DEFAULT_FILE_ACCEPT = ['png', 'jpg', 'jpeg', 'webp', 'pdf']
 

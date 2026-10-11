@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import s from '../hub.module.css'
 import AgentRailNew from './AgentRailNew'
 import ConversationCentre, { type ConversationCentreHandle } from './ConversationCentre'
@@ -10,6 +11,7 @@ import { HUB_AGENTS, type ConversationAgent } from './hub-agents'
 const RAIL_COLLAPSED_KEY = 'maia_rail_collapsed'
 
 export default function HubShell() {
+  const router = useRouter()
   const [activeId, setActiveId] = useState<ConversationAgent>('hub')
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
   // Default false (expanded, matching the hub's default state) until the
@@ -43,7 +45,12 @@ export default function HubShell() {
 
   // Auto-collapse on entering any agent, auto-expand on returning to the hub —
   // the manual toggle (below) can still override this at any time afterwards.
+  //
+  // Prospects is an Excel-style data grid, never a chat agent — selecting it
+  // navigates straight to its dedicated workspace instead of opening the
+  // generic conversation shell.
   function selectAgent(id: ConversationAgent) {
+    if (id === 'prospects') { router.push('/dashboard/nexus'); return }
     setActiveId(id)
     setCollapsed(id !== 'hub')
   }

@@ -18,6 +18,18 @@ export interface HubAgentMeta {
   icon: string   // single emoji — shown alone in the collapsed rail strip
 }
 
+// Agents with their own dedicated full-page workspace — selecting one of
+// these (from the hub rail, or from another full-page agent's own rail)
+// navigates straight there rather than opening the generic hub chat tile.
+export const AGENT_WORKSPACE_ROUTE: Partial<Record<ConversationAgent, string>> = {
+  prospects: '/dashboard/nexus',
+  calls: '/dashboard/apollo',
+  linkedin: '/dashboard/iris',
+  practice: '/dashboard/diana',
+  study: '/dashboard/athena',
+  social: '/dashboard/social',
+}
+
 export const HUB_AGENTS: HubAgentMeta[] = [
   { id: 'hub', name: 'MAIA', role: 'Orchestrator', contextTitle: 'MAIA HUB', time: 'now', preview: "Good morning. Today's angle ready →", dotOn: true, icon: '🏠' },
   { id: 'news', name: 'News', role: 'Financial Intelligence', contextTitle: 'NEWS', time: '8:02', preview: 'UK pension IHT confirmed Apr 2027', dotOn: true, icon: '📰' },

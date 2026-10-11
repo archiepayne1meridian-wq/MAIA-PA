@@ -23,6 +23,7 @@ interface NexusProspect {
   rewash_after: string | null
   notes: string | null
   batch: string | null
+  flagged: number
   created_at: number
   updated_at: number
 }
@@ -37,6 +38,7 @@ interface SalesNavCandidate {
   company: string | null
   jobRole: string | null
   isDuplicate: boolean
+  flagged: boolean
 }
 
 // First Name, Last Name, Job Title, Company, LinkedIn URL, Wash Result, Date Washed
@@ -115,12 +117,14 @@ export default function NexusWorkspace() {
 
   const [salesNavOpen, setSalesNavOpen] = useState(false)
   const [washUploadOpen, setWashUploadOpen] = useState(false)
+  const [contextRefreshKey, setContextRefreshKey] = useState(0)
 
   const [anchor, setAnchor] = useState<CellPos | null>(null)
   const [focus, setFocus] = useState<CellPos | null>(null)
   const draggingRef = useRef(false)
 
   const load = useCallback(() => {
+    setContextRefreshKey(k => k + 1)
     fetch('/api/dashboard/nexus/prospects?filter=all')
       .then(r => r.json() as Promise<{ prospects: NexusProspect[] }>)
       .then(d => setProspects(d.prospects))
@@ -369,14 +373,14 @@ export default function NexusWorkspace() {
                         <td className={`${s.nexusNameCell} ${selCls(i, 0)}`} onMouseDown={e => onCellMouseDown(i, 0, e)} onMouseEnter={() => onCellMouseEnter(i, 0)}>
                           {p.first_name || '—'}
                         </td>
-                        <td className={`${s.nexusNameCell} ${selCls(i, 1)}`} onMouseDown={e => onCellMouseDown(i, 1, e)} onMouseEnter={() => onCellMouseEnter(i, 1)}>
+                        <td className={`${s.nexusNameCell} ${p.flagged ? s.nexusCellFlagged : ''} ${selCls(i, 1)}`} onMouseDown={e => onCellMouseDown(i, 1, e)} onMouseEnter={() => onCellMouseEnter(i, 1)} title={p.flagged ? 'Surname incomplete — needs checking' : undefined}>
                           {p.last_name || '—'}
                         </td>
                         <td className={`${s.nexusMutedCell} ${selCls(i, 2)}`} onMouseDown={e => onCellMouseDown(i, 2, e)} onMouseEnter={() => onCellMouseEnter(i, 2)}>
                           {p.job_role || '—'}
                         </td>
                         <td className={`${s.nexusMutedCell} ${selCls(i, 3)}`} onMouseDown={e => onCellMouseDown(i, 3, e)} onMouseEnter={() => onCellMouseEnter(i, 3)}>
-                          {p.company || '—'}
+                          {p.company ?? ''}
                         </td>
                         <td className={selCls(i, 4)} onMouseDown={e => onCellMouseDown(i, 4, e)} onMouseEnter={() => onCellMouseEnter(i, 4)}>
                           {p.linkedin_url ? (
@@ -406,7 +410,7 @@ export default function NexusWorkspace() {
           </div>
         </div>
 
-        <ContextPanel agent="prospects" contextTitle="PROSPECTS" />
+        <ContextPanel agent="prospects" contextTitle="PROSPECTS" refreshKey={contextRefreshKey} />
       </div>
 
       {toast && <div className={s.nexusToast}>{toast}</div>}
@@ -468,7 +472,7 @@ function SalesNavModal({ onClose, showToast, onDone }: {
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null)
+  const [result, setResult] = useState<{ imported: number; skipped: number; flagged: number } | null>(null)
 
   async function importNames() {
     if (!text.trim()) return
@@ -484,12 +488,13 @@ function SalesNavModal({ onClose, showToast, onDone }: {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true, candidates: parsed.candidates }),
       })
-      const confirmed = await confirmRes.json() as { added: number }
+      const confirmed = await confirmRes.json() as { added: number; skipped: number; flagged: number }
 
-      setResult({ imported: confirmed.added, skipped: parsed.duplicates })
+      setResult({ imported: confirmed.added, skipped: confirmed.skipped, flagged: confirmed.flagged })
       setText('')
       showToast(`${confirmed.added} prospect${confirmed.added === 1 ? '' : 's'} imported`)
       onDone()
+      setTimeout(onClose, 2000)
     } catch {
       showToast('Import failed')
     } finally {
@@ -515,7 +520,8 @@ function SalesNavModal({ onClose, showToast, onDone }: {
 
       {result && (
         <div className={s.nexusImportResult}>
-          ✓ {result.imported} imported · {result.skipped} skipped (already in database)
+          ✓ {result.imported} imported · {result.skipped} duplicate{result.skipped === 1 ? '' : 's'} skipped
+          {result.flagged > 0 && <><br />⚠ {result.flagged} name{result.flagged === 1 ? '' : 's'} need{result.flagged === 1 ? 's' : ''} checking (surname incomplete)</>}
         </div>
       )}
     </ModalShell>

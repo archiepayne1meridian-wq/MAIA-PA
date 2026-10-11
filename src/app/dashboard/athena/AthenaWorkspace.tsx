@@ -104,12 +104,12 @@ export default function AthenaWorkspace() {
       <div className={s.fullPageTopbar}>
         <a href="/dashboard" className={s.fpBack}>← Dashboard</a>
         <span className={s.fpPageTitle}>ATHENA</span>
-        <span className={s.fpPageSubtitle}>R01 Qualification &amp; Product Knowledge</span>
+        <span className={s.fpPageSubtitle}>Qualification &amp; Product Knowledge</span>
       </div>
 
       <div className={s.athenaV2MainTabs}>
         <button className={`${s.athenaV2MainTab} ${tab === 'r01' ? s.athenaV2MainTabActive : ''}`} onClick={() => setTab('r01')}>
-          R01 Qualification
+          Qualification
         </button>
         <button className={`${s.athenaV2MainTab} ${tab === 'product' ? s.athenaV2MainTabActive : ''}`} onClick={() => setTab('product')}>
           Product Knowledge
@@ -213,7 +213,7 @@ function R01Tab({ showToast, onReview }: { showToast: (t: string) => void; onRev
   return (
     <div className={s.fpCol} style={{ flex: 1 }}>
       <div className={s.fpColHead}>
-        <div className={s.fpColTitle}>R01 Qualification</div>
+        <div className={s.fpColTitle}>Qualification</div>
         {dueRemaining !== null && <div className={s.fpColSub}>{dueRemaining} card{dueRemaining === 1 ? '' : 's'} due today</div>}
       </div>
 

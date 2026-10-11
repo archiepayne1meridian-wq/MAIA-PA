@@ -8,14 +8,14 @@ import FileDropZone from './FileDropZone'
 import CallUploadFlow from '../apollo/CallUploadFlow'
 
 // What the empty-state CTA does for each agent — most just focus the input
-// (it's the only thing that works for them so far), but News/LinkedIn retry
-// their auto-populate and Calls points at its real dedicated workspace.
+// (it's the only thing that works for them so far), but News retries its
+// auto-populate and Calls/Social point at their real dedicated workspace.
+// Study/Practice have no entry here — the hub redirects past this tile
+// straight to their dedicated page, so it never renders for them.
 const EMPTY_STATE_CTA: Partial<Record<ConversationAgent, { label: string; action: 'retry' | 'focus' | string }>> = {
   news: { label: 'Try again', action: 'retry' },
   linkedin: { label: 'Open LinkedIn workspace', action: '/dashboard/iris' },
   calls: { label: 'Open Calls workspace', action: '/dashboard/apollo' },
-  practice: { label: 'Open Practice workspace', action: '/dashboard/diana' },
-  study: { label: 'Open Study workspace', action: '/dashboard/athena' },
   social: { label: 'Open Social workspace', action: '/dashboard/social' },
 }
 

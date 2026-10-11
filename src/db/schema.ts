@@ -530,8 +530,19 @@ export const nexus_prospects = sqliteTable('nexus_prospects', {
   rewash_after: text('rewash_after'), // DD/MM/YYYY string — Red only
   notes: text('notes'),
   batch: text('batch'),
+  flagged: integer('flagged').notNull().default(0), // 1 = needs a human check (e.g. surname parsed as a single letter)
   created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
+})
+
+// One row per Sales Nav import — read back as "the last import" for the
+// Prospects right-panel LAST IMPORT section. Not a running history UI, just
+// enough to show what the most recent import did until the next one overwrites it.
+export const nexus_import_log = sqliteTable('nexus_import_log', {
+  id: text('id').primaryKey(),
+  added: integer('added').notNull(),
+  skipped: integer('skipped').notNull(),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
 })
 
 // ATHENA rebuild — R01 qualification flashcards + deVere product knowledge base.

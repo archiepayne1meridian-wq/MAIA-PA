@@ -6,7 +6,13 @@ import s from '../hub.module.css'
 import AgentRailNew from './AgentRailNew'
 import ConversationCentre, { type ConversationCentreHandle } from './ConversationCentre'
 import ContextPanel from './ContextPanel'
-import { HUB_AGENTS, type ConversationAgent } from './hub-agents'
+import { AGENT_WORKSPACE_ROUTE, HUB_AGENTS, type ConversationAgent } from './hub-agents'
+
+// Agents that redirect straight to their dedicated full-page workspace
+// instead of opening the generic hub chat tile — unlike Calls/LinkedIn/Social,
+// these have no useful chat-only experience in the hub (Prospects is a data
+// grid, Study/Practice's dedicated pages are the whole workspace).
+const DIRECT_NAV_AGENTS = new Set<ConversationAgent>(['prospects', 'study', 'practice'])
 
 const RAIL_COLLAPSED_KEY = 'maia_rail_collapsed'
 
@@ -46,11 +52,11 @@ export default function HubShell() {
   // Auto-collapse on entering any agent, auto-expand on returning to the hub —
   // the manual toggle (below) can still override this at any time afterwards.
   //
-  // Prospects is an Excel-style data grid, never a chat agent — selecting it
-  // navigates straight to its dedicated workspace instead of opening the
+  // Prospects/Study/Practice have no useful generic-chat experience — selecting
+  // one navigates straight to its dedicated workspace instead of opening the
   // generic conversation shell.
   function selectAgent(id: ConversationAgent) {
-    if (id === 'prospects') { router.push('/dashboard/nexus'); return }
+    if (DIRECT_NAV_AGENTS.has(id)) { router.push(AGENT_WORKSPACE_ROUTE[id] ?? '/dashboard'); return }
     setActiveId(id)
     setCollapsed(id !== 'hub')
   }

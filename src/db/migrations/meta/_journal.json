@@ -309,6 +309,20 @@
       "when": 1791674358079,
       "tag": "0043_reflective_jane_foster",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1791754184884,
+      "tag": "0044_big_madame_masque",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1791754449278,
+      "tag": "0045_military_meteorite",
+      "breakpoints": true
     }
   ]
 }

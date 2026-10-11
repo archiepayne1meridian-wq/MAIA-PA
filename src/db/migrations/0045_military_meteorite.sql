@@ -1,0 +1,1 @@
+ALTER TABLE `nexus_prospects` ADD `flagged` integer DEFAULT 0 NOT NULL;

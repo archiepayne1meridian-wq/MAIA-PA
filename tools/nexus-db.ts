@@ -1,7 +1,7 @@
 // NEXUS — pure DB functions for prospect tracking. No Claude calls.
 
 import { getDb } from '@/db'
-import { nexus_prospects } from '@/db/schema'
+import { nexus_prospects, nexus_import_log } from '@/db/schema'
 import { eq, desc, sql } from 'drizzle-orm'
 
 export interface NexusProspect {
@@ -22,8 +22,16 @@ export interface NexusProspect {
   rewash_after: string | null
   notes: string | null
   batch: string | null
+  flagged: number
   created_at: number
   updated_at: number
+}
+
+// Rule 3 (Sales Nav parser) — "O.", "B" etc. Duplicated here rather than
+// imported from src/lib/nexus.ts to avoid a circular import (that file
+// already imports from this one).
+function isSingleLetterSurname(last: string | null | undefined): boolean {
+  return /^[A-Za-zÀ-ÿ]\.?$/.test((last ?? '').trim())
 }
 
 export type WashFilter = 'all' | 'green' | 'red' | 'dnc' | 'unwashed'
@@ -59,6 +67,7 @@ export interface NewProspectInput {
   rewash_after?: string | null
   notes?: string | null
   batch?: string | null
+  flagged?: boolean
 }
 
 export async function addProspect(input: NewProspectInput): Promise<string> {
@@ -82,6 +91,7 @@ export async function addProspect(input: NewProspectInput): Promise<string> {
     rewash_after: input.rewash_after ?? null,
     notes: input.notes ?? null,
     batch: input.batch ?? null,
+    flagged: input.flagged ? 1 : 0,
     created_at: now,
     updated_at: now,
   })
@@ -113,6 +123,7 @@ export async function addProspectsBulk(inputs: NewProspectInput[]): Promise<numb
       rewash_after: input.rewash_after ?? null,
       notes: input.notes ?? null,
       batch: input.batch ?? null,
+      flagged: input.flagged ? 1 : 0,
       created_at: now,
       updated_at: now,
     })),
@@ -121,8 +132,14 @@ export async function addProspectsBulk(inputs: NewProspectInput[]): Promise<numb
 }
 
 export async function updateProspect(id: string, fields: Partial<NewProspectInput>): Promise<void> {
+  // A manual surname edit re-evaluates the single-letter-surname flag rather
+  // than leaving it stuck — if Archie fixes "O." to "Oana", the amber
+  // highlight should clear; if he somehow edits it down to one letter, it
+  // should flag now too.
+  const patch: Record<string, unknown> = { ...fields, updated_at: Math.floor(Date.now() / 1000) }
+  if ('last_name' in fields) patch.flagged = isSingleLetterSurname(fields.last_name) ? 1 : 0
   await getDb().update(nexus_prospects)
-    .set({ ...fields, updated_at: Math.floor(Date.now() / 1000) })
+    .set(patch)
     .where(eq(nexus_prospects.id, id))
 }
 
@@ -205,6 +222,16 @@ export async function getAllNamesLower(): Promise<{ id: string; firstLower: stri
     firstLower: (r.first_name ?? '').trim().toLowerCase(),
     lastLower: (r.last_name ?? '').trim().toLowerCase(),
   }))
+}
+
+// One row per Sales Nav import — getLastImport() always reads the newest.
+export async function recordImport(added: number, skipped: number): Promise<void> {
+  await getDb().insert(nexus_import_log).values({ id: crypto.randomUUID(), added, skipped })
+}
+
+export async function getLastImport(): Promise<{ added: number; skipped: number; created_at: number } | null> {
+  const [row] = await getDb().select().from(nexus_import_log).orderBy(desc(nexus_import_log.created_at)).limit(1)
+  return row ?? null
 }
 
 export interface NexusStats {

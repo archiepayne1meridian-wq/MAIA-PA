@@ -2981,12 +2981,14 @@
   resize: vertical;
 }
 
-/* ── NEXUS full-page specifics ────────────────────────────────────────────── */
+/* ── Full-page agents with a persistent sidebar ───────────────────────────── */
 
 /* Two-track version of hub.module.css's .shell/.shellRailCollapsed grid —
-   nexus/layout.tsx uses this to keep the agent rail visible on the Prospects
-   page without touching the shared 3-track grid every other full-page agent
-   deliberately does NOT use. */
+   nexus/layout.tsx, athena/layout.tsx and diana/layout.tsx each use this to
+   keep the agent rail visible on their full-page workspace (Prospects,
+   Study, Practice) without touching the shared 3-track grid the hub itself
+   uses. Other full-page agents (Calls, LinkedIn, Social, Mercury) don't use
+   this — they keep their own "← Dashboard" back-link instead. */
 .nexusShell { display: grid; grid-template-columns: 260px 1fr; transition: grid-template-columns 200ms ease; height: 100vh; overflow: hidden; }
 .nexusShellRailCollapsed { grid-template-columns: 56px 1fr; }
 
@@ -3027,6 +3029,7 @@
   overflow: hidden; text-overflow: ellipsis; max-width: 220px; cursor: cell;
 }
 .nexusMutedCell { color: var(--text-mid); }
+.nexusCellFlagged { background: rgba(245,158,11,0.16); }
 .nexusRow { border-left: 3px solid transparent; }
 .nexusRow:hover td { background: rgba(245,240,235,0.04); }
 

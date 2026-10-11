@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { parseSalesNav, type SalesNavCandidate } from '@/lib/nexus'
-import { getAllNamesLower, addProspectsBulk } from '../../../../../../tools/nexus-db'
+import { getAllNamesLower, addProspectsBulk, recordImport } from '../../../../../../tools/nexus-db'
 
 export async function POST(req: NextRequest) {
   if (!(await requireDashboardAuth())) {
@@ -23,15 +23,20 @@ export async function POST(req: NextRequest) {
 
   try {
     if (body.confirm) {
-      const toAdd = (body.candidates ?? []).filter(c => !c.isDuplicate)
+      const all = body.candidates ?? []
+      const toAdd = all.filter(c => !c.isDuplicate)
+      const skipped = all.length - toAdd.length
+      const flagged = toAdd.filter(c => c.flagged).length
       const added = await addProspectsBulk(toAdd.map(c => ({
         first_name: c.firstName,
         last_name: c.lastName,
         company: c.company,
         job_role: c.jobRole,
+        flagged: c.flagged,
         batch: `salesnav-${new Date().toISOString().slice(0, 10)}`,
       })))
-      return NextResponse.json({ added })
+      await recordImport(added, skipped)
+      return NextResponse.json({ added, skipped, flagged })
     }
 
     if (!body.text?.trim()) {

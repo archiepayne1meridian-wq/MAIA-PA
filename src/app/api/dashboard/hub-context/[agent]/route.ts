@@ -27,6 +27,7 @@ type Section =
   | { type: 'reminders'; title: string; items: { text: string; sub?: string }[] }
   | { type: 'goals'; title: string; shortTerm: { text: string; completed: boolean }[]; longTerm: { text: string; completed: boolean }[] }
   | { type: 'stats'; title: string; rows: { label: string; value: string; color?: string }[] }
+  | { type: 'lastImport'; title: string; added: number; skipped: number; when: string }
   | { type: 'tags'; title: string; tags: { text: string; tone: 'red' | 'amber' | 'green' }[] }
   | { type: 'list'; title: string; items: { text: string; sub?: string }[] }
   | { type: 'empty'; title: string; message: string }

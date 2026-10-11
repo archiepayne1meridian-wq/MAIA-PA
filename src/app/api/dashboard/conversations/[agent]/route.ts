@@ -4,7 +4,14 @@ import { getConversation, appendMessage, appendMessages, type ConversationAgent,
 import { buildMorningBriefMessage, handleHubMessage } from '@/lib/maia-hub-handler'
 import { ensureTodaysBriefInThread, handleCassandraChat } from '@/lib/cassandra-handler'
 import type { ChatTurn } from '@/lib/cassandra'
-import { getCurrentDraft } from '../../../../../../tools/iris'
+import { dispatchChatMessage } from '@/lib/iris-handler'
+import { getCurrentDraft, getPostById } from '../../../../../../tools/iris'
+import {
+  getActiveSession, appendTurn, parseTranscript, startSession, getRecentGeneratedProspects, getTodayAngle,
+} from '../../../../../../tools/diana-db'
+import { generateProspect, parseGeneratedProspect, roleplayTurn, detectGoodbye } from '@/lib/diana'
+
+const DIANA_WEB_USER = 'web'
 
 const VALID_AGENTS = new Set<ConversationAgent>([
   'hub', 'news', 'calls', 'linkedin', 'social', 'practice', 'outreach', 'study', 'prospects',
@@ -155,13 +162,121 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ age
       return NextResponse.json({ messages: [userMessage, maiaMessage] })
     }
 
-    // Other agents' real conversation logic isn't connected yet (next phase) —
-    // persist the message and say so plainly rather than fabricating a reply.
+    if (agent === 'linkedin') {
+      const result = await dispatchChatMessage(content.trim())
+
+      if (result.kind === 'draft') {
+        const post = await getPostById(result.postId)
+        const draftMessage: ConversationMessage = {
+          id: crypto.randomUUID(),
+          role: 'maia',
+          type: 'draft',
+          content: post?.copy ?? result.maiaMessage,
+          metadata: { platformTag: 'LINKEDIN DRAFT', postType: post?.post_type, draftPostId: result.postId },
+          timestamp: Math.floor(Date.now() / 1000),
+        }
+        await appendMessages(agent, [userMessage, draftMessage])
+        return NextResponse.json({ messages: [userMessage, draftMessage] })
+      }
+
+      // '__show_history__' is a dedicated UI mode in the old IRIS workspace —
+      // the Hub thread has no equivalent view, so just point Archie there.
+      const text = result.maiaMessage === '__show_history__'
+        ? "That's a longer history than this thread shows — open the LinkedIn workspace to browse past posts."
+        : result.maiaMessage
+      const maiaMessage: ConversationMessage = {
+        id: crypto.randomUUID(),
+        role: 'maia',
+        type: 'text',
+        content: text,
+        timestamp: Math.floor(Date.now() / 1000),
+      }
+      await appendMessages(agent, [userMessage, maiaMessage])
+      return NextResponse.json({ messages: [userMessage, maiaMessage] })
+    }
+
+    if (agent === 'practice') {
+      const session = await getActiveSession(DIANA_WEB_USER)
+
+      // No active session — this message is the trigger to start one, not a
+      // turn in the call itself. DIANA picks up first, same as /diana/start.
+      if (!session) {
+        const recentJson = await getRecentGeneratedProspects(DIANA_WEB_USER, 8)
+        const recentFirstNames = recentJson
+          .map(j => parseGeneratedProspect(j)?.firstName)
+          .filter((n): n is string => Boolean(n))
+        const todayAngle = await getTodayAngle()
+        const prospect = await generateProspect(recentFirstNames, todayAngle)
+        const newSession = await startSession({ slackUser: DIANA_WEB_USER, generatedProspect: JSON.stringify(prospect) })
+        await appendTurn(newSession.id, 'diana', prospect.openingLine)
+
+        const openingMessage: ConversationMessage = {
+          id: crypto.randomUUID(),
+          role: 'maia',
+          type: 'text',
+          content: prospect.openingLine,
+          timestamp: Math.floor(Date.now() / 1000),
+        }
+        await appendMessages(agent, [userMessage, openingMessage])
+        return NextResponse.json({ messages: [userMessage, openingMessage] })
+      }
+
+      // Active session — this message is Archie's next turn in the call.
+      // A session started via the dedicated Practice workspace's legacy
+      // /diana/session endpoint leaves the transcript empty (DIANA doesn't
+      // speak first there) — mirrors /diana/message's handling of that case.
+      const existingTranscript = parseTranscript(session.transcript_json)
+      const prospect = parseGeneratedProspect(session.generated_prospect)
+      const reply = existingTranscript.length === 0 && prospect
+        ? prospect.openingLine
+        : await roleplayTurn(
+          existingTranscript,
+          content.trim(),
+          session.scenario,
+          (session.difficulty as 'warm' | 'neutral' | 'tough') || 'neutral',
+          false,
+          session.generated_prospect,
+        )
+      await appendTurn(session.id, 'user', content.trim())
+      await appendTurn(session.id, 'diana', reply)
+
+      const replyMessages: ConversationMessage[] = [{
+        id: crypto.randomUUID(),
+        role: 'maia',
+        type: 'text',
+        content: reply,
+        timestamp: Math.floor(Date.now() / 1000),
+      }]
+      if (detectGoodbye(content.trim()) || detectGoodbye(reply)) {
+        replyMessages.push({
+          id: crypto.randomUUID(),
+          role: 'maia',
+          type: 'text',
+          content: "That's the call wrapped — open the Practice workspace to end the session and see your scorecard.",
+          timestamp: Math.floor(Date.now() / 1000),
+        })
+      }
+      await appendMessages(agent, [userMessage, ...replyMessages])
+      return NextResponse.json({ messages: [userMessage, ...replyMessages] })
+    }
+
+    // Social, Study and Outreach have no free-text conversational logic yet —
+    // they're structured review/approval workspaces (post queue, flashcard
+    // deck, email funnel), not open chat. Point Archie at the real thing
+    // rather than pretending a reply was generated.
+    const WORKSPACE_REDIRECT: Partial<Record<ConversationAgent, string>> = {
+      social: 'the Instagram & Facebook workspace',
+      study: 'the Study workspace',
+      outreach: 'the Outreach workspace',
+    }
+    const redirectTarget = WORKSPACE_REDIRECT[agent]
     const stubMessage: ConversationMessage = {
       id: crypto.randomUUID(),
       role: 'maia',
       type: 'text',
-      content: "Noted — this agent's conversation logic isn't connected yet.",
+      content: redirectTarget
+        ? `This thread doesn't do free-text chat yet — open ${redirectTarget} to do that.`
+        : "Noted — this agent's conversation logic isn't connected yet.",
       timestamp: Math.floor(Date.now() / 1000),
     }
     await appendMessages(agent, [userMessage, stubMessage])

@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import s from '../dashboard.module.css'
 import ContextPanel from '../components/ContextPanel'
 import FileDropZone from '../components/FileDropZone'
+import CrmExportPanel, { type CrmRow } from './CrmExportPanel'
 
 interface NexusProspect {
   id: string
@@ -38,13 +39,6 @@ interface SalesNavCandidate {
   isDuplicate: boolean
 }
 
-const EDITABLE_FIELDS: { key: 'last_name' | 'first_name' | 'company' | 'job_role'; label: string }[] = [
-  { key: 'last_name', label: 'Last' },
-  { key: 'first_name', label: 'First' },
-  { key: 'company', label: 'Company' },
-  { key: 'job_role', label: 'Job Role' },
-]
-
 const PAGE_SIZE = 50
 
 function rowClass(p: NexusProspect): string {
@@ -61,11 +55,30 @@ function statusLabel(wash: string | null): string {
   return 'Unwashed'
 }
 
-function toTSV(rows: NexusProspect[]): string {
-  return rows.map(p => [
-    p.last_name ?? '', p.first_name ?? '', p.company ?? '', p.job_role ?? '',
-    p.employment_status, p.lead_channel, p.country, p.linkedin_url ?? '',
-  ].join('\t')).join('\n')
+function washPill(wash: string | null): { emoji: string; label: string; cls: string } {
+  if (wash === 'Green') return { emoji: '🟢', label: 'Green', cls: s.nexusPillGreen }
+  if (wash === 'Red') return { emoji: '🔴', label: 'Red', cls: s.nexusPillRed }
+  if (wash === 'Do Not Contact') return { emoji: '⛔', label: 'DNC', cls: s.nexusPillDnc }
+  return { emoji: '⬜', label: '—', cls: s.nexusPillNone }
+}
+
+function toProspectCrmRow(p: NexusProspect): CrmRow {
+  return {
+    firstName: p.first_name ?? '',
+    lastName: p.last_name ?? '',
+    company: p.company ?? '',
+    jobRole: p.job_role ?? '',
+    linkedinUrl: p.linkedin_url ?? '',
+  }
+}
+
+// Cosmetic-only reformat for display — the upload API only returns unmatched
+// names as a plain "First Last" string, so this never touches stored data.
+function unmatchedDisplay(name: string): string {
+  const parts = name.trim().split(/\s+/)
+  if (parts.length < 2) return name
+  const [first, ...rest] = parts
+  return `${rest.join(' ')}, ${first}`
 }
 
 export default function NexusWorkspace() {
@@ -76,14 +89,11 @@ export default function NexusWorkspace() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [page, setPage] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
-  const [editing, setEditing] = useState<{ id: string; field: string } | null>(null)
-  const [editValue, setEditValue] = useState('')
   const [drawerId, setDrawerId] = useState<string | null>(null)
 
-  const anchorRef = useRef<number | null>(null)
-  const [selection, setSelection] = useState<{ start: number; end: number } | null>(null)
-  const draggingRef = useRef(false)
-  const gridRef = useRef<HTMLDivElement | null>(null)
+  const [salesNavOpen, setSalesNavOpen] = useState(false)
+  const [washUploadOpen, setWashUploadOpen] = useState(false)
+  const [crmExportOpen, setCrmExportOpen] = useState(false)
 
   const load = useCallback(() => {
     fetch('/api/dashboard/nexus/prospects?filter=all')
@@ -107,10 +117,6 @@ export default function NexusWorkspace() {
     dnc: all.filter(p => p.wash_result === 'Do Not Contact').length,
     unwashed: all.filter(p => !p.wash_result).length,
   }), [all])
-
-  function pct(n: number): string {
-    return counts.total > 0 ? `${Math.round((n / counts.total) * 100)}%` : '0%'
-  }
 
   function selectFilter(f: WashFilter) {
     setFilter(f)
@@ -150,73 +156,15 @@ export default function NexusWorkspace() {
   const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
   const paginated = useMemo(() => sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [sorted, page])
 
-  // Clamp/clear any row selection that no longer makes sense after the
-  // visible page changes shape (switching tabs, searching, paging, edits).
-  useEffect(() => { setSelection(null); anchorRef.current = null }, [filter, search, sortKey, sortDir, page])
-  useEffect(() => { setPage(0) }, [search])
+  useEffect(() => { setPage(0) }, [search, filter])
 
-  // ── Excel-style row selection (operates on the current page's rows) ──────
-
-  function onRowMouseDown(index: number, e: React.MouseEvent) {
-    if ((e.target as HTMLElement).closest('a, input, button')) return
-    draggingRef.current = true
-    if (e.shiftKey && anchorRef.current !== null) {
-      setSelection({ start: Math.min(anchorRef.current, index), end: Math.max(anchorRef.current, index) })
-    } else {
-      anchorRef.current = index
-      setSelection({ start: index, end: index })
-    }
+  function headerSort(key: SortKey) {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(key); setSortDir('asc') }
   }
 
-  function onRowMouseEnter(index: number) {
-    if (!draggingRef.current || anchorRef.current === null) return
-    setSelection({ start: Math.min(anchorRef.current, index), end: Math.max(anchorRef.current, index) })
-  }
-
-  useEffect(() => {
-    function onMouseUp() { draggingRef.current = false }
-    window.addEventListener('mouseup', onMouseUp)
-    return () => window.removeEventListener('mouseup', onMouseUp)
-  }, [])
-
-  useEffect(() => {
-    function onCopy(e: ClipboardEvent) {
-      const active = document.activeElement as HTMLElement | null
-      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return
-      if (!selection) return
-      const rows = paginated.slice(selection.start, selection.end + 1)
-      if (rows.length === 0) return
-      e.preventDefault()
-      const tsv = toTSV(rows)
-      e.clipboardData?.setData('text/plain', tsv)
-      if (!e.clipboardData) void navigator.clipboard.writeText(tsv)
-      showToast(`${rows.length} prospect${rows.length === 1 ? '' : 's'} copied — ready to paste`)
-    }
-    document.addEventListener('copy', onCopy)
-    return () => document.removeEventListener('copy', onCopy)
-  }, [selection, paginated])
-
-  // ── Inline cell editing ───────────────────────────────────────────────────
-
-  function startEdit(p: NexusProspect, field: string, current: string | null) {
-    setEditing({ id: p.id, field })
-    setEditValue(current ?? '')
-  }
-
-  async function commitEdit() {
-    if (!editing) return
-    const { id, field } = editing
-    setEditing(null)
-    const current = all.find(p => p.id === id)
-    if (!current || (current as unknown as Record<string, string | null>)[field] === editValue) return
-    setProspects(prev => prev?.map(p => p.id === id ? { ...p, [field]: editValue } : p) ?? prev)
-    try {
-      await fetch(`/api/dashboard/nexus/prospects/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: editValue }),
-      })
-    } catch { load() }
+  function sortArrow(key: SortKey): string {
+    return sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
   }
 
   async function saveDrawerField(id: string, field: string, value: string) {
@@ -238,6 +186,7 @@ export default function NexusWorkspace() {
   }
 
   const drawerProspect = drawerId ? all.find(p => p.id === drawerId) ?? null : null
+  const canExport = filter === 'all' || filter === 'green' || filter === 'unwashed'
 
   return (
     <div className={s.fullPage}>
@@ -256,30 +205,24 @@ export default function NexusWorkspace() {
               Total: {counts.total}
             </button>
             <button className={`${s.nexusSummaryChip} ${s.nexusSummaryChipGreen} ${filter === 'green' ? s.nexusSummaryChipActive : ''}`} onClick={() => selectFilter('green')}>
-              Green: {counts.green}
+              🟢 Green: {counts.green}
             </button>
             <button className={`${s.nexusSummaryChip} ${s.nexusSummaryChipRed} ${filter === 'red' ? s.nexusSummaryChipActive : ''}`} onClick={() => selectFilter('red')}>
-              Red: {counts.red}
+              🔴 Red: {counts.red}
             </button>
             <button className={`${s.nexusSummaryChip} ${s.nexusSummaryChipDnc} ${filter === 'dnc' ? s.nexusSummaryChipActive : ''}`} onClick={() => selectFilter('dnc')}>
-              DNC: {counts.dnc}
+              ⛔ DNC: {counts.dnc}
             </button>
             <button className={`${s.nexusSummaryChip} ${filter === 'unwashed' ? s.nexusSummaryChipActive : ''}`} onClick={() => selectFilter('unwashed')}>
-              Unwashed: {counts.unwashed}
+              ⬜ Unwashed: {counts.unwashed}
             </button>
-          </div>
-
-          {/* Import widgets */}
-          <div className={s.nexusImportRow}>
-            <SalesNavPanel showToast={showToast} onDone={load} existing={all} />
-            <WashXlsxPanel showToast={showToast} onDone={load} />
           </div>
 
           {/* Sheet tabs */}
           <div className={s.nexusSheetTabs}>
             {(['all', 'green', 'red', 'unwashed', 'dnc'] as WashFilter[]).map(f => {
               const activeClass = f === 'green' ? s.nexusSheetTabActiveGreen : f === 'red' ? s.nexusSheetTabActiveRed : f === 'dnc' ? s.nexusSheetTabActiveDnc : ''
-              const emoji = f === 'green' ? '🟢 ' : f === 'red' ? '🔴 ' : f === 'dnc' ? '⛔ ' : f === 'unwashed' ? '⚪ ' : ''
+              const emoji = f === 'green' ? '🟢 ' : f === 'red' ? '🔴 ' : f === 'dnc' ? '⛔ ' : f === 'unwashed' ? '⬜ ' : ''
               const label = f === 'all' ? 'All' : f === 'dnc' ? 'DNC' : f[0].toUpperCase() + f.slice(1)
               const count = f === 'all' ? counts.total : f === 'green' ? counts.green : f === 'red' ? counts.red : f === 'dnc' ? counts.dnc : counts.unwashed
               return (
@@ -296,81 +239,63 @@ export default function NexusWorkspace() {
 
           {filter === 'red' && (
             <div className={s.nexusRedBanner}>
-              ⚠️ These prospects were previously rejected. Upload a new wash results file to update them — they may come through as Green on a second wash.
+              ⚠️ These prospects were previously rejected. Upload a new wash file — they may come through Green on a second wash.
             </div>
           )}
 
-          {/* Search + sort */}
+          {/* Toolbar — search + export */}
           <div className={s.nexusSearchRow}>
             <input
               className={s.nexusSearchInput}
-              placeholder="Search name or company…"
+              placeholder="🔍 Search name or company…"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
-            <select className={s.nexusSortSelect} value={sortKey} onChange={e => setSortKey(e.target.value as SortKey)}>
-              <option value="name">Sort: Name</option>
-              <option value="company">Sort: Company</option>
-              <option value="date_washed">Sort: Date Washed</option>
-            </select>
-            <select className={s.nexusSortSelect} value={sortDir} onChange={e => setSortDir(e.target.value as 'asc' | 'desc')}>
-              <option value="asc">A–Z / Oldest</option>
-              <option value="desc">Z–A / Newest</option>
-            </select>
+            {canExport && (
+              <button className={s.nexusPasteBtn} onClick={() => setCrmExportOpen(true)}>Export for CRM ↓</button>
+            )}
           </div>
 
-          <div className={s.nexusGridWrap} ref={gridRef}>
+          <div className={s.nexusGridWrap}>
             <table className={s.nexusTable}>
               <thead>
                 <tr>
-                  <th>Last</th><th>First</th><th>Company</th><th>Job Role</th><th>Status</th><th>Date Washed</th><th>LinkedIn</th><th>Actions</th>
+                  <th className={s.nexusThSortable} onClick={() => headerSort('name')}>First Name{sortArrow('name')}</th>
+                  <th className={s.nexusThSortable} onClick={() => headerSort('name')}>Last Name{sortArrow('name')}</th>
+                  <th>Job Title</th>
+                  <th className={s.nexusThSortable} onClick={() => headerSort('company')}>Company{sortArrow('company')}</th>
+                  <th>LinkedIn</th>
+                  <th>Wash Result</th>
+                  <th className={s.nexusThSortable} onClick={() => headerSort('date_washed')}>Date Washed{sortArrow('date_washed')}</th>
                 </tr>
               </thead>
               <tbody>
                 {prospects === null ? (
-                  <tr><td colSpan={8} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
+                  <tr><td colSpan={7} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
                 ) : paginated.length === 0 ? (
-                  <tr><td colSpan={8} style={{ color: 'var(--text-dim)' }}>No prospects in this view.</td></tr>
+                  <tr><td colSpan={7} style={{ color: 'var(--text-dim)' }}>No prospects in this view.</td></tr>
                 ) : (
-                  paginated.map((p, i) => {
-                    const selected = selection && i >= selection.start && i <= selection.end
+                  paginated.map(p => {
+                    const pill = washPill(p.wash_result)
                     return (
                       <tr
                         key={p.id}
-                        className={`${s.nexusRow} ${rowClass(p)} ${selected ? s.nexusRowSelected : ''}`}
-                        onMouseDown={e => onRowMouseDown(i, e)}
-                        onMouseEnter={() => onRowMouseEnter(i)}
+                        className={`${s.nexusRow} ${rowClass(p)}`}
+                        onClick={() => setDrawerId(p.id)}
                       >
-                        {EDITABLE_FIELDS.map(f => (
-                          <td
-                            key={f.key}
-                            className={f.key === 'last_name' || f.key === 'first_name' ? s.nexusNameCell : ''}
-                            onDoubleClick={() => startEdit(p, f.key, p[f.key])}
-                          >
-                            {editing?.id === p.id && editing.field === f.key ? (
-                              <input
-                                className={s.nexusCellInput}
-                                autoFocus
-                                value={editValue}
-                                onChange={e => setEditValue(e.target.value)}
-                                onBlur={commitEdit}
-                                onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(null) }}
-                              />
-                            ) : (p[f.key] || '—')}
-                          </td>
-                        ))}
-                        <td>{statusLabel(p.wash_result)}</td>
-                        <td>{p.date_washed || '—'}</td>
+                        <td className={s.nexusNameCell}>{p.first_name || '—'}</td>
+                        <td className={s.nexusNameCell}>{p.last_name || '—'}</td>
+                        <td className={s.nexusMutedCell}>{p.job_role || '—'}</td>
+                        <td className={s.nexusMutedCell}>{p.company || '—'}</td>
                         <td>
                           {p.linkedin_url ? (
-                            <a href={p.linkedin_url} target="_blank" rel="noopener noreferrer" className={s.nexusLink} onClick={e => e.stopPropagation()}>
-                              Profile ↗
+                            <a href={p.linkedin_url} target="_blank" rel="noopener noreferrer" className={s.nexusLinkIcon} onClick={e => e.stopPropagation()} title="Open LinkedIn profile">
+                              🔗
                             </a>
                           ) : <span className={s.nexusEmptyLink}>—</span>}
                         </td>
-                        <td>
-                          <button className={s.nexusEditActionBtn} onClick={() => setDrawerId(p.id)}>Edit</button>
-                        </td>
+                        <td><span className={`${s.nexusPill} ${pill.cls}`}>{pill.emoji} {pill.label}</span></td>
+                        <td className={p.date_washed ? '' : s.nexusMutedCell}>{p.date_washed || '—'}</td>
                       </tr>
                     )
                   })
@@ -381,8 +306,14 @@ export default function NexusWorkspace() {
 
           <div className={s.nexusPaginationRow}>
             <button className={s.nexusPageBtn} onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>← Prev</button>
-            <span>Page {page + 1} of {pageCount} · {sorted.length} prospect{sorted.length === 1 ? '' : 's'}</span>
+            <span>Showing {sorted.length === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min(sorted.length, (page + 1) * PAGE_SIZE)} of {sorted.length}</span>
             <button className={s.nexusPageBtn} onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={page >= pageCount - 1}>Next →</button>
+          </div>
+
+          {/* Bottom action bar — always pinned to the bottom of the page */}
+          <div className={s.nexusBottomBar}>
+            <button className={s.nexusBottomBarBtn} onClick={() => setSalesNavOpen(true)}>📋 Sales Nav Import</button>
+            <button className={s.nexusBottomBarBtn} onClick={() => setWashUploadOpen(true)}>📊 Upload Wash Results</button>
           </div>
         </div>
 
@@ -399,21 +330,63 @@ export default function NexusWorkspace() {
           onRemove={() => void removeProspect(drawerProspect.id)}
         />
       )}
+
+      {salesNavOpen && (
+        <SalesNavModal
+          onClose={() => setSalesNavOpen(false)}
+          showToast={showToast}
+          onDone={load}
+        />
+      )}
+
+      {washUploadOpen && (
+        <WashUploadModal
+          onClose={() => setWashUploadOpen(false)}
+          showToast={showToast}
+          onDone={load}
+        />
+      )}
+
+      {crmExportOpen && (
+        <ModalShell title={`Export for CRM — ${searched.length} prospect${searched.length === 1 ? '' : 's'}`} wide onClose={() => setCrmExportOpen(false)}>
+          <CrmExportPanel rows={searched.map(toProspectCrmRow)} />
+        </ModalShell>
+      )}
     </div>
   )
 }
 
-// ── Sales Nav import — inline panel, single-click import (no modal) ─────────
+// ── Shared modal shell ───────────────────────────────────────────────────────
 
-function SalesNavPanel({ showToast, onDone, existing }: {
+function ModalShell({ title, wide, onClose, children }: {
+  title: string
+  wide?: boolean
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className={s.nexusModalOverlay} onClick={onClose}>
+      <div className={`${s.nexusModal} ${wide ? s.nexusModalWide : ''}`} onClick={e => e.stopPropagation()}>
+        <div className={s.nexusModalHead}>
+          <span className={s.nexusModalTitle}>{title}</span>
+          <button className={s.nexusModalClose} onClick={onClose}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// ── Sales Nav import — modal ─────────────────────────────────────────────────
+
+function SalesNavModal({ onClose, showToast, onDone }: {
+  onClose: () => void
   showToast: (t: string) => void
   onDone: () => void
-  existing: NexusProspect[]
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
-  const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null)
+  const [result, setResult] = useState<{ imported: number; skipped: number; addedRows: CrmRow[] } | null>(null)
 
   async function importNames() {
     if (!text.trim()) return
@@ -431,9 +404,12 @@ function SalesNavPanel({ showToast, onDone, existing }: {
       })
       const confirmed = await confirmRes.json() as { added: number }
 
-      setResult({ imported: confirmed.added, skipped: parsed.duplicates })
+      const addedRows: CrmRow[] = parsed.candidates
+        .filter(c => !c.isDuplicate)
+        .map(c => ({ firstName: c.firstName, lastName: c.lastName, company: c.company ?? '', jobRole: c.jobRole ?? '', linkedinUrl: '' }))
+
+      setResult({ imported: confirmed.added, skipped: parsed.duplicates, addedRows })
       setText('')
-      setCollapsed(true)
       showToast(`${confirmed.added} prospect${confirmed.added === 1 ? '' : 's'} imported`)
       onDone()
     } catch {
@@ -444,44 +420,39 @@ function SalesNavPanel({ showToast, onDone, existing }: {
   }
 
   return (
-    <div className={s.nexusImportPanel}>
-      <div className={s.nexusImportHead}>
-        <span className={s.nexusImportTitle}>📋 Sales Nav Import</span>
-        {result && (
-          <button className={s.nexusImportCollapseBtn} onClick={() => setCollapsed(c => !c)}>
-            {collapsed ? '▸ expand' : '▾ collapse'}
-          </button>
-        )}
+    <ModalShell title="Sales Nav Import" wide={!!result?.addedRows.length} onClose={onClose}>
+      <p className={s.nexusModalHint}>Paste your Sales Navigator search results below.</p>
+      <textarea
+        className={s.nexusTextarea}
+        placeholder="Paste Sales Navigator results here…"
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={10}
+      />
+      <div className={s.nexusModalActions}>
+        <button className={`${s.nexusBtn} ${s.nexusBtnPrimary}`} onClick={() => void importNames()} disabled={busy || !text.trim()}>
+          {busy ? 'Importing…' : 'Import names'}
+        </button>
       </div>
 
-      {collapsed && result ? (
-        <div className={s.nexusImportDoneBadge}>✓ {result.imported} imported, {result.skipped} skipped (already in DB)</div>
-      ) : (
+      {result && (
         <>
-          <textarea
-            className={s.nexusTextarea}
-            placeholder="Paste Sales Navigator results here…"
-            value={text}
-            onChange={e => setText(e.target.value)}
-            rows={8}
-          />
-          <button className={`${s.nexusBtn} ${s.nexusBtnPrimary}`} onClick={() => void importNames()} disabled={busy || !text.trim()}>
-            {busy ? 'Importing…' : 'Import names'}
-          </button>
-          {result && (
-            <div className={s.nexusImportResult}>{result.imported} imported, {result.skipped} skipped (already in DB)</div>
-          )}
+          <div className={s.nexusImportResult}>✓ {result.imported} imported · {result.skipped} skipped (already in database)</div>
+          {result.addedRows.length > 0 && <CrmExportPanel rows={result.addedRows} />}
         </>
       )}
-    </div>
+    </ModalShell>
   )
 }
 
-// ── Wash Results import — xlsx upload, inline panel (no modal) ──────────────
+// ── Wash Results import — modal ──────────────────────────────────────────────
 
-function WashXlsxPanel({ showToast, onDone }: { showToast: (t: string) => void; onDone: () => void }) {
+function WashUploadModal({ onClose, showToast, onDone }: {
+  onClose: () => void
+  showToast: (t: string) => void
+  onDone: () => void
+}) {
   const [busy, setBusy] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
   const [result, setResult] = useState<{ updated: number; unmatched: string[] } | null>(null)
 
   async function handleFile(file: File) {
@@ -494,7 +465,6 @@ function WashXlsxPanel({ showToast, onDone }: { showToast: (t: string) => void; 
       const data = await res.json() as { updated?: number; unmatched?: string[]; error?: string }
       if (!res.ok) throw new Error(data.error ?? 'Upload failed')
       setResult({ updated: data.updated ?? 0, unmatched: data.unmatched ?? [] })
-      setCollapsed(true)
       showToast(`${data.updated ?? 0} wash results updated`)
       onDone()
     } catch (err) {
@@ -505,45 +475,31 @@ function WashXlsxPanel({ showToast, onDone }: { showToast: (t: string) => void; 
   }
 
   return (
-    <div className={s.nexusImportPanel}>
-      <div className={s.nexusImportHead}>
-        <span className={s.nexusImportTitle}>📊 Wash Results Upload</span>
-        {result && (
-          <button className={s.nexusImportCollapseBtn} onClick={() => setCollapsed(c => !c)}>
-            {collapsed ? '▸ expand' : '▾ collapse'}
-          </button>
-        )}
-      </div>
-
-      {collapsed && result ? (
-        <div className={s.nexusImportDoneBadge}>✓ {result.updated} updated</div>
-      ) : (
-        <>
-          <FileDropZone
-            accept={['xlsx', 'xls']}
-            onFile={file => void handleFile(file)}
-            onRejected={() => showToast('Only .xlsx files are accepted')}
-            disabled={busy}
-            icon="📊"
-            label={busy ? 'Uploading…' : 'Drop your wash results .xlsx here or click'}
-            hint=".xlsx only"
-          />
-          {result && (
-            <div className={s.nexusImportResult}>
-              {result.updated} updated.
-              {result.unmatched.length > 0 && (
-                <>
-                  {' '}Unmatched:
-                  <div className={s.nexusImportUnmatchedChips}>
-                    {result.unmatched.map((name, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{name}</span>)}
-                  </div>
-                </>
-              )}
-            </div>
+    <ModalShell title="Upload Wash Results" onClose={onClose}>
+      <p className={s.nexusModalHint}>Upload your wash results Excel file (.xlsx). Matches will be updated automatically.</p>
+      <FileDropZone
+        accept={['xlsx', 'xls']}
+        onFile={file => void handleFile(file)}
+        onRejected={() => showToast('Only .xlsx files are accepted')}
+        disabled={busy}
+        icon="📊"
+        label={busy ? 'Uploading…' : 'Drop your wash results .xlsx here or click'}
+        hint=".xlsx only"
+      />
+      {result && (
+        <div className={s.nexusImportResult}>
+          ✓ {result.updated} updated
+          {result.unmatched.length > 0 && (
+            <>
+              <br />⚠ Unmatched names (check spelling):
+              <div className={s.nexusImportUnmatchedChips}>
+                {result.unmatched.map((name, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{unmatchedDisplay(name)}</span>)}
+              </div>
+            </>
           )}
-        </>
+        </div>
       )}
-    </div>
+    </ModalShell>
   )
 }
 

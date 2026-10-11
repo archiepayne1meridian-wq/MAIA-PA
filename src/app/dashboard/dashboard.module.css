@@ -3010,18 +3010,21 @@
 .nexusPasteBtn:hover { background: var(--accent-dim); }
 
 .nexusGridWrap { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: var(--r); user-select: none; }
-.nexusTable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.nexusTable { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--mono); }
 .nexusTable th {
-  position: sticky; top: 0; z-index: 1; background: var(--raised); text-align: left;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--text-dim); padding: 8px 12px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  position: sticky; top: 0; z-index: 1; background: var(--raised-2); text-align: left;
+  font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-mid); padding: 8px 12px; border: 1px solid var(--border); white-space: nowrap;
 }
+.nexusThSortable { cursor: pointer; user-select: none; }
+.nexusThSortable:hover { color: var(--accent); }
 .nexusTable td {
-  padding: 7px 12px; border-bottom: 1px solid var(--hairline); color: var(--text); white-space: nowrap;
+  height: 36px; max-height: 36px; padding: 0 12px; border: 1px solid var(--hairline); color: var(--text); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; max-width: 220px; cursor: default;
 }
-.nexusRow { border-left: 3px solid transparent; }
-.nexusRow:hover td { background: rgba(245,240,235,0.02); }
+.nexusMutedCell { color: var(--text-mid); }
+.nexusRow { border-left: 3px solid transparent; cursor: pointer; }
+.nexusRow:hover td { background: rgba(245,240,235,0.04); }
 .nexusRowGreen td { background: rgba(34,197,94,0.08); }
 .nexusRowGreen { border-left-color: #22c55e; }
 .nexusRowRed td { background: rgba(220,38,38,0.08); }
@@ -3039,6 +3042,17 @@
 .nexusLink { color: var(--accent); text-decoration: none; }
 .nexusLink:hover { text-decoration: underline; }
 .nexusEmptyLink { color: var(--text-dim); }
+.nexusLinkIcon { color: var(--accent); text-decoration: none; font-size: 13px; }
+.nexusLinkIcon:hover { opacity: 0.7; }
+
+.nexusPill {
+  display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 10.5px;
+  font-weight: 600; padding: 2px 9px; border-radius: 100px; white-space: nowrap;
+}
+.nexusPillGreen { background: rgba(34,197,94,0.14); color: #22c55e; }
+.nexusPillRed { background: rgba(220,38,38,0.14); color: var(--alert); }
+.nexusPillDnc { background: rgba(107,114,128,0.14); color: #9ca3af; }
+.nexusPillNone { background: var(--raised-2); color: var(--text-dim); }
 
 .nexusToast {
   position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -3052,9 +3066,14 @@
 }
 .nexusModal {
   background: var(--raised); border: 1px solid var(--border); border-radius: var(--r);
-  padding: 20px; width: 480px; max-width: 92vw; display: flex; flex-direction: column; gap: 14px;
+  padding: 20px; width: 480px; max-width: 92vw; max-height: 86vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
 }
+.nexusModalWide { width: 760px; }
+.nexusModalHead { display: flex; align-items: center; justify-content: space-between; }
+.nexusModalClose { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 16px; }
 .nexusModalTitle { font-family: var(--display); font-weight: 600; font-size: 15px; }
+.nexusModalHint { font-size: 12.5px; color: var(--text-mid); line-height: 1.5; margin: -6px 0 0; }
 .nexusTextarea {
   width: 100%; min-height: 180px; background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r); padding: 12px 14px; font-size: 12.5px; color: var(--text-mid);
@@ -3338,11 +3357,15 @@
 
 .nexusSheetTabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
 .nexusSheetTab {
-  font-family: var(--display); font-weight: 600; font-size: 12.5px; padding: 8px 16px; border: none;
-  background: none; color: var(--text-dim); cursor: pointer; position: relative; transition: color 0.12s;
+  font-family: var(--display); font-weight: 600; font-size: 12.5px; padding: 8px 16px;
+  border: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 6px 6px 0 0;
+  background: var(--surface); color: var(--text-dim); cursor: pointer; position: relative;
+  margin-bottom: -1px; transition: color 0.12s, background 0.12s;
 }
 .nexusSheetTab:hover { color: var(--text); }
-.nexusSheetTabActive { color: var(--text); }
+.nexusSheetTabActive {
+  background: var(--raised-2); color: var(--text); border-bottom-color: var(--raised-2); z-index: 2;
+}
 .nexusSheetTabActive::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0; background: var(--accent); }
 .nexusSheetTabActiveGreen::after { background: #22c55e; }
 .nexusSheetTabActiveRed::after { background: var(--alert); }
@@ -3353,7 +3376,7 @@
   padding: 10px 14px; font-size: 12px; color: var(--text); line-height: 1.5;
 }
 
-.nexusSearchRow { display: flex; align-items: center; gap: 10px; }
+.nexusSearchRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .nexusSearchInput {
   flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
   padding: 7px 12px; font-size: 12.5px; color: var(--text); outline: none; transition: border-color 0.12s;
@@ -3394,3 +3417,25 @@
 .nexusDrawerInput:focus { border-color: var(--accent-deep); }
 .nexusDrawerReadonly { font-size: 12.5px; color: var(--text-mid); padding: 7px 0; }
 .nexusDrawerActions { display: flex; gap: 8px; margin-top: 8px; }
+
+.nexusBottomBar {
+  display: flex; justify-content: space-between; gap: 12px; flex-shrink: 0;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+.nexusBottomBarBtn {
+  font-family: var(--display); font-weight: 600; font-size: 13px; padding: 10px 18px;
+  border-radius: var(--r); border: 1px solid var(--border); background: var(--raised);
+  color: var(--text); cursor: pointer; transition: 0.12s;
+}
+.nexusBottomBarBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
+
+.nexusCrmExport { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--border); border-radius: var(--r); padding: 12px; background: var(--surface); }
+.nexusCrmExportHead { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--text-mid); }
+.nexusCrmExportTableWrap { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.nexusCrmExportTable { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.nexusCrmExportTable th {
+  position: sticky; top: 0; background: var(--raised-2); text-align: left; font-weight: 700;
+  padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--text-mid);
+}
+.nexusCrmExportTable td { padding: 5px 10px; border-bottom: 1px solid var(--hairline); color: var(--text); }
+.nexusCrmExportEmpty { color: var(--text-dim); text-align: center; padding: 10px; }

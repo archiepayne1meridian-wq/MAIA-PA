@@ -28,6 +28,7 @@ export const AGENT_WORKSPACE_ROUTE: Partial<Record<ConversationAgent, string>> =
   practice: '/dashboard/diana',
   study: '/dashboard/athena',
   social: '/dashboard/social',
+  outreach: '/dashboard/mercury',
 }
 
 export const HUB_AGENTS: HubAgentMeta[] = [

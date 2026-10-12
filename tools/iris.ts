@@ -1,6 +1,6 @@
 // Pure DB functions for IRIS. No Claude calls, no Slack calls.
 
-import { desc, gte, eq, and } from 'drizzle-orm'
+import { desc, gte, eq, and, sql } from 'drizzle-orm'
 import { getDb } from '@/db'
 import { iris_posts, voice_preferences, research_briefs, iris_voice_learnings, iris_chat_messages, maia_preferences } from '@/db/schema'
 
@@ -302,10 +302,18 @@ export async function saveChatMessage(
 }
 
 export async function getChatMessages(limit = 50): Promise<ChatMessage[]> {
+  // created_at is second-granularity (Math.floor(Date.now()/1000)) — a fast
+  // back-and-forth (archie's message saved, then maia's reply saved moments
+  // later) can land two rows in the same second, and ORDER BY created_at
+  // alone has no defined tie-break, so the two can come back swapped. That
+  // silently corrupts conversation order — Claude then sees history ending
+  // on an assistant turn and the API rejects the whole request outright
+  // ("model does not support assistant message prefill"). rowid is SQLite's
+  // own monotonic insertion-order column, immune to timestamp collisions.
   const rows = await getDb()
     .select()
     .from(iris_chat_messages)
-    .orderBy(desc(iris_chat_messages.created_at))
+    .orderBy(desc(sql`rowid`))
     .limit(limit)
   return (rows as ChatMessage[]).reverse()
 }

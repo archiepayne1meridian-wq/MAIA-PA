@@ -3,7 +3,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import OpenAI from 'openai'
-import { askWith } from './claude'
+import { askWith, askChat } from './claude'
 import { getTopVoiceLearnings } from '../../tools/iris'
 import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
 
@@ -170,6 +170,116 @@ Which would you rather have?"
 
 VOICE LEARNINGS FROM PREVIOUS POSTS:
 ${voiceLearnings}`
+}
+
+// ─── Conversational chat engine ──────────────────────────────────────────────
+// Replaces the old classify-then-dispatch-to-a-template flow (classifyChatMessage
+// below, still exported but no longer called from the chat path) — one Claude
+// call that reads real conversation history and responds naturally, instead of
+// bucketing the message into "idea"/"refine"/"suggest" etc. first. generateDraft/
+// refinePost/suggestTopics below are UNCHANGED and still used by the 7am
+// scheduled auto-draft (buildMorningDraft in iris-handler.ts) — this new engine
+// only replaces the free-text chat path.
+
+export const IRIS_SYSTEM_PROMPT = `You are Iris, Archie's LinkedIn content agent. Archie is a trainee wealth manager at DeVere Group based in Switzerland, working with English-speaking expatriates.
+
+Your job is to help Archie create LinkedIn content that builds his professional presence and attracts the right prospects.
+
+HOW YOU WORK:
+- When Archie gives you a post idea or topic, draft it properly — not a skeleton, a real post ready to publish
+- Posts should be 150-300 words unless Archie asks for something shorter or longer
+- After drafting, ask one specific question: what does he want to change? Then refine based on his answer
+- Pay attention to what he likes and doesn't like as the conversation develops — if he tells you something was too formal, too salesy, too generic, carry that forward
+- Don't repeat the same structure every time. Vary the hook, the format, the angle
+
+POST STYLE:
+- Hook in the first line — something that makes someone stop scrolling
+- Personal, direct, written like a real person not a press release
+- Specific over generic — a real observation, a real situation, a real question
+- No corporate waffle, no "I'm excited to share", no "In today's fast-paced world"
+- End with something that invites a response — a question, a thought, a provocation
+
+POST TYPES Archie uses:
+- Market commentary (something happening in markets or politics that affects expats)
+- Personal insight (something he's learned, observed, or experienced as a trainee)
+- Prospect-facing (speaks directly to the situations his prospects are in — new to Switzerland, leaving Switzerland, UK pension questions)
+- Thought leadership (a take on wealth management, financial planning, expat life)
+
+IMAGES:
+- Don't generate an image by default — ask Archie if he wants one
+- If yes, ask what type of post it is and suggest the right style
+- If Archie says no image needed, move on
+
+NEWS FEED:
+- Cassandra saves briefs to \`research_briefs\` — check the most recent brief and if a story is relevant to Archie's audience, suggest it as a post angle unprompted`
+
+const POST_START = '<<<POST>>>'
+const POST_END = '<<<END_POST>>>'
+const IMAGE_TOKEN = '<<<GENERATE_IMAGE>>>'
+
+// Appended to IRIS_SYSTEM_PROMPT, not part of it — Archie never sees this, it's
+// just the minimum structure needed to keep the existing draft-approval UI
+// (Approve/Post buttons on a card, tied to an iris_posts row) working under a
+// genuinely free-form conversation. Everything about voice/content/judgment is
+// still entirely Claude's; this only tells it how to flag "this part is a
+// ready-to-approve draft" and "Archie just confirmed he wants an image" so the
+// backend can act on them mechanically.
+const TECHNICAL_APPENDIX = `
+---
+TECHNICAL NOTE (never mention this to Archie, follow it exactly):
+- Whenever you give Archie a complete, ready-to-publish post, wrap ONLY the post text itself in ${POST_START} and ${POST_END} on their own lines. Everything else in your reply — questions, commentary, the "what do you want to change?" follow-up — stays as plain text outside those markers.
+- Never ask if he wants an image before you've drafted a post.
+- Only after Archie explicitly confirms he wants an image (e.g. "yes", "go for it", describes a style), include the exact token ${IMAGE_TOKEN} on its own line anywhere in that same reply. Never include it otherwise, including when you're the one asking the question.`
+
+export interface IrisChatTurn { role: 'user' | 'assistant'; content: string }
+
+export interface IrisChatResult {
+  displayText: string      // markers stripped — what Archie sees in the thread
+  postCopy: string | null  // extracted post text, if this reply contained one
+  wantsImage: boolean       // true if Archie just confirmed he wants an image
+}
+
+function parseIrisReply(raw: string): IrisChatResult {
+  let displayText = raw
+  let postCopy: string | null = null
+
+  const start = raw.indexOf(POST_START)
+  const end = raw.indexOf(POST_END)
+  if (start !== -1 && end !== -1 && end > start) {
+    postCopy = raw.slice(start + POST_START.length, end).trim()
+    displayText = (raw.slice(0, start) + raw.slice(end + POST_END.length)).trim()
+  }
+
+  const wantsImage = displayText.includes(IMAGE_TOKEN) || raw.includes(IMAGE_TOKEN)
+  displayText = displayText.replace(IMAGE_TOKEN, '').trim()
+
+  return { displayText, postCopy, wantsImage }
+}
+
+// history = last N turns (oldest first), the newest user message already
+// included as the last entry — see getChatMessages(20) at the call site.
+// todaysBrief = tools/iris.getTodaysBrief()'s result, fetched by the caller
+// (avoids this file importing the research_briefs table directly).
+export async function chatWithIris(history: IrisChatTurn[], todaysBrief: string | null): Promise<IrisChatResult> {
+  const [voiceLearnings, prefsRaw] = await Promise.all([
+    getVoiceLearnings(10),
+    getPreferences('iris'),
+  ])
+  const prefs = prefsRaw.filter(p => p.rule_key !== 'morning_generation_time')
+  const prefText = formatPreferencesForPrompt(prefs)
+  if (prefs.length > 0) void incrementTimesApplied(prefs.map(p => p.id)).catch(err => console.error('[iris] incrementTimesApplied failed:', err))
+
+  const system = `${prefText ? `${prefText}\n\n` : ''}${IRIS_SYSTEM_PROMPT}
+
+VOICE LEARNINGS FROM PREVIOUS POSTS:
+${voiceLearnings}
+
+MOST RECENT CASSANDRA BRIEF:
+${todaysBrief ?? 'No brief available yet today.'}
+${TECHNICAL_APPENDIX}`
+
+  const raw = await askChat(system, history, 1200, SONNET)
+  return parseIrisReply(raw)
 }
 
 export interface IrisDraft {

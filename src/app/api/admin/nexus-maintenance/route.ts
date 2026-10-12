@@ -72,9 +72,15 @@ export async function POST(request: Request): Promise<Response> {
     const existing = await getAllNamesLower()
     const existingMap = new Map(existing.map(e => [`${e.firstLower} ${e.lastLower}`, e.id]))
 
-    const DAY = 86400
-    const base = Math.floor(Date.now() / 1000) - 2 * DAY
+    // Anchor just below "right now" (not some fixed "N days ago" — every
+    // prior seed/import batch already sits at its own real insertion
+    // timestamp, which could itself be anywhere from minutes to a day old,
+    // so a fixed offset risks landing BELOW older rows it should sort
+    // above). A genuinely new import gets created_at = the literal moment
+    // it's inserted, which is always later than "now" at the time this
+    // route ran, so it still sorts above the whole reseeded block.
     const now = Math.floor(Date.now() / 1000)
+    const base = now - 1
 
     let updated = 0
     let inserted = 0

@@ -1,0 +1,1 @@
+ALTER TABLE `research_briefs` ADD `weekly_summary` text;

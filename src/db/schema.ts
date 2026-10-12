@@ -96,10 +96,11 @@ export const portfolio_snapshots = sqliteTable('portfolio_snapshots', {
 
 export const research_briefs = sqliteTable('research_briefs', {
   id: text('id').primaryKey(),
-  type: text('type').notNull(),        // 'morning' | 'on_demand'
+  type: text('type').notNull(),        // 'morning' | 'on_demand' | 'market_alert'
   markets_json: text('markets_json').notNull(),
   headlines_json: text('headlines_json').notNull(),
   summary: text('summary').notNull(),
+  weekly_summary: text('weekly_summary'), // populated on Monday morning briefs only
   created_at: integer('created_at').notNull(),
 })
 

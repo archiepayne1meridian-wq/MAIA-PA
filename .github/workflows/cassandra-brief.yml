@@ -3,7 +3,8 @@ name: CASSANDRA Morning Brief
 on:
   schedule:
     - cron: '0 7 * * 1-5'   # 7am UTC — morning brief
-    - cron: '0 14 * * 1-5'  # 2pm UTC — afternoon refresh (new items only)
+    - cron: '0 14 * * 1-5'  # 2pm UTC — afternoon refresh (new items only; also runs the market-alert check)
+    - cron: '0 14 * * 0,6'  # 2pm UTC Sat/Sun — market-alert check only, no weekday brief/refresh to piggyback on
   workflow_dispatch: # manual trigger for testing and deployment verification
 
 jobs:
@@ -26,3 +27,13 @@ jobs:
           curl -f -X POST \
             -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
             "https://maia-pa-production.up.railway.app/api/cron/cassandra/refresh"
+
+  weekend-alert-check:
+    if: github.event.schedule == '0 14 * * 0,6'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger CASSANDRA market-alert check (weekend)
+        run: |
+          curl -f -X POST \
+            -H "Authorization: Bearer ${{ secrets.MAIA_API_KEY }}" \
+            "https://maia-pa-production.up.railway.app/api/cron/cassandra/alert-check"

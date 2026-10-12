@@ -9,13 +9,16 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, and, gte } from 'drizzle-orm'
 import {
   gatherAndFilterArticles, formatBriefText, toHeadlinesJsonCompat,
   fileCallAngleToMuse, answerCassandraFollowUp, CATEGORY_LABEL,
-  type CassandraArticle, type ChatTurn,
+  checkForMarketAlert, formatMarketAlertText, formatWeeklySummary,
+  compoundWeeklyChange, RATE_DECISION_RE,
+  type CassandraArticle, type ChatTurn, type WeeklyIndexMove,
+  type CassandraRelevance, type CassandraCategory,
 } from './cassandra'
-import { getIndexQuotes, getFxQuotes, type IndexSpec } from '../../tools/market-data'
+import { getIndexQuotes, getFxQuotes, type IndexSpec, type IndexQuote } from '../../tools/market-data'
 import { checkMuseHarvest } from './muse-handler'
 import { getDb } from '@/db'
 import { activity, research_briefs, cassandra_items } from '@/db/schema'
@@ -191,6 +194,105 @@ async function runPipeline(excludeUrls: Set<string>): Promise<{
   return { articles, skippedQueries, itemIds, indices, fx }
 }
 
+// ─── Weekly summary (Monday morning briefs only) ──────────────────────────────
+
+async function buildWeeklySummary(): Promise<string | null> {
+  const sevenDaysAgoSecs = Math.floor(Date.now() / 1000) - 7 * 86400
+
+  const rows = await getDb().select().from(research_briefs)
+    .where(and(eq(research_briefs.type, 'morning'), gte(research_briefs.created_at, sevenDaysAgoSecs)))
+    .orderBy(research_briefs.created_at)
+
+  const byLabel = new Map<string, number[]>()
+  for (const row of rows) {
+    try {
+      const parsed = JSON.parse(row.markets_json) as { indices?: IndexQuote[] }
+      for (const q of parsed.indices ?? []) {
+        const arr = byLabel.get(q.label) ?? []
+        arr.push(q.dayChangePct)
+        byLabel.set(q.label, arr)
+      }
+    } catch { /* malformed row — skip */ }
+  }
+  const moves: WeeklyIndexMove[] = [...byLabel.entries()].map(([label, pcts]) => ({
+    label, weeklyChangePct: compoundWeeklyChange(pcts),
+  }))
+
+  const itemRows = await getDb().select().from(cassandra_items).where(gte(cassandra_items.created_at, sevenDaysAgoSecs))
+  const rateDecisionNotes = itemRows
+    .filter(r => RATE_DECISION_RE.test(`${r.title} ${r.summary}`))
+    .map(r => `${r.title} (${r.source})`)
+
+  return formatWeeklySummary(moves, rateDecisionNotes)
+}
+
+// ─── Market alert (POST /api/cron/cassandra/alert-check, plus called from the
+// existing afternoon refresh) ──────────────────────────────────────────────────
+// Reuses today's already-gathered cassandra_items for the rate-decision check
+// rather than running a fresh search — context/cassandra.md's RSS feed lists
+// are dead code (see notes there), so there's no live feed to watch "rate" +
+// "decision" keywords on; this works off whatever the normal Brave+Haiku
+// pipeline already surfaced today instead.
+
+function dbArticleToCassandraArticle(r: typeof cassandra_items.$inferSelect): CassandraArticle {
+  return {
+    title: r.title, source: r.source, url: r.url, published: r.published,
+    summary: r.summary, keyQuote: r.key_quote, callAngle: r.call_angle,
+    contentAngle: r.content_angle,
+    relevance: r.relevance as CassandraRelevance,
+    category: r.category as CassandraCategory,
+  }
+}
+
+async function alreadyAlertedToday(): Promise<boolean> {
+  const [latest] = await getDb().select().from(research_briefs)
+    .where(eq(research_briefs.type, 'market_alert'))
+    .orderBy(desc(research_briefs.created_at)).limit(1)
+  return latest ? isToday(latest.created_at) : false
+}
+
+export async function checkMarketAlert(): Promise<{ fired: boolean }> {
+  if (await alreadyAlertedToday()) return { fired: false }
+
+  const config = loadConfig()
+  const indices = await getIndexQuotes(config.indices).catch(err => {
+    console.error('[cassandra] checkMarketAlert index fetch failed:', err)
+    return [] as IndexQuote[]
+  })
+  const triggeredIndices = checkForMarketAlert(indices)
+
+  const today = todayDateString()
+  const todaysItems = await getDb().select().from(cassandra_items).where(eq(cassandra_items.date, today))
+  const rateDecisionItems = todaysItems.filter(r => RATE_DECISION_RE.test(`${r.title} ${r.summary}`))
+
+  if (triggeredIndices.length === 0 && rateDecisionItems.length === 0) {
+    return { fired: false }
+  }
+
+  const text = formatMarketAlertText(triggeredIndices, rateDecisionItems.map(dbArticleToCassandraArticle))
+
+  await getDb().insert(research_briefs).values({
+    id: crypto.randomUUID(),
+    type: 'market_alert',
+    markets_json: JSON.stringify({ indices: triggeredIndices }),
+    headlines_json: '[]',
+    summary: text,
+    created_at: Math.floor(Date.now() / 1000),
+  })
+
+  const alertMsg: ConversationMessage = {
+    id: crypto.randomUUID(),
+    role: 'maia',
+    type: 'text',
+    content: text,
+    metadata: { source: 'market_alert' },
+    timestamp: Math.floor(Date.now() / 1000),
+  }
+  await appendMessage('news', alertMsg)
+
+  return { fired: true }
+}
+
 // ─── Scheduled morning brief (POST /api/cron/cassandra/brief, existing POST /api/cassandra/brief) ──
 
 export async function buildScheduledBrief(): Promise<void> {
@@ -212,12 +314,21 @@ export async function buildScheduledBrief(): Promise<void> {
     const { articles, skippedQueries, itemIds, indices, fx } = await runPipeline(existingUrls)
     const text = formatBriefText(indices, fx, articles, skippedQueries)
 
+    // Monday only — Tue-Fri get null (fetched fresh, not carried over from a
+    // prior row, since this brief's own markets_json needs to land first).
+    const isMonday = new Date().getDay() === 1
+    const weeklySummary = isMonday ? await buildWeeklySummary().catch(err => {
+      console.error('[cassandra] buildWeeklySummary failed:', err)
+      return null
+    }) : null
+
     await getDb().insert(research_briefs).values({
       id: crypto.randomUUID(),
       type: 'morning',
       markets_json: JSON.stringify({ indices, fx }),
       headlines_json: toHeadlinesJsonCompat(articles),
       summary: text,
+      weekly_summary: weeklySummary,
       created_at: Math.floor(Date.now() / 1000),
     })
 
@@ -279,6 +390,16 @@ export async function buildAfternoonRefresh(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[cassandra] buildAfternoonRefresh failed:', err)
     await getDb().update(activity).set({ output: msg, status: 'error', duration_ms: Date.now() - startMs }).where(eq(activity.id, rowId))
+  }
+
+  // Mid-session market-alert check — "has a 2%+ index move or a BoE/SNB rate
+  // decision happened since this morning's brief" — runs after the refresh
+  // above regardless of whether it found new articles, since a sharp market
+  // move doesn't depend on a fresh article turning up.
+  try {
+    await checkMarketAlert()
+  } catch (err) {
+    console.error('[cassandra] checkMarketAlert (from afternoon refresh) failed:', err)
   }
 }
 
@@ -353,7 +474,7 @@ export type ContextSection =
 
 const FOLLOWING_TOPICS = [
   'UK Pension & Tax', 'Swiss Company News', 'Bond Markets & Rates',
-  'FCA New Rules', 'Swiss Regulation', 'Retirement Destinations', 'Nigel Green / deVere',
+  'Swiss Regulation', 'Retirement Destinations', 'Nigel Green / deVere',
 ]
 
 function timeAgoFrom(createdAtSecs: number): string {

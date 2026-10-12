@@ -71,14 +71,21 @@ const SEARCHES: string[] = [
   'unclaimed pension pots UK 2026',
 
   // Switzerland
-  'Swiss National Bank SNB interest rate 2026',
+  'Swiss National Bank SNB interest rate decision 2026',
   'Switzerland expat financial regulation 2026',
   'Swiss company restructuring redundancy 2026',
   'Novartis OR Roche OR Nestle OR UBS OR ABB OR Trafigura news 2026',
+  'Switzerland news today swissinfo',
 
   // Retirement destinations
-  'Spain Portugal retirement tax expats 2026',
+  'Spain Portugal retirement tax expats NHR non-habitual resident 2026',
   'Mediterranean retirement financial planning 2026',
+
+  // Other cross-border markets deVere serves
+  'Ireland pension tax expat 2026',
+  'Australia superannuation tax expat British 2026',
+  'South Africa expat tax rand 2026',
+  'New Zealand expat pension tax 2026',
 
   // Markets — broad moves only
   'bond market interest rates 2026',
@@ -92,9 +99,8 @@ const SEARCHES: string[] = [
   // deVere CEO
   'Nigel Green deVere 2026',
 
-  // Regulation — new rules only
-  'FCA new rules regulation 2026',
-  'financial regulation change UK Switzerland 2026',
+  // Regulation — Swiss only now, FCA excluded entirely (see FILTER_PROMPT)
+  'Swiss financial regulation change 2026',
 ]
 
 interface RawCandidate extends BraveResult {
@@ -162,20 +168,37 @@ const FILTER_PROMPT = `You are filtering news for Archie Payne, BDA at deVere an
 His job: book meetings with British expats in Switzerland with cross-border financial planning.
 
 INCLUDE — news that could:
-- Affect UK pensions, IHT, or tax for people living abroad
-- Create a reason for a British expat to think about their finances
+- Affect UK pensions, IHT, or tax for people living abroad (pension, retirement,
+  inheritance tax, IHT, estate planning, wealth tax, budget, autumn statement,
+  spring statement, chancellor, HMRC)
+- Create a reason for a British expat to think about their finances (expat,
+  expatriate, British abroad, UK national, overseas)
 - Give Archie a genuine conversation starter on a cold call
-- Be relevant to someone with assets in multiple countries
-- Affect Swiss residents financially (SNB decisions, Swiss company news)
-- Affect popular retirement destinations (Spain, Portugal)
-- Show market conditions affecting assets or pension values
-- Be a quote from Nigel Green (deVere CEO) — always include
-- Be a new regulatory rule from FCA or Swiss regulator
+- Be relevant to someone with assets in multiple countries, especially products
+  that come up in cross-border planning (portfolio bond, offshore bond,
+  investment bond, life assurance)
+- Affect Swiss residents financially — SNB decisions, Swiss franc/CHF moves,
+  Swiss company news (Switzerland, Swiss, Zurich, Geneva, Bern, Basel, Swiss
+  National Bank, SNB)
+- Affect other markets deVere serves: Ireland (Irish pension, Irish tax),
+  Australia (superannuation, Australian tax, Australian budget), South Africa
+  (South African expat, rand), New Zealand (Kiwi expat)
+- Affect popular retirement destinations — Spain, Portugal (retiring abroad,
+  retire overseas, NHR, non-habitual resident)
+- Show market conditions affecting assets or pension values — interest rates,
+  Bank of England, base rate, gilt, bond yield, FTSE, S&P 500, Nasdaq, a market
+  drop or rally
+- Be a quote from Nigel Green (deVere CEO/devere/de Vere Group) — always include
+- Be a new regulatory rule from a Swiss regulator (not FCA — see exclude)
 
 EXCLUDE — always:
 - Cryptocurrency, bitcoin, blockchain, NFTs
 - Individual stock picks or analyst ratings
-- FCA enforcement actions, fines, bans, hearings — new RULES only
+- Anything about the FCA at all — not just enforcement/fines/hearings, the
+  whole regulator is out of scope now (too narrow/domestic for this brief)
+- MiFID, post-trade reporting, EMIR, SFTR, short selling bans, MFSA, ESMA, IOSCO
+- Domestic-only UK noise with no cross-border angle: mortgages, buy-to-let,
+  stamp duty, local council matters, planning permission, individual share bans
 - Generic market commentary with no expat angle
 - Articles older than 7 days
 - Low quality sources — blogs, random finance sites, unknown authors
@@ -226,7 +249,7 @@ export const CATEGORY_LABEL: Record<CassandraCategory, string> = {
   uk_pension: 'UK Pension & Tax',
   swiss_news: 'Swiss Company News',
   markets: 'Bond Markets & Rates',
-  regulation: 'FCA New Rules',
+  regulation: 'Swiss Regulation',
   geopolitical: 'Geopolitical',
   retirement_destinations: 'Retirement Destinations',
   devere_ceo: 'Nigel Green / deVere',
@@ -468,6 +491,77 @@ export function formatBriefText(
     msg += `\n\n_⚠ Some searches unavailable: ${skippedQueries.length} of ${SEARCHES.length} queries failed._`
   }
   return msg
+}
+
+// ─── Market alert ─────────────────────────────────────────────────────────────
+//
+// dayChangePct on IndexQuote/FxQuote is already in percentage-point units
+// (0.50 means "0.50%", not "50%") — see tools/market-data.ts's STUB_INDICES.
+// The threshold below must be on that same scale (2, not 0.02) or every
+// single day would trigger an alert.
+
+export const ALERT_THRESHOLD_PCT = 2 // 2 percentage points
+
+export function checkForMarketAlert(quotes: IndexQuote[]): IndexQuote[] {
+  return quotes.filter(q => Math.abs(q.dayChangePct) >= ALERT_THRESHOLD_PCT)
+}
+
+// A "rate decision" trigger is detected from already-gathered articles (the
+// Brave+Haiku pipeline), not a live RSS feed — context/cassandra.md's
+// regulatory/news feed lists are dead code (see notes there), so this reuses
+// whatever the normal pipeline already surfaced rather than a second fetch.
+export const RATE_DECISION_RE = /\b(bank of england|snb|swiss national bank)\b.{0,60}\b(rate)\b.{0,40}\b(decision|hold|cut|rise|raise|hike)\b/i
+
+export function findRateDecisionArticles(articles: CassandraArticle[]): CassandraArticle[] {
+  return articles.filter(a => RATE_DECISION_RE.test(`${a.title} ${a.summary}`))
+}
+
+export function formatMarketAlertText(
+  triggered: IndexQuote[],
+  rateDecisions: CassandraArticle[],
+): string {
+  const dateLabel = fmtDate(new Date())
+  const lines: string[] = [`*⚡ Market Alert — ${dateLabel}*`]
+
+  if (triggered.length > 0) {
+    const moveLines = triggered.map(q => `${q.label} ${fmtPct(q.dayChangePct)}`).join(' · ')
+    lines.push(`*Index move ≥ ${ALERT_THRESHOLD_PCT}%*\n${moveLines}`)
+  }
+  if (rateDecisions.length > 0) {
+    const noteLines = rateDecisions.map(a => `${a.summary} — ${a.callAngle} (${a.source})`).join('\n')
+    lines.push(`*Rate decision*\n${noteLines}`)
+  }
+  return lines.join('\n\n')
+}
+
+// ─── Weekly summary (Monday morning briefs only) ──────────────────────────────
+
+export interface WeeklyIndexMove {
+  label: string
+  weeklyChangePct: number // compounded daily % moves across the prior week
+}
+
+export function formatWeeklySummary(
+  moves: WeeklyIndexMove[],
+  rateDecisionNotes: string[],
+): string | null {
+  if (moves.length === 0 && rateDecisionNotes.length === 0) return null
+  const lines: string[] = ['*Last Week*']
+  if (moves.length > 0) {
+    lines.push(moves.map(m => `${m.label} ${fmtPct(m.weeklyChangePct)}`).join(' · '))
+  }
+  if (rateDecisionNotes.length > 0) {
+    lines.push(`Central bank decisions: ${rateDecisionNotes.join('; ')}`)
+  }
+  return lines.join('\n')
+}
+
+// Compounds a week's worth of daily % moves (each in percentage-point units,
+// e.g. 0.5 = +0.5%) into one approximate weekly % move — not exact (ignores
+// compounding order within a day) but close enough for a one-line summary.
+export function compoundWeeklyChange(dailyPcts: number[]): number {
+  const factor = dailyPcts.reduce((acc, pct) => acc * (1 + pct / 100), 1)
+  return (factor - 1) * 100
 }
 
 // Compat shape for research_briefs.headlines_json — read by several older

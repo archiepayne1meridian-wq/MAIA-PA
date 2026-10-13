@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import s from '../dashboard.module.css'
 import ContextPanel from '../components/ContextPanel'
-import FileDropZone from '../components/FileDropZone'
 
 interface NexusProspect {
   id: string
@@ -417,7 +416,7 @@ export default function NexusWorkspace() {
           {/* Bottom action bar — always pinned to the bottom of the page */}
           <div className={s.nexusBottomBar}>
             <button className={s.nexusBottomBarBtn} onClick={() => setSalesNavOpen(true)}>📋 Sales Nav Import</button>
-            <button className={s.nexusBottomBarBtn} onClick={() => setWashUploadOpen(true)}>📊 Upload Wash Results</button>
+            <button className={s.nexusBottomBarBtn} onClick={() => setWashUploadOpen(true)}>📊 Paste Wash Results</button>
           </div>
         </div>
 
@@ -546,40 +545,50 @@ function WashUploadModal({ onClose, showToast, onDone }: {
   showToast: (t: string) => void
   onDone: () => void
 }) {
+  const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ updated: number; unmatched: string[] } | null>(null)
+  const [result, setResult] = useState<{ updated: number; unmatched: string[]; invalid: string[] } | null>(null)
 
-  async function handleFile(file: File) {
+  async function processPaste() {
+    if (!text.trim()) return
     setBusy(true)
     setResult(null)
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      const res = await fetch('/api/dashboard/nexus/import-wash-xlsx', { method: 'POST', body: formData })
-      const data = await res.json() as { updated?: number; unmatched?: string[]; error?: string }
-      if (!res.ok) throw new Error(data.error ?? 'Upload failed')
-      setResult({ updated: data.updated ?? 0, unmatched: data.unmatched ?? [] })
+      const res = await fetch('/api/dashboard/nexus/import-wash-paste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      const data = await res.json() as { updated?: number; unmatched?: string[]; invalid?: string[]; error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Processing failed')
+      setResult({ updated: data.updated ?? 0, unmatched: data.unmatched ?? [], invalid: data.invalid ?? [] })
       showToast(`${data.updated ?? 0} wash results updated`)
       onDone()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Upload failed')
+      showToast(err instanceof Error ? err.message : 'Processing failed')
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <ModalShell title="Upload Wash Results" onClose={onClose}>
-      <p className={s.nexusModalHint}>Upload your wash results Excel file (.xlsx). Matches will be updated automatically.</p>
-      <FileDropZone
-        accept={['xlsx', 'xls']}
-        onFile={file => void handleFile(file)}
-        onRejected={() => showToast('Only .xlsx files are accepted')}
+    <ModalShell title="Paste Wash Results" onClose={onClose}>
+      <p className={s.nexusModalHint}>
+        Paste rows straight from the wash results sheet — one prospect per line: First Name, Last Name, Result (Green / Red / Do Not Contact). Copying from Excel works as-is.
+      </p>
+      <textarea
+        className={s.nexusTextarea}
+        placeholder={'James\tHill\tGreen\nSarah\tJones\tRed'}
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={10}
         disabled={busy}
-        icon="📊"
-        label={busy ? 'Uploading…' : 'Drop your wash results .xlsx here or click'}
-        hint=".xlsx only"
       />
+      <div className={s.nexusModalActions}>
+        <button className={`${s.nexusBtn} ${s.nexusBtnPrimary}`} onClick={() => void processPaste()} disabled={busy || !text.trim()}>
+          {busy ? 'Processing…' : 'Process'}
+        </button>
+      </div>
       {result && (
         <div className={s.nexusImportResult}>
           ✓ {result.updated} updated
@@ -588,6 +597,14 @@ function WashUploadModal({ onClose, showToast, onDone }: {
               <br />⚠ Unmatched names (check spelling):
               <div className={s.nexusImportUnmatchedChips}>
                 {result.unmatched.map((name, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{unmatchedDisplay(name)}</span>)}
+              </div>
+            </>
+          )}
+          {result.invalid.length > 0 && (
+            <>
+              <br />⚠ Rows with no valid result (expected Green / Red / Do Not Contact):
+              <div className={s.nexusImportUnmatchedChips}>
+                {result.invalid.map((name, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{unmatchedDisplay(name)}</span>)}
               </div>
             </>
           )}

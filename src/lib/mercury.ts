@@ -155,5 +155,5 @@ export async function runMercuryChat(tab: MercuryChatTab, messages: MercuryChatM
     return askChat(system, messages, 400, SONNET)
   }
   const system = await quickRepliesSystemPrompt()
-  return askChat(system, messages, 400, HAIKU)
+  return askChat(system, messages, 400, SONNET)
 }

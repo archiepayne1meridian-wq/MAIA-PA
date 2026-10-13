@@ -147,6 +147,103 @@ export function parseWashResults(text: string, existing: NameLookup[]): WashUpda
   return results
 }
 
+// ─── Wash results paste parser — rich, Claude-based ──────────────────────────
+//
+// Archie's real wash sheet carries a Comments column with compliance detail
+// (DNC vs. another advisor's active client vs. a pool conflict vs. a named
+// redlisted company) that the plain 3-column paste above can't represent —
+// this routes the full paste (Contact Name / Wash Result / Comments, as
+// copied straight from Excel) through Claude to classify each row.
+
+export type WashCategory = 'ok_to_contact' | 'dnc' | 'others_client' | 'pool_conflict' | 'redlisted_company'
+
+export interface WashResultCandidate {
+  id: string | null
+  name: string
+  result: 'green' | 'red'
+  category: WashCategory
+  reason: string
+  conflictingAdvisor: string | null
+  matched: boolean
+}
+
+const WASH_RESULTS_PARSER_SYSTEM_PROMPT = `You parse wash result data from a deVere Group prospect wash sheet.
+
+You will receive raw tab-separated text copied from Excel. Extract each prospect row and classify it.
+
+For each row return a JSON object with:
+- name: string (the Contact Name column — full name as written)
+- result: "green" | "red"
+- category: one of:
+    "ok_to_contact"     — Green result (Wash Result column says Green)
+    "dnc"                — Red, Comments mention "DO NOT CONTACT" with no CLIENT list mention and no advisor/company named
+    "others_client"      — Red, Comments mention "CLIENT list" (this is another advisor's active client)
+    "pool_conflict"      — Red, Comments say the prospect is under another advisor's cold, lead, or referral pipeline
+    "redlisted_company"  — Red, Comments mention a specific redlisted company (e.g. CERN, UEFA)
+- reason: string (the full Comments text, with any "DO NOT CONTACT - " / "OK TO CONTACT - " prefix removed)
+- conflicting_advisor: string | null (pool_conflict only — the advisor name(s) after the word "under", e.g. "Connor Shepherd". null for every other category)
+
+Classification priority if Comments are ambiguous:
+1. If "CLIENT list" appears → others_client
+2. If "DO NOT CONTACT" appears with no advisor or company named → dnc
+3. If a specific advisor name appears after "under" → pool_conflict
+4. If a specific redlisted company is named → redlisted_company
+5. Green → ok_to_contact
+
+Skip the header row. Skip any row without a clear Contact Name and Wash Result.
+
+Return ONLY a valid JSON array. No prose, no markdown, no explanation.`
+
+interface RawWashRow {
+  name?: string
+  result?: string
+  category?: string
+  reason?: string
+  conflicting_advisor?: string | null
+}
+
+const WASH_CATEGORIES: WashCategory[] = ['ok_to_contact', 'dnc', 'others_client', 'pool_conflict', 'redlisted_company']
+
+export async function parseWashResultsRich(text: string, existing: NameLookup[]): Promise<WashResultCandidate[]> {
+  const raw = await askWith(WASH_RESULTS_PARSER_SYSTEM_PROMPT, text.trim(), 4096, 'claude-sonnet-4-6')
+
+  let rows: RawWashRow[]
+  try {
+    const parsed = JSON.parse(extractJsonArray(raw))
+    if (!Array.isArray(parsed)) throw new Error('not an array')
+    rows = parsed
+  } catch {
+    throw new Error('Claude returned an unparseable response for the wash results paste')
+  }
+
+  const candidates: WashResultCandidate[] = []
+  for (const r of rows) {
+    const name = (r.name ?? '').trim()
+    if (!name) continue
+
+    const category = WASH_CATEGORIES.includes(r.category as WashCategory) ? (r.category as WashCategory) : 'dnc'
+
+    // Same "split on last space" convention as the Sales Nav parser above —
+    // last name is the final word, first name is everything before it.
+    const parts = name.split(/\s+/)
+    const lastLower = (parts.length > 1 ? parts[parts.length - 1] : '').toLowerCase()
+    const firstLower = (parts.length > 1 ? parts.slice(0, -1).join(' ') : (parts[0] ?? '')).toLowerCase()
+    const match = existing.find(n => n.firstLower === firstLower && n.lastLower === lastLower)
+
+    candidates.push({
+      id: match?.id ?? null,
+      name,
+      result: category === 'ok_to_contact' ? 'green' : 'red',
+      category,
+      reason: (r.reason ?? '').trim(),
+      conflictingAdvisor: category === 'pool_conflict' ? ((r.conflicting_advisor ?? '').trim() || null) : null,
+      matched: Boolean(match),
+    })
+  }
+
+  return candidates
+}
+
 // ─── Right context panel ─────────────────────────────────────────────────────
 
 type ContextSection =

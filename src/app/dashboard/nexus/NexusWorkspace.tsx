@@ -17,9 +17,11 @@ interface NexusProspect {
   email: string | null
   phone: string | null
   wash_result: string | null
+  wash_category: string | null
   wash_reason: string | null
   date_washed: string | null
   rewash_after: string | null
+  conflicting_advisor: string | null
   notes: string | null
   batch: string | null
   flagged: number
@@ -27,7 +29,7 @@ interface NexusProspect {
   updated_at: number
 }
 
-type WashFilter = 'all' | 'green' | 'red' | 'dnc' | 'unwashed'
+type WashFilter = 'all' | 'green' | 'red' | 'dnc' | 'others_client' | 'unwashed'
 type SortKey = 'name' | 'company' | 'date_washed' | 'created_at'
 type CellPos = { row: number; col: number }
 
@@ -43,24 +45,47 @@ interface SalesNavCandidate {
 // First Name, Last Name, Job Title, Company, LinkedIn URL, Wash Result, Date Washed
 const COL_COUNT = 7
 
+// Derives the 5-bucket status from wash_result + wash_category. The Claude
+// wash-sheet parser (wash-results route) always sets both; the older plain
+// 3-column paste (import-wash-paste) only ever sets wash_result — those rows
+// fall through to the legacy mapping below, which can't distinguish
+// "others' client" from a generic DNC since that paste format never carried
+// the distinction in the first place.
+function statusOf(p: NexusProspect): Exclude<WashFilter, 'all'> {
+  if (!p.wash_result) return 'unwashed'
+  if (p.wash_category === 'ok_to_contact') return 'green'
+  if (p.wash_category === 'others_client') return 'others_client'
+  if (p.wash_category === 'pool_conflict' || p.wash_category === 'redlisted_company') return 'red'
+  if (p.wash_category === 'dnc') return 'dnc'
+  if (p.wash_result === 'Green') return 'green'
+  if (p.wash_result === 'Red') return 'red'
+  return 'dnc'
+}
+
 function rowClass(p: NexusProspect): string {
-  if (p.wash_result === 'Green') return s.nexusRowGreen
-  if (p.wash_result === 'Red') return s.nexusRowRed
-  if (p.wash_result === 'Do Not Contact') return s.nexusRowDnc
+  const st = statusOf(p)
+  if (st === 'green') return s.nexusRowGreen
+  if (st === 'red') return s.nexusRowRed
+  if (st === 'dnc') return s.nexusRowDnc
+  if (st === 'others_client') return s.nexusRowOthersClient
   return ''
 }
 
-function statusLabel(wash: string | null): string {
-  if (wash === 'Green') return 'Green'
-  if (wash === 'Red') return 'Rewash'
-  if (wash === 'Do Not Contact') return 'DNC'
+function statusLabelOf(p: NexusProspect): string {
+  const st = statusOf(p)
+  if (st === 'green') return 'Green'
+  if (st === 'red') return 'Rewash'
+  if (st === 'dnc') return 'DNC'
+  if (st === 'others_client') return "Others' Client"
   return 'Unwashed'
 }
 
-function washPill(wash: string | null): { emoji: string; label: string; cls: string } {
-  if (wash === 'Green') return { emoji: '🟢', label: 'Green', cls: s.nexusPillGreen }
-  if (wash === 'Red') return { emoji: '🔴', label: 'Red', cls: s.nexusPillRed }
-  if (wash === 'Do Not Contact') return { emoji: '⛔', label: 'DNC', cls: s.nexusPillDnc }
+function washPillOf(p: NexusProspect): { emoji: string; label: string; cls: string } {
+  const st = statusOf(p)
+  if (st === 'green') return { emoji: '🟢', label: 'Green', cls: s.nexusPillGreen }
+  if (st === 'red') return { emoji: '🔴', label: 'Red', cls: s.nexusPillRed }
+  if (st === 'dnc') return { emoji: '⛔', label: 'DNC', cls: s.nexusPillDnc }
+  if (st === 'others_client') return { emoji: '👤', label: "Others'", cls: s.nexusPillOthersClient }
   return { emoji: '⬜', label: '—', cls: s.nexusPillNone }
 }
 
@@ -74,7 +99,7 @@ function cellCopyValue(p: NexusProspect, col: number): string {
     case 2: return p.job_role ?? ''
     case 3: return p.company ?? ''
     case 4: return p.linkedin_url ?? ''
-    case 5: { const label = washPill(p.wash_result).label; return label === '—' ? '' : label }
+    case 5: { const st = statusOf(p); return st === 'unwashed' ? '' : st === 'others_client' ? "Others' Client" : washPillOf(p).label }
     case 6: return p.date_washed ?? ''
     default: return ''
   }
@@ -140,10 +165,11 @@ export default function NexusWorkspace() {
   const all = prospects ?? []
   const counts = useMemo(() => ({
     total: all.length,
-    green: all.filter(p => p.wash_result === 'Green').length,
-    red: all.filter(p => p.wash_result === 'Red').length,
-    dnc: all.filter(p => p.wash_result === 'Do Not Contact').length,
-    unwashed: all.filter(p => !p.wash_result).length,
+    green: all.filter(p => statusOf(p) === 'green').length,
+    red: all.filter(p => statusOf(p) === 'red').length,
+    dnc: all.filter(p => statusOf(p) === 'dnc').length,
+    others_client: all.filter(p => statusOf(p) === 'others_client').length,
+    unwashed: all.filter(p => statusOf(p) === 'unwashed').length,
   }), [all])
 
   function selectFilter(f: WashFilter) {
@@ -156,10 +182,7 @@ export default function NexusWorkspace() {
 
   const filtered = useMemo(() => {
     if (filter === 'all') return all
-    if (filter === 'green') return all.filter(p => p.wash_result === 'Green')
-    if (filter === 'red') return all.filter(p => p.wash_result === 'Red')
-    if (filter === 'dnc') return all.filter(p => p.wash_result === 'Do Not Contact')
-    return all.filter(p => !p.wash_result)
+    return all.filter(p => statusOf(p) === filter)
   }, [all, filter])
 
   const searched = useMemo(() => {
@@ -310,6 +333,9 @@ export default function NexusWorkspace() {
             <button className={`${s.nexusSummaryChip} ${s.nexusSummaryChipDnc} ${filter === 'dnc' ? s.nexusSummaryChipActive : ''}`} onClick={() => selectFilter('dnc')}>
               ⛔ DNC: {counts.dnc}
             </button>
+            <button className={`${s.nexusSummaryChip} ${s.nexusSummaryChipOthersClient} ${filter === 'others_client' ? s.nexusSummaryChipActive : ''}`} onClick={() => selectFilter('others_client')}>
+              👤 Others' Clients: {counts.others_client}
+            </button>
             <button className={`${s.nexusSummaryChip} ${filter === 'unwashed' ? s.nexusSummaryChipActive : ''}`} onClick={() => selectFilter('unwashed')}>
               ⬜ Unwashed: {counts.unwashed}
             </button>
@@ -317,11 +343,11 @@ export default function NexusWorkspace() {
 
           {/* Sheet tabs */}
           <div className={s.nexusSheetTabs}>
-            {(['all', 'green', 'red', 'unwashed', 'dnc'] as WashFilter[]).map(f => {
-              const activeClass = f === 'green' ? s.nexusSheetTabActiveGreen : f === 'red' ? s.nexusSheetTabActiveRed : f === 'dnc' ? s.nexusSheetTabActiveDnc : ''
-              const emoji = f === 'green' ? '🟢 ' : f === 'red' ? '🔴 ' : f === 'dnc' ? '⛔ ' : f === 'unwashed' ? '⬜ ' : ''
-              const label = f === 'all' ? 'All' : f === 'dnc' ? 'DNC' : f[0].toUpperCase() + f.slice(1)
-              const count = f === 'all' ? counts.total : f === 'green' ? counts.green : f === 'red' ? counts.red : f === 'dnc' ? counts.dnc : counts.unwashed
+            {(['all', 'green', 'red', 'dnc', 'others_client', 'unwashed'] as WashFilter[]).map(f => {
+              const activeClass = f === 'green' ? s.nexusSheetTabActiveGreen : f === 'red' ? s.nexusSheetTabActiveRed : f === 'dnc' ? s.nexusSheetTabActiveDnc : f === 'others_client' ? s.nexusSheetTabActiveOthersClient : ''
+              const emoji = f === 'green' ? '🟢 ' : f === 'red' ? '🔴 ' : f === 'dnc' ? '⛔ ' : f === 'others_client' ? '👤 ' : f === 'unwashed' ? '⬜ ' : ''
+              const label = f === 'all' ? 'All' : f === 'dnc' ? 'DNC' : f === 'others_client' ? "Others' Clients" : f[0].toUpperCase() + f.slice(1)
+              const count = f === 'all' ? counts.total : f === 'green' ? counts.green : f === 'red' ? counts.red : f === 'dnc' ? counts.dnc : f === 'others_client' ? counts.others_client : counts.unwashed
               return (
                 <button
                   key={f}
@@ -373,7 +399,7 @@ export default function NexusWorkspace() {
                   <tr><td colSpan={7} style={{ color: 'var(--text-dim)' }}>No prospects in this view.</td></tr>
                 ) : (
                   sorted.map((p, i) => {
-                    const pill = washPill(p.wash_result)
+                    const pill = washPillOf(p)
                     return (
                       <tr
                         key={p.id}
@@ -539,6 +565,32 @@ function SalesNavModal({ onClose, showToast, onDone }: {
 }
 
 // ── Wash Results import — modal ──────────────────────────────────────────────
+// Claude reads the full wash sheet paste (Contact Name / Wash Result /
+// Comments) and classifies each row — green/red alone can't tell a plain
+// DNC apart from another advisor's active client or a pool conflict, but
+// the Comments column carries that detail. Preview-then-confirm, same
+// pattern as the Sales Nav import, since an LLM classification is worth a
+// look before it writes to prospects Archie is actively working.
+
+interface WashResultCandidate {
+  id: string | null
+  name: string
+  result: 'green' | 'red'
+  category: 'ok_to_contact' | 'dnc' | 'others_client' | 'pool_conflict' | 'redlisted_company'
+  reason: string
+  conflictingAdvisor: string | null
+  matched: boolean
+}
+
+interface WashConfirmResult {
+  matched: number
+  unmatched: string[]
+  ok_to_contact: number
+  dnc: number
+  others_client: number
+  pool_conflict: number
+  redlisted_company: number
+}
 
 function WashUploadModal({ onClose, showToast, onDone }: {
   onClose: () => void
@@ -547,64 +599,107 @@ function WashUploadModal({ onClose, showToast, onDone }: {
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ updated: number; unmatched: string[]; invalid: string[] } | null>(null)
+  const [candidates, setCandidates] = useState<WashResultCandidate[] | null>(null)
+  const [result, setResult] = useState<WashConfirmResult | null>(null)
 
-  async function processPaste() {
+  async function parsePaste() {
     if (!text.trim()) return
     setBusy(true)
     setResult(null)
     try {
-      const res = await fetch('/api/dashboard/nexus/import-wash-paste', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+      const res = await fetch('/api/dashboard/nexus/wash-results', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
       })
-      const data = await res.json() as { updated?: number; unmatched?: string[]; invalid?: string[]; error?: string }
-      if (!res.ok) throw new Error(data.error ?? 'Processing failed')
-      setResult({ updated: data.updated ?? 0, unmatched: data.unmatched ?? [], invalid: data.invalid ?? [] })
-      showToast(`${data.updated ?? 0} wash results updated`)
-      onDone()
+      const data = await res.json() as { candidates?: WashResultCandidate[]; error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Parsing failed')
+      setCandidates(data.candidates ?? [])
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Processing failed')
+      showToast(err instanceof Error ? err.message : 'Parsing failed')
     } finally {
       setBusy(false)
     }
   }
 
+  async function confirmImport() {
+    if (!candidates || candidates.length === 0) return
+    setBusy(true)
+    try {
+      const res = await fetch('/api/dashboard/nexus/wash-results', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true, candidates }),
+      })
+      const data = await res.json() as WashConfirmResult & { error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Import failed')
+      setResult(data)
+      setCandidates(null)
+      setText('')
+      showToast(`${data.matched} matched and updated`)
+      onDone()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Import failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unmatchedPreview = candidates?.filter(c => !c.matched) ?? []
+
   return (
     <ModalShell title="Paste Wash Results" onClose={onClose}>
       <p className={s.nexusModalHint}>
-        Paste rows straight from the wash results sheet — one prospect per line: First Name, Last Name, Result (Green / Red / Do Not Contact). Copying from Excel works as-is.
+        Paste straight from the wash results sheet — Contact Name, Wash Result, Comments columns. Claude reads the Comments to tell DNC, another advisor's client, a pool conflict, and a redlisted company apart.
       </p>
       <textarea
         className={s.nexusTextarea}
-        placeholder={'James\tHill\tGreen\nSarah\tJones\tRed'}
+        placeholder={'James Hill\tGreen\tOK TO CONTACT\nSarah Jones\tRed\tDO NOT CONTACT - on CLIENT list'}
         value={text}
         onChange={e => setText(e.target.value)}
         rows={10}
-        disabled={busy}
+        disabled={busy || Boolean(candidates)}
       />
-      <div className={s.nexusModalActions}>
-        <button className={`${s.nexusBtn} ${s.nexusBtnPrimary}`} onClick={() => void processPaste()} disabled={busy || !text.trim()}>
-          {busy ? 'Processing…' : 'Process'}
-        </button>
-      </div>
+
+      {!candidates && (
+        <div className={s.nexusModalActions}>
+          <button className={`${s.nexusBtn} ${s.nexusBtnPrimary}`} onClick={() => void parsePaste()} disabled={busy || !text.trim()}>
+            {busy ? 'Reading…' : 'Preview'}
+          </button>
+        </div>
+      )}
+
+      {candidates && (
+        <>
+          <div className={s.nexusImportResult}>
+            {candidates.filter(c => c.matched).length} of {candidates.length} rows matched a prospect — review below, then confirm.
+          </div>
+          <div className={s.nexusImportUnmatchedChips}>
+            {candidates.map((c, i) => (
+              <span key={i} className={s.nexusImportUnmatchedChip} title={c.reason}>
+                {c.matched ? '✓' : '✗'} {c.name} — {c.category === 'ok_to_contact' ? 'Green' : c.category === 'dnc' ? 'DNC' : c.category === 'others_client' ? "Others' Client" : c.category === 'redlisted_company' ? 'Redlisted' : 'Pool Conflict'}
+                {c.conflictingAdvisor ? ` (${c.conflictingAdvisor})` : ''}
+              </span>
+            ))}
+          </div>
+          <div className={s.nexusModalActions}>
+            <button className={s.nexusBtn} onClick={() => setCandidates(null)} disabled={busy}>Back</button>
+            <button className={`${s.nexusBtn} ${s.nexusBtnPrimary}`} onClick={() => void confirmImport()} disabled={busy}>
+              {busy ? 'Updating…' : `Confirm & update ${candidates.filter(c => c.matched).length}`}
+            </button>
+          </div>
+        </>
+      )}
+
       {result && (
         <div className={s.nexusImportResult}>
-          ✓ {result.updated} updated
+          ✓ {result.matched} matched and updated
+          <br />🟢 {result.ok_to_contact} OK to contact
+          <br />⛔ {result.dnc} DNC — never rewash
+          <br />👤 {result.others_client} Others' Clients — never rewash
+          <br />🔴 {result.pool_conflict + result.redlisted_company} Red — rewash later (pool conflicts + redlisted)
           {result.unmatched.length > 0 && (
             <>
-              <br />⚠ Unmatched names (check spelling):
+              <br />✗ {result.unmatched.length} unmatched — check spelling against your prospect list:
               <div className={s.nexusImportUnmatchedChips}>
                 {result.unmatched.map((name, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{unmatchedDisplay(name)}</span>)}
-              </div>
-            </>
-          )}
-          {result.invalid.length > 0 && (
-            <>
-              <br />⚠ Rows with no valid result (expected Green / Red / Do Not Contact):
-              <div className={s.nexusImportUnmatchedChips}>
-                {result.invalid.map((name, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{unmatchedDisplay(name)}</span>)}
               </div>
             </>
           )}
@@ -662,8 +757,14 @@ function ProspectDrawer({ prospect, onClose, onSave, onRemove }: {
 
         <div className={s.nexusDrawerField}>
           <span className={s.nexusDrawerLabel}>Wash Result</span>
-          <div className={s.nexusDrawerReadonly}>{statusLabel(prospect.wash_result)}</div>
+          <div className={s.nexusDrawerReadonly}>{statusLabelOf(prospect)}</div>
         </div>
+        {prospect.conflicting_advisor && (
+          <div className={s.nexusDrawerField}>
+            <span className={s.nexusDrawerLabel}>Under Advisor</span>
+            <div className={s.nexusDrawerReadonly}>{prospect.conflicting_advisor}</div>
+          </div>
+        )}
         {prospect.wash_reason && (
           <div className={s.nexusDrawerField}>
             <span className={s.nexusDrawerLabel}>Wash Reason</span>
@@ -676,7 +777,7 @@ function ProspectDrawer({ prospect, onClose, onSave, onRemove }: {
             <div className={s.nexusDrawerReadonly}>{prospect.date_washed}</div>
           </div>
         )}
-        {prospect.wash_result === 'Red' && prospect.rewash_after && (
+        {statusOf(prospect) === 'red' && prospect.rewash_after && (
           <div className={s.nexusDrawerField}>
             <span className={s.nexusDrawerLabel}>Rewash After</span>
             <div className={s.nexusDrawerReadonly}>{prospect.rewash_after}</div>

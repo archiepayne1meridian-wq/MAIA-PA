@@ -3065,6 +3065,9 @@
 .nexusRowDnc td { background: rgba(107,114,128,0.08); }
 .nexusRowDnc { border-left-color: #6b7280; }
 .nexusRowDnc .nexusNameCell { text-decoration: line-through; color: var(--text-dim); }
+.nexusRowOthersClient td { background: rgba(139,92,246,0.08); }
+.nexusRowOthersClient { border-left-color: #8b5cf6; }
+.nexusRowOthersClient .nexusNameCell { text-decoration: line-through; color: var(--text-dim); }
 .nexusRowSelected td { box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
 .nexusRowSelected { border-left-color: var(--accent) !important; }
 
@@ -3085,6 +3088,7 @@
 .nexusPillGreen { background: rgba(34,197,94,0.14); color: #22c55e; }
 .nexusPillRed { background: rgba(220,38,38,0.14); color: var(--alert); }
 .nexusPillDnc { background: rgba(107,114,128,0.14); color: #9ca3af; }
+.nexusPillOthersClient { background: rgba(139,92,246,0.14); color: #8b5cf6; }
 .nexusPillNone { background: var(--raised-2); color: var(--text-dim); }
 
 .nexusToast {
@@ -3377,6 +3381,7 @@
 .nexusSummaryChipGreen.nexusSummaryChipActive { border-color: #22c55e; color: #22c55e; background: rgba(34,197,94,0.1); }
 .nexusSummaryChipRed.nexusSummaryChipActive { border-color: var(--alert); color: var(--alert); background: rgba(220,38,38,0.1); }
 .nexusSummaryChipDnc.nexusSummaryChipActive { border-color: #6b7280; color: #9ca3af; background: rgba(107,114,128,0.1); }
+.nexusSummaryChipOthersClient.nexusSummaryChipActive { border-color: #8b5cf6; color: #8b5cf6; background: rgba(139,92,246,0.1); }
 
 .nexusImportRow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .nexusImportPanel { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
@@ -3403,6 +3408,7 @@
 .nexusSheetTabActiveGreen::after { background: #22c55e; }
 .nexusSheetTabActiveRed::after { background: var(--alert); }
 .nexusSheetTabActiveDnc::after { background: #6b7280; }
+.nexusSheetTabActiveOthersClient::after { background: #8b5cf6; }
 
 .nexusRedBanner {
   background: rgba(220,38,38,0.1); border: 1px solid var(--alert); border-radius: var(--r);

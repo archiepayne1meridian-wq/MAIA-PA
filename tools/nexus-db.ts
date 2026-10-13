@@ -17,9 +17,11 @@ export interface NexusProspect {
   email: string | null
   phone: string | null
   wash_result: string | null
+  wash_category: string | null
   wash_reason: string | null
   date_washed: string | null
   rewash_after: string | null
+  conflicting_advisor: string | null
   notes: string | null
   batch: string | null
   flagged: number
@@ -203,6 +205,48 @@ export async function applyWashUpgrade(id: string, input: WashUpgradeInput): Pro
     wash_reason: input.washReason ?? current.wash_reason,
     date_washed: input.dateWashed ?? current.date_washed,
     rewash_after: input.washResult === 'Red' ? (input.rewashAfter ?? current.rewash_after) : null,
+    updated_at: Math.floor(Date.now() / 1000),
+  }).where(eq(nexus_prospects.id, id))
+  return true
+}
+
+// Fine-grained categorisation from the Claude wash-sheet parser (src/lib/nexus.ts's
+// parseWashResultsRich) — richer than the plain Green/Red/DNC the simple 3-column
+// paste produces. Maps onto the existing wash_result column so the append-only
+// upgrade rank logic above (canUpgradeWash) keeps working unchanged: redlisted_company
+// shares pool_conflict's rank (both Red, both rewashable); others_client is terminal
+// like dnc (Do Not Contact) — once someone else's active client, never rewashed.
+export type WashCategory = 'ok_to_contact' | 'dnc' | 'others_client' | 'pool_conflict' | 'redlisted_company'
+
+const CATEGORY_TO_WASH_RESULT: Record<WashCategory, 'Green' | 'Red' | 'Do Not Contact'> = {
+  ok_to_contact: 'Green',
+  pool_conflict: 'Red',
+  redlisted_company: 'Red',
+  dnc: 'Do Not Contact',
+  others_client: 'Do Not Contact',
+}
+
+export interface WashCategoryUpgradeInput {
+  category: WashCategory
+  reason?: string | null
+  conflictingAdvisor?: string | null
+  dateWashed?: string | null
+}
+
+// Same append-only rule as applyWashUpgrade (via canUpgradeWash) — returns
+// whether the upgrade was actually applied.
+export async function applyWashCategoryUpgrade(id: string, input: WashCategoryUpgradeInput): Promise<boolean> {
+  const current = await getProspectById(id)
+  if (!current) return false
+  const washResult = CATEGORY_TO_WASH_RESULT[input.category]
+  if (!canUpgradeWash(current.wash_result, washResult)) return false
+
+  await getDb().update(nexus_prospects).set({
+    wash_result: washResult,
+    wash_category: input.category,
+    wash_reason: input.reason ?? current.wash_reason,
+    date_washed: input.dateWashed ?? current.date_washed,
+    conflicting_advisor: input.category === 'pool_conflict' ? (input.conflictingAdvisor ?? null) : null,
     updated_at: Math.floor(Date.now() / 1000),
   }).where(eq(nexus_prospects.id, id))
   return true

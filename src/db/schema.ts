@@ -563,9 +563,11 @@ export const nexus_prospects = sqliteTable('nexus_prospects', {
   email: text('email'),
   phone: text('phone'),
   wash_result: text('wash_result'),   // 'Green' | 'Red' | 'Do Not Contact' | null
+  wash_category: text('wash_category'), // 'ok_to_contact' | 'dnc' | 'others_client' | 'pool_conflict' | 'redlisted_company' | null — fine-grained bucket, set by the Claude wash-sheet parser only (legacy 3-column paste leaves this null)
   wash_reason: text('wash_reason'),   // reason given in the wash-result file
   date_washed: text('date_washed'),   // DD/MM/YYYY string, as supplied by compliance
   rewash_after: text('rewash_after'), // DD/MM/YYYY string — Red only
+  conflicting_advisor: text('conflicting_advisor'), // set for wash_category = 'pool_conflict' only
   notes: text('notes'),
   batch: text('batch'),
   flagged: integer('flagged').notNull().default(0), // 1 = needs a human check (e.g. surname parsed as a single letter)

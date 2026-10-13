@@ -427,6 +427,20 @@ export const apollo_coaching_profile = sqliteTable('apollo_coaching_profile', {
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })
 
+// One row per message, scoped by tab — MERCURY's two chat tabs (LinkedIn
+// Messages / Quick Replies) were built with history kept in React state only
+// ("each tab is an independent, in-browser-session conversation" — by
+// design, per the component's own comment), so nothing survived a refresh.
+// Same per-row pattern as iris_chat_messages/apollo_debrief_messages, scoped
+// by tab instead of call_id.
+export const mercury_chat_messages = sqliteTable('mercury_chat_messages', {
+  id: text('id').primaryKey(),
+  tab: text('tab').notNull(),          // 'linkedin_messages' | 'quick_replies'
+  role: text('role').notNull(),        // 'user' | 'assistant'
+  content: text('content').notNull(),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
 export const oracle_analyses = sqliteTable('oracle_analyses', {
   id: text('id').primaryKey(),
   prospect_name: text('prospect_name'),

@@ -337,6 +337,13 @@
       "when": 1791875909400,
       "tag": "0047_pink_smiling_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1791877274329,
+      "tag": "0048_secret_ultragirl",
+      "breakpoints": true
     }
   ]
 }

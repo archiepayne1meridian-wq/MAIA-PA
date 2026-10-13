@@ -18,7 +18,7 @@ export default function MercuryWorkspace() {
   const [active, setActive] = useState<MercuryTab>('linkedin')
 
   return (
-    <div>
+    <div className={s.root}>
       <div className={s.tabRow}>
         {TABS.map(t => (
           <button
@@ -31,9 +31,9 @@ export default function MercuryWorkspace() {
         ))}
       </div>
 
-      <div className={active === 'linkedin' ? '' : s.hidden}><LinkedInMessagesTab /></div>
-      <div className={active === 'quick_replies' ? '' : s.hidden}><QuickRepliesTab /></div>
-      <div className={active === 'email_funnel' ? '' : s.hidden}><EmailFunnelTab /></div>
+      <div className={`${s.tabContent} ${active === 'linkedin' ? '' : s.hidden}`}><LinkedInMessagesTab /></div>
+      <div className={`${s.tabContent} ${active === 'quick_replies' ? '' : s.hidden}`}><QuickRepliesTab /></div>
+      <div className={`${s.tabContent} ${active === 'email_funnel' ? '' : s.hidden}`}><EmailFunnelTab /></div>
     </div>
   )
 }

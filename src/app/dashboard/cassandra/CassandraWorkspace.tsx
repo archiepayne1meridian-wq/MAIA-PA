@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import s from '../dashboard.module.css'
+import ChatInput from '@/components/ChatInput'
 
 interface IndexQuote {
   symbol: string
@@ -165,6 +166,8 @@ function isMarketOpen(): boolean {
   return day >= 1 && day <= 5 && mins >= 480 && mins < 960  // 08:00–16:00 UTC
 }
 
+interface CassandraChatMessage { role: 'user' | 'maia'; content: string }
+
 export default function CassandraWorkspace() {
   const [brief, setBrief] = useState<BriefData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -172,6 +175,58 @@ export default function CassandraWorkspace() {
   const [offset, setOffset] = useState(0)
   const [hasMore, setHasMore] = useState(true)
   const [actionMsgs, setActionMsgs] = useState<Record<string, string>>({})
+
+  // Chat panel — reuses the same persisted thread the Hub's "News" tile
+  // shows (maia_conversations, agent='news'), via the existing
+  // /api/dashboard/conversations/news (GET) and /api/dashboard/cassandra/chat
+  // (POST) routes, so a question asked here and one asked from the Hub share
+  // one real history either way.
+  const [chatMessages, setChatMessages] = useState<CassandraChatMessage[] | null>(null)
+  const [chatInput, setChatInput] = useState('')
+  const [chatSending, setChatSending] = useState(false)
+  const chatThreadRef = useRef<HTMLDivElement | null>(null)
+
+  const loadChat = useCallback(() => {
+    fetch('/api/dashboard/conversations/news')
+      .then(r => r.json() as Promise<{ messages?: { role: string; type: string; content: string }[] }>)
+      .then(d => setChatMessages(
+        (d.messages ?? [])
+          .filter(m => m.type === 'text')
+          .map(m => ({ role: m.role === 'user' ? 'user' as const : 'maia' as const, content: m.content })),
+      ))
+      .catch(() => setChatMessages([]))
+  }, [])
+
+  useEffect(() => { loadChat() }, [loadChat])
+
+  useEffect(() => {
+    chatThreadRef.current?.scrollTo({ top: chatThreadRef.current.scrollHeight })
+  }, [chatMessages?.length, chatSending])
+
+  async function sendChat() {
+    const text = chatInput.trim()
+    if (!text || chatSending || chatMessages === null) return
+    setChatInput('')
+    setChatSending(true)
+    const history = chatMessages.map(m => ({ role: m.role === 'user' ? 'user' as const : 'assistant' as const, content: m.content }))
+    setChatMessages(m => [...(m ?? []), { role: 'user', content: text }])
+    try {
+      const res = await fetch('/api/dashboard/cassandra/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text, history }),
+      })
+      const data = await res.json() as { messages?: { role: string; content: string }[]; error?: string }
+      if (!res.ok || !data.messages) throw new Error(data.error ?? 'Failed to respond')
+      const maiaMsg = data.messages.find(m => m.role === 'maia')
+      if (maiaMsg) setChatMessages(m => [...(m ?? []), { role: 'maia', content: maiaMsg.content }])
+    } catch {
+      setChatMessages(m => (m ?? []).slice(0, -1))
+      setChatInput(text)
+    } finally {
+      setChatSending(false)
+    }
+  }
 
   useEffect(() => { void loadBrief(0) }, [])
 
@@ -243,8 +298,8 @@ export default function CassandraWorkspace() {
 
       <div className={s.fullPageCols}>
 
-        {/* ── Panel 1: FX Dashboard (25%) ────────────────────────────────── */}
-        <div className={s.fpCol} style={{ width: '25%', flexShrink: 0 }}>
+        {/* ── Panel 1: FX Dashboard (20%) ────────────────────────────────── */}
+        <div className={s.fpCol} style={{ width: '20%', flexShrink: 0 }}>
           <div className={s.fpColHead}>
             <div className={s.fpColTitle}>Markets</div>
           </div>
@@ -416,8 +471,8 @@ export default function CassandraWorkspace() {
           )}
         </div>
 
-        {/* ── Panel 3: Headlines (30%) ──────────────────────────────────────── */}
-        <div className={s.fpCol} style={{ width: '30%', flexShrink: 0 }}>
+        {/* ── Panel 3: Headlines (25%) ──────────────────────────────────────── */}
+        <div className={s.fpCol} style={{ width: '25%', flexShrink: 0 }}>
           <div className={s.fpColHead}>
             <div className={s.fpColTitle}>Headlines</div>
             <div className={s.fpColSub}>Route to IRIS or MUSE for content use.</div>
@@ -479,6 +534,40 @@ export default function CassandraWorkspace() {
               </div>
             )
           })}
+        </div>
+
+        {/* ── Panel 4: Chat (20%) ─────────────────────────────────────────────── */}
+        <div className={`${s.fpCol} ${s.cassandraChatCol}`} style={{ width: '20%', flexShrink: 0 }}>
+          <div className={s.fpColHead}>
+            <div className={s.fpColTitle}>Chat</div>
+          </div>
+          <div ref={chatThreadRef} className={s.cassandraChatThread}>
+            {chatMessages === null ? (
+              <p className={s.cassandraChatEmpty}>Loading…</p>
+            ) : chatMessages.length === 0 ? (
+              <p className={s.cassandraChatEmpty}>Ask about today's brief, or anything in the news.</p>
+            ) : (
+              chatMessages.map((m, i) => (
+                <div key={i} className={`${s.cassandraChatMsg} ${m.role === 'user' ? s.cassandraChatMsgUser : ''}`}>
+                  <div className={`${s.cassandraChatBubble} ${m.role === 'user' ? s.cassandraChatBubbleUser : s.cassandraChatBubbleMaia}`}>
+                    {m.content}
+                  </div>
+                </div>
+              ))
+            )}
+            {chatSending && (
+              <div className={s.cassandraChatMsg}>
+                <div className={`${s.cassandraChatBubble} ${s.cassandraChatBubbleMaia}`}>…</div>
+              </div>
+            )}
+          </div>
+          <ChatInput
+            value={chatInput}
+            onChange={setChatInput}
+            onSend={() => void sendChat()}
+            sending={chatSending || chatMessages === null}
+            placeholder="Ask Cassandra…"
+          />
         </div>
 
       </div>

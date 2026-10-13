@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import s from '../dashboard.module.css'
+import ChatInput from '@/components/ChatInput'
 
 type PostType = 'personal_story' | 'news_angle' | 'fact_drop' | 'tool_guide' | 'expat_reality' | 'reframe'
 type PostTypeChoice = PostType | 'auto'
@@ -68,7 +69,7 @@ export default function IrisWorkspace() {
   const [sending, setSending] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [actingOnId, setActingOnId] = useState<string | null>(null)
-  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
 
   const load = useCallback(() => {
@@ -196,22 +197,14 @@ export default function IrisWorkspace() {
         </div>
 
         <div className={s.irisChatInputRow}>
-          <textarea
+          <ChatInput
             ref={inputRef}
-            className={s.irisChatTextarea}
-            placeholder='Drop an idea, or type a refinement like "make the hook punchier"…'
             value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                void send(input)
-              }
-            }}
+            onChange={setInput}
+            onSend={() => void send(input)}
+            sending={sending}
+            placeholder='Drop an idea, or type a refinement like "make the hook punchier"…'
           />
-          <button className={s.irisChatSendBtn} onClick={() => void send(input)} disabled={sending || !input.trim()}>
-            {sending ? 'Sending…' : 'Send'}
-          </button>
         </div>
       </div>
 

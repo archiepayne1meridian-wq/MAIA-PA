@@ -1,11 +1,14 @@
 /* Shared chat mechanic — same visual language as the hub's ConversationCentre
-   (hub.module.css), but self-contained with its own fixed height so it works
-   embedded inside a page that already scrolls (e.g. MERCURY's agent page). */
+   (hub.module.css). height:100% fills whatever fixed-height container the
+   caller provides (MERCURY's agent page gives this its own full-height tab
+   content area) — a fixed px height here was what left a gap/short panel
+   instead of properly filling available space. */
 
 .panel {
   display: flex;
   flex-direction: column;
-  height: 560px;
+  height: 100%;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);

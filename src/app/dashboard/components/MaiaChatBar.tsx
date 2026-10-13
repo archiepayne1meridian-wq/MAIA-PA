@@ -239,8 +239,14 @@ export default function MaiaChatBar() {
   // clearance (that shell is height:100vh, overflow:hidden by design).
   // Prospects, Study and Practice are the same height:100vh/overflow:hidden
   // shell (nexusShell) with their own bottom-of-page controls, so this bar
-  // is suppressed on all three too.
-  if (pathname === '/dashboard' || pathname === '/dashboard/nexus' || pathname === '/dashboard/athena' || pathname === '/dashboard/diana') return null
+  // is suppressed on all three too. Iris, Mercury, Apollo, and Cassandra
+  // each have their OWN chat input (the shared <ChatInput> component) —
+  // this global bar would otherwise float on top of or underneath it.
+  const SUPPRESSED_ROUTES = new Set([
+    '/dashboard', '/dashboard/nexus', '/dashboard/athena', '/dashboard/diana',
+    '/dashboard/iris', '/dashboard/mercury', '/dashboard/apollo', '/dashboard/cassandra',
+  ])
+  if (SUPPRESSED_ROUTES.has(pathname)) return null
 
   return (
     <div className={s.maiaChatBarWrap}>

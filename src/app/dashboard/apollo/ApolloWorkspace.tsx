@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import s from '../dashboard.module.css'
 import a from './apollo.module.css'
 import CallUploadFlow, { type SessionStage } from './CallUploadFlow'
+import ChatInput from '@/components/ChatInput'
 
 type Outcome = 'booked' | 'follow_up' | 'drop'
 
@@ -107,19 +108,13 @@ function DebriefChat({ callId }: { callId: string }) {
           ))
         )}
       </div>
-      <div className={a.debriefInputRow}>
-        <input
-          className={a.debriefInput}
-          placeholder="What do you think went wrong?"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !sending) void send() }}
-          disabled={sending}
-        />
-        <button className={a.debriefSendBtn} onClick={() => void send()} disabled={sending || !input.trim()}>
-          {sending ? '…' : 'Send'}
-        </button>
-      </div>
+      <ChatInput
+        value={input}
+        onChange={setInput}
+        onSend={() => void send()}
+        sending={sending}
+        placeholder="What do you think went wrong?"
+      />
     </div>
   )
 }

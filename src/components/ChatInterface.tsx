@@ -8,6 +8,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import s from './ChatInterface.module.css'
+import ChatInput from './ChatInput'
 
 export interface ChatInterfaceProps {
   tab: 'linkedin_messages' | 'quick_replies'
@@ -108,20 +109,14 @@ export default function ChatInterface({ tab, starterMessage, placeholder }: Chat
         {error && <div className={s.errorBubble}>{error}</div>}
       </div>
 
-      <div className={s.inputBar}>
-        <input
-          ref={inputRef}
-          className={s.input}
-          placeholder={loading ? 'Loading…' : sending ? 'Thinking…' : placeholder ?? 'Type a message...'}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') void send() }}
-          disabled={loading || sending}
-        />
-        <button className={s.sendBtn} onClick={() => void send()} disabled={loading || sending || !input.trim()} aria-label="Send">
-          →
-        </button>
-      </div>
+      <ChatInput
+        ref={inputRef}
+        value={input}
+        onChange={setInput}
+        onSend={() => void send()}
+        sending={loading || sending}
+        placeholder={loading ? 'Loading…' : placeholder}
+      />
     </div>
   )
 }

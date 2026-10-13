@@ -547,6 +547,18 @@ export const maia_goals = sqliteTable('maia_goals', {
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })
 
+// Home page to-do list — distinct from the TODAY'S REMINDERS section the hub
+// context panel derives on the fly from iris_posts/study_cards (hub-context's
+// hubSections()); these are reminders Archie or MAIA explicitly add, not
+// derived from other agents' state.
+export const maia_reminders = sqliteTable('maia_reminders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  text: text('text').notNull(),
+  done: integer('done').notNull().default(0),
+  due_date: text('due_date'),   // ISO date string, optional
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
 // NEXUS — prospect tracking (Excel-replacement spreadsheet grid). batch is a
 // free-text label for a data-mine/import run, so a wash update can be scoped
 // to "everyone washed from last Tuesday's batch" if ever needed.

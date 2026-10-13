@@ -6,6 +6,7 @@ import s from '../hub.module.css'
 import AgentRailNew from './AgentRailNew'
 import ConversationCentre, { type ConversationCentreHandle } from './ConversationCentre'
 import ContextPanel from './ContextPanel'
+import HomeHub from './HomeHub'
 import { AGENT_WORKSPACE_ROUTE, HUB_AGENTS, type ConversationAgent } from './hub-agents'
 
 // Agents that redirect straight to their dedicated full-page workspace
@@ -61,21 +62,29 @@ export default function HubShell() {
     setCollapsed(id !== 'hub')
   }
 
+  const isHome = activeId === 'hub'
+
   return (
-    <div className={`${s.shell} ${collapsed ? s.shellRailCollapsed : ''}`}>
+    <div className={`${s.shell} ${collapsed ? s.shellRailCollapsed : ''} ${isHome ? s.shellHome : ''}`}>
       <AgentRailNew
         activeId={activeId}
         onSelect={selectAgent}
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed(c => !c)}
       />
-      <ConversationCentre
-        ref={centreRef}
-        agent={active}
-        onMessageSent={() => setContextRefreshKey(k => k + 1)}
-        onSwitchAgent={selectAgent}
-      />
-      <ContextPanel agent={active.id} contextTitle={active.contextTitle} refreshKey={contextRefreshKey} />
+      {isHome ? (
+        <HomeHub />
+      ) : (
+        <>
+          <ConversationCentre
+            ref={centreRef}
+            agent={active}
+            onMessageSent={() => setContextRefreshKey(k => k + 1)}
+            onSwitchAgent={selectAgent}
+          />
+          <ContextPanel agent={active.id} contextTitle={active.contextTitle} refreshKey={contextRefreshKey} />
+        </>
+      )}
     </div>
   )
 }

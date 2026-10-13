@@ -351,6 +351,13 @@
       "when": 1791889928203,
       "tag": "0049_misty_wilson_fisk",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1791915008594,
+      "tag": "0050_faulty_lady_mastermind",
+      "breakpoints": true
     }
   ]
 }

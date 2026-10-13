@@ -32,6 +32,9 @@ export async function GET() {
       reminderSet: Boolean(c.reminder_set),
       reminderType: c.reminder_type,
       reminderDate: c.reminder_date,
+      objectionsRaised: c.objections_raised_json ? JSON.parse(c.objections_raised_json) as string[] : [],
+      toneNotes: c.tone_notes,
+      whatResonated: c.what_resonated,
     })),
   })
 }

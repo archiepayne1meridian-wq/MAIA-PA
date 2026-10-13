@@ -330,6 +330,13 @@
       "when": 1791840409491,
       "tag": "0046_right_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1791875909400,
+      "tag": "0047_pink_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }

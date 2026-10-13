@@ -30,7 +30,12 @@ interface ApolloCallSummary {
   reminderSet: boolean
   reminderType: string | null
   reminderDate: string | null
+  objectionsRaised: string[]
+  toneNotes: string | null
+  whatResonated: string | null
 }
+
+interface DebriefChatMessage { role: 'user' | 'assistant'; content: string }
 
 const FILLER_LABELS: Record<string, string> = {
   you_know: '"you know"', sort_of: '"sort of"', basically: '"basically"',
@@ -42,6 +47,81 @@ const STAGE_LABELS: Record<string, string> = {
 
 function relDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+}
+
+// Debrief chat, scoped to one call — its own message history and input,
+// independent of every other call's debrief and of the page-level "+ New
+// call" input above. Loads/saves via /api/dashboard/apollo/chat?callId=...
+function DebriefChat({ callId }: { callId: string }) {
+  const [messages, setMessages] = useState<DebriefChatMessage[] | null>(null)
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+
+  const load = useCallback(() => {
+    fetch(`/api/dashboard/apollo/chat?callId=${callId}`)
+      .then(r => r.json() as Promise<{ messages?: DebriefChatMessage[] }>)
+      .then(d => setMessages(d.messages ?? []))
+      .catch(() => setMessages([]))
+  }, [callId])
+
+  useEffect(() => { load() }, [load])
+
+  async function send() {
+    const text = input.trim()
+    if (!text || sending) return
+    setInput('')
+    setSending(true)
+    setMessages(prev => [...(prev ?? []), { role: 'user', content: text }])
+    try {
+      const res = await fetch('/api/dashboard/apollo/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callId, message: text }),
+      })
+      const data = await res.json() as { reply?: string; error?: string }
+      if (!res.ok || !data.reply) throw new Error(data.error ?? 'Debrief failed')
+      setMessages(prev => [...(prev ?? []), { role: 'assistant', content: data.reply! }])
+    } catch {
+      setMessages(prev => (prev ?? []).slice(0, -1))
+      setInput(text)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className={a.card}>
+      <div className={a.cardHeader}><span className={a.cardTitle}>💬 DEBRIEF</span></div>
+      <div className={a.debriefMessages}>
+        {messages === null ? (
+          <p className={a.debriefEmpty}>Loading…</p>
+        ) : messages.length === 0 ? (
+          <p className={a.debriefEmpty}>Tell Apollo what you think went wrong, or ask what he spotted.</p>
+        ) : (
+          messages.map((m, i) => (
+            <div key={i} className={`${a.debriefMsg} ${m.role === 'user' ? a.debriefMsgUser : ''}`}>
+              <div className={`${a.debriefBubble} ${m.role === 'user' ? a.debriefBubbleUser : a.debriefBubbleAssistant}`}>
+                {m.content}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <div className={a.debriefInputRow}>
+        <input
+          className={a.debriefInput}
+          placeholder="What do you think went wrong?"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !sending) void send() }}
+          disabled={sending}
+        />
+        <button className={a.debriefSendBtn} onClick={() => void send()} disabled={sending || !input.trim()}>
+          {sending ? '…' : 'Send'}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 export default function ApolloWorkspace() {
@@ -241,6 +321,29 @@ export default function ApolloWorkspace() {
                   </div>
                 </>
               )}
+
+              {/* Not booked — analysis + debrief chat, scoped to this call */}
+              {(call.outcome === 'follow_up' || call.outcome === 'drop') && (
+                <div className={a.card}>
+                  <div className={a.cardHeader}><span className={a.cardTitle}>🔍 CALL ANALYSIS</span></div>
+                  <div className={a.cardBody}>
+                    {call.objectionsRaised.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <strong>Objections raised:</strong>
+                        <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                          {call.objectionsRaised.map((o, i) => <li key={i}>{o}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {call.toneNotes && <div style={{ marginBottom: 8 }}><strong>Tone:</strong> {call.toneNotes}</div>}
+                    {call.whatResonated && <div><strong>What resonated:</strong> {call.whatResonated}</div>}
+                    {call.objectionsRaised.length === 0 && !call.toneNotes && !call.whatResonated && (
+                      <span style={{ color: 'var(--text-dim)' }}>No detailed analysis available for this call.</span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {(call.outcome === 'follow_up' || call.outcome === 'drop') && <DebriefChat callId={call.id} />}
 
               {/* Follow-up outcome */}
               {call.outcome === 'follow_up' && (

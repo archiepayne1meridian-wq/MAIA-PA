@@ -47,7 +47,13 @@ ANALYSE THE CALL AND RETURN JSON:
 
   "prospect_quality": "high | medium | low — based on what was learned about their situation",
 
-  "call_summary": "Two sentence summary of what happened on the call."
+  "call_summary": "Two sentence summary of what happened on the call.",
+
+  "objections_raised": "Only populate if outcome is follow_up or drop (not booked). Array of the specific objections the prospect actually raised, in their own words or close to it. Empty array if none.",
+
+  "tone_notes": "Only populate if outcome is follow_up or drop. One or two sentences on the prospect's tone/engagement — guarded, rushed, warm but non-committal, etc. Specific to this call, not generic.",
+
+  "what_resonated": "Only populate if outcome is follow_up or drop. One or two sentences on what — if anything — the prospect responded well to before the call lost momentum. Null if genuinely nothing landed."
 }
 
 IMPORTANT:
@@ -77,6 +83,9 @@ interface AnalysisResult {
   drop_reason: string | null
   prospect_quality: 'high' | 'medium' | 'low'
   call_summary: string
+  objections_raised: string[] | null
+  tone_notes: string | null
+  what_resonated: string | null
 }
 
 export async function POST(req: Request) {
@@ -137,6 +146,9 @@ export async function POST(req: Request) {
       drop_reason: result.drop_reason ?? null,
       prospect_quality: result.prospect_quality,
       call_summary: result.call_summary,
+      objections_raised_json: result.objections_raised ? JSON.stringify(result.objections_raised) : null,
+      tone_notes: result.tone_notes ?? null,
+      what_resonated: result.what_resonated ?? null,
     })
 
     // Feed DIANA — today's focus + weak stage, read at the start of her next

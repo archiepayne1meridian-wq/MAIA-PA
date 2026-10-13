@@ -34,6 +34,10 @@ export interface ApolloCall {
   reminder_date: string | null
   email_sent: number
   dropped: number
+  objections_raised_json: string | null
+  tone_notes: string | null
+  what_resonated: string | null
+  debrief_summary: string | null
   created_at: number
 }
 

@@ -401,7 +401,30 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   reminder_date: text('reminder_date'),
   email_sent: integer('email_sent').notNull().default(0),
   dropped: integer('dropped').notNull().default(0),    // 1 once Archie confirms the drop
+  objections_raised_json: text('objections_raised_json'), // JSON array of strings — not-booked calls only
+  tone_notes: text('tone_notes'),                      // not-booked calls only
+  what_resonated: text('what_resonated'),              // not-booked calls only
+  debrief_summary: text('debrief_summary'),            // rolling summary of the debrief chat for this call, if any
   created_at: integer('created_at').notNull(),
+})
+
+// One row per debrief-chat message, scoped to a single call — deliberately
+// NOT maia_conversations (one JSON blob per AGENT, not per call — no way to
+// scope history to one call without loading and filtering every debrief
+// ever, across every call). Mirrors iris_chat_messages' per-row pattern.
+export const apollo_debrief_messages = sqliteTable('apollo_debrief_messages', {
+  id: text('id').primaryKey(),
+  call_id: text('call_id').notNull(),
+  role: text('role').notNull(),        // 'user' | 'assistant'
+  content: text('content').notNull(),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
+// Singleton — pattern memory across all debrief conversations, not per call.
+export const apollo_coaching_profile = sqliteTable('apollo_coaching_profile', {
+  id: text('id').primaryKey().default('singleton'),
+  profile_json: text('profile_json').notNull().default('{}'),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })
 
 export const oracle_analyses = sqliteTable('oracle_analyses', {

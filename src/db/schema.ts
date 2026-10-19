@@ -683,6 +683,7 @@ export const map_companies = sqliteTable('map_companies', {
   area: text('area'),                                  // e.g. 'Vernier', 'Plan-les-Ouates', 'Nyon'
   hq_location: text('hq_location'),                     // global HQ city, if this is a satellite/regional office
   swiss_offices: text('swiss_offices'),                  // JSON array of other Swiss office locations
+  aliases: text('aliases'),                             // JSON array of alternative names prospects/calls may record this company under (e.g. "P&G", "STMicro")
   office_type: text('office_type').notNull().default('office'), // 'hq' | 'regional' | 'office' | 'campus' | 'site'
   ai_summary: text('ai_summary'),
   ai_summary_updated_at: integer('ai_summary_updated_at'),

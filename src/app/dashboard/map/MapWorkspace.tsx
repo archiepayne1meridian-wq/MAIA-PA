@@ -15,15 +15,28 @@ const NATIONALITY_FLAGS: Record<string, string> = {
   'New Zealand': '🇳🇿', Canadian: '🇨🇦', Dutch: '🇳🇱', Swedish: '🇸🇪', Danish: '🇩🇰',
 }
 
-const STALE_SUMMARY_MS = 30 * 24 * 60 * 60 * 1000
-
+// Same priority order as MapCanvas.tsx's getPinColor — the panel's status
+// pill and the marker on the map must always agree.
 function statusOf(c: MapCompanyWithStats): { label: string; colour: string } {
   if (c.prospect_priority === 'avoid') return { label: '🔴 Avoid', colour: '#e74c3c' }
+  if (c.prospect_priority === 'high' && c.total_booked === 0 && c.total_washed === 0) return { label: '🟣 Priority target', colour: '#9b59b6' }
   if (c.total_booked >= 3) return { label: '🟠 Hot', colour: '#e8621a' }
-  if (c.total_booked >= 1) return { label: '🟡 Warm', colour: '#f39c12' }
-  if (c.total_washed > 0 || c.total_calls > 0) return { label: '🔵 Cold — being worked', colour: '#3498db' }
-  if (c.prospect_priority === 'high') return { label: '🟣 Priority target', colour: '#9b59b6' }
-  return { label: '⚫ Untouched', colour: '#666' }
+  if (c.total_booked > 0) return { label: '🟡 Warm', colour: '#f39c12' }
+  if (c.total_washed > 0) return { label: '🔵 Cold — being worked', colour: '#3498db' }
+  return { label: '⚫ Untouched', colour: '#666666' }
+}
+
+interface CompanySummary { what_they_do: string; who_is_there: string; office_type: string }
+
+function parseSummary(raw: string | null): CompanySummary | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<CompanySummary>
+    if (parsed.what_they_do && parsed.who_is_there && parsed.office_type) return parsed as CompanySummary
+    return null
+  } catch {
+    return null
+  }
 }
 
 const PROSPECT_DOT: Record<CompanyProspect['status'], string> = {
@@ -61,27 +74,26 @@ export default function MapWorkspace() {
     if (!selected) { setProspects(null); return }
     setProspects(null)
     setNoteDraft(selected.notes ?? '')
-    fetch(`/api/dashboard/map/company-prospects?company=${encodeURIComponent(selected.name)}`)
+    fetch(`/api/dashboard/map/company-prospects?companyId=${selected.id}`)
       .then(r => r.json() as Promise<{ prospects: CompanyProspect[] }>)
       .then(d => setProspects(d.prospects ?? []))
       .catch(() => setProspects([]))
   }, [selected])
 
-  // Generate an AI summary on demand — no summary yet, or stale (>30 days).
+  // Generate an AI summary exactly once per company, ever — only when
+  // nothing's cached yet. Never auto-regenerates; a stored summary is
+  // permanent until the user explicitly hits "Refresh intel".
   useEffect(() => {
-    if (!selected) return
-    const stale = !selected.ai_summary || !selected.ai_summary_updated_at ||
-      (Date.now() - selected.ai_summary_updated_at * 1000) > STALE_SUMMARY_MS
-    if (!stale || generatingSummary) return
-    void generateSummary(selected)
+    if (!selected || selected.ai_summary || generatingSummary) return
+    void generateSummary(selected, false)
   }, [selected]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function generateSummary(c: MapCompanyWithStats) {
+  async function generateSummary(c: MapCompanyWithStats, force: boolean) {
     setGeneratingSummary(true)
     try {
       await fetch('/api/dashboard/map/company-summary', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId: c.id, name: c.name, type: c.type, sector: c.sector, area: c.area }),
+        body: JSON.stringify({ companyId: c.id, name: c.name, type: c.type, sector: c.sector, area: c.area, force }),
       })
       loadCompanies()
     } catch (err) {
@@ -136,7 +148,7 @@ export default function MapWorkspace() {
               noteDraft={noteDraft}
               savingNote={savingNote}
               onBack={() => setSelectedId(null)}
-              onRegenerateSummary={() => void generateSummary(selected)}
+              onRegenerateSummary={() => void generateSummary(selected, true)}
               onSetPriority={priority => void setPriority(selected.id, priority)}
               onNoteChange={setNoteDraft}
               onSaveNote={() => void saveNote(selected.id)}
@@ -287,8 +299,19 @@ function CompanyPanel({
           <p className={m.empty}>Generating…</p>
         ) : company.ai_summary ? (
           <>
-            <p className={m.summaryText}>{company.ai_summary}</p>
-            <button className={m.refreshBtn} onClick={onRegenerateSummary} disabled={generatingSummary}>↻ Refresh</button>
+            {(() => {
+              const parsed = parseSummary(company.ai_summary)
+              return parsed ? (
+                <div className={m.intelFields}>
+                  <div><span className={m.intelLabel}>What they do</span><p className={m.summaryText}>{parsed.what_they_do}</p></div>
+                  <div><span className={m.intelLabel}>Who's there</span><p className={m.summaryText}>{parsed.who_is_there}</p></div>
+                  <div><span className={m.intelLabel}>Office type</span><p className={m.summaryText}>{parsed.office_type}</p></div>
+                </div>
+              ) : (
+                <p className={m.summaryText}>{company.ai_summary}</p>
+              )
+            })()}
+            <button className={m.refreshBtn} onClick={onRegenerateSummary} disabled={generatingSummary}>↻ Refresh intel</button>
           </>
         ) : (
           <p className={m.empty}>No intel yet.</p>

@@ -17,7 +17,7 @@ import { askPerplexity } from '../../tools/perplexity'
 import { saveEntry, updateEntryTags } from '../../tools/muse'
 import { autoTag } from './muse'
 import { getPreferences, formatPreferencesForPrompt, incrementTimesApplied } from './preferences'
-import { getAllCompanyNames, updateCassandraNote } from '../../tools/map-db'
+import { getAllCompanyNameVariants, updateCassandraNoteById } from '../../tools/map-db'
 
 // Haiku for the bulk relevance filter — cheap, fast, high volume (up to ~160
 // raw search results/day). Sonnet for the conversational follow-up handler,
@@ -395,19 +395,20 @@ export async function gatherAndFilterArticles(excludeUrls: Set<string> = new Set
 
 // ─── MAP integration — tag articles that mention a mapped company ───────────
 // Fire-and-forget from the handler right after today's articles are
-// persisted — a plain substring match against map_companies.name (no Claude
-// call needed; good enough for "does this headline mention Temenos").
+// persisted — a plain substring match against every known company name/alias
+// (no Claude call needed; good enough for "does this headline mention
+// Temenos" — or "P&G" against Procter & Gamble EMEA HQ's alias list).
 
 export async function tagCompaniesInArticles(articles: CassandraArticle[]): Promise<void> {
-  const companyNames = await getAllCompanyNames()
-  if (companyNames.length === 0) return
+  const variants = await getAllCompanyNameVariants()
+  if (variants.length === 0) return
 
   for (const article of articles) {
     const haystack = `${article.title} ${article.summary}`.toLowerCase()
-    const mentioned = companyNames.find(name => haystack.includes(name.toLowerCase()))
+    const mentioned = variants.find(v => haystack.includes(v.variant.toLowerCase()))
     if (!mentioned) continue
     try {
-      await updateCassandraNote(mentioned.toLowerCase(), article.summary.slice(0, 500))
+      await updateCassandraNoteById(mentioned.id, article.summary.slice(0, 500))
     } catch (err) {
       console.error('[cassandra] map company tagging failed:', err)
     }

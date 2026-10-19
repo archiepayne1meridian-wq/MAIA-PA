@@ -6,10 +6,10 @@ export async function GET(req: NextRequest) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const company = req.nextUrl.searchParams.get('company')
-  if (!company?.trim()) {
-    return NextResponse.json({ error: 'company is required' }, { status: 400 })
+  const companyId = Number(req.nextUrl.searchParams.get('companyId'))
+  if (!Number.isInteger(companyId)) {
+    return NextResponse.json({ error: 'companyId is required' }, { status: 400 })
   }
-  const prospects = await getProspectsForCompany(company.trim())
+  const prospects = await getProspectsForCompany(companyId)
   return NextResponse.json({ prospects })
 }

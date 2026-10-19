@@ -5,7 +5,8 @@
 // at mount and can't be server-rendered.
 
 import 'leaflet/dist/leaflet.css'
-import { MapContainer, TileLayer, CircleMarker } from 'react-leaflet'
+import L from 'leaflet'
+import { MapContainer, TileLayer, Marker } from 'react-leaflet'
 import type { MapCompanyWithStats } from '../../../../tools/map-db'
 
 interface Props {
@@ -18,25 +19,32 @@ interface Props {
 const CENTER: [number, number] = [46.2044, 6.1432]
 const ZOOM = 11
 
-function radiusFor(employeesEst: number | null): number {
-  const n = employeesEst ?? 0
-  if (n < 100) return 8
-  if (n < 300) return 12
-  if (n < 700) return 16
-  if (n < 1500) return 22
-  return 30
+// Uniform small pins, not sized by headcount — central Geneva is dense
+// enough that size-by-employees just produced overlapping blobs. Headcount
+// still shows in the right panel.
+function getPinColour(c: MapCompanyWithStats): string {
+  if (c.prospect_priority === 'avoid') return '#e74c3c'
+  if (c.prospect_priority === 'high' && c.total_booked === 0 && c.total_washed === 0) return '#9b59b6'
+  if (c.total_booked >= 3) return '#e8621a'
+  if (c.total_booked > 0) return '#f39c12'
+  if (c.total_washed > 0) return '#3498db'
+  return '#666666'
 }
 
-// Priority order matters: a compliance "avoid" flag always wins (red), then
-// booking volume (hot/warm), then whether it's being worked at all (cold),
-// then a flagged-but-untouched target (purple), else plain untouched (grey).
-function colourFor(c: MapCompanyWithStats): string {
-  if (c.prospect_priority === 'avoid') return '#e74c3c'
-  if (c.total_booked >= 3) return '#e8621a'
-  if (c.total_booked >= 1) return '#f39c12'
-  if (c.total_washed > 0 || c.total_calls > 0) return '#3498db'
-  if (c.prospect_priority === 'high') return '#9b59b6'
-  return '#666'
+function createPinIcon(colour: string, selected: boolean): L.DivIcon {
+  const stroke = selected ? '#fff' : 'none'
+  const strokeWidth = selected ? 1.5 : 0
+  return L.divIcon({
+    className: '',
+    html: `
+      <svg width="20" height="28" viewBox="0 0 20 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M10 0C4.48 0 0 4.48 0 10C0 17.5 10 28 10 28C10 28 20 17.5 20 10C20 4.48 15.52 0 10 0Z" fill="${colour}" stroke="${stroke}" stroke-width="${strokeWidth}"/>
+        <circle cx="10" cy="10" r="4" fill="white" fill-opacity="0.9"/>
+      </svg>
+    `,
+    iconSize: [20, 28],
+    iconAnchor: [10, 28],
+  })
 }
 
 export default function MapCanvas({ companies, selectedId, onSelect }: Props) {
@@ -47,16 +55,10 @@ export default function MapCanvas({ companies, selectedId, onSelect }: Props) {
         attribution="&copy; OpenStreetMap contributors"
       />
       {companies.map(c => (
-        <CircleMarker
+        <Marker
           key={c.id}
-          center={[c.lat, c.lng]}
-          radius={radiusFor(c.employees_est)}
-          pathOptions={{
-            color: c.id === selectedId ? '#fff' : colourFor(c),
-            weight: c.id === selectedId ? 3 : 1,
-            fillColor: colourFor(c),
-            fillOpacity: 0.75,
-          }}
+          position={[c.lat, c.lng]}
+          icon={createPinIcon(getPinColour(c), c.id === selectedId)}
           eventHandlers={{ click: () => onSelect(c.id) }}
         />
       ))}

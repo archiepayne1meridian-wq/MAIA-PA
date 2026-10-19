@@ -144,7 +144,15 @@ export default function ApolloWorkspace() {
     fetch('/api/dashboard/apollo')
       .then(r => r.ok ? r.json() as Promise<{ calls: ApolloCallSummary[] }> : Promise.reject(new Error(`${r.status}`)))
       .then(d => setCalls(d.calls))
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => {
+        // Never leave calls stuck at null on a failed/timed-out fetch — that
+        // would pin the page on "Loading…" forever. Falls back to whatever
+        // was last successfully loaded (or [] on the very first load), and
+        // still surfaces the error text above the thread.
+        console.error('[apollo] load failed:', e)
+        setError(e.message)
+        setCalls(prev => prev ?? [])
+      })
   }, [])
 
   useEffect(() => { load() }, [load])

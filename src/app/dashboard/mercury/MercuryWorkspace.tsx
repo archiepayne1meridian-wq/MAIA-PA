@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import s from './MercuryTabs.module.css'
 import LinkedInMessagesTab from './LinkedInMessagesTab'
 import QuickRepliesTab from './QuickRepliesTab'
@@ -14,8 +15,25 @@ const TABS: { id: MercuryTab; label: string }[] = [
   { id: 'email_funnel', label: 'Email Funnel' },
 ]
 
+function isMercuryTab(v: string | null): v is MercuryTab {
+  return v === 'linkedin' || v === 'quick_replies' || v === 'email_funnel'
+}
+
 export default function MercuryWorkspace() {
-  const [active, setActive] = useState<MercuryTab>('linkedin')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const urlTab = searchParams.get('tab')
+  const [active, setActive] = useState<MercuryTab>(isMercuryTab(urlTab) ? urlTab : 'linkedin')
+
+  // Keeps ?tab= in sync with the active tab (replace, not push, so switching
+  // tabs doesn't pile up browser-history entries) — a refresh or a slow load
+  // then lands back on the same tab instead of resetting to LinkedIn Messages.
+  useEffect(() => {
+    if (searchParams.get('tab') === active) return
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('tab', active)
+    router.replace(`?${params.toString()}`, { scroll: false })
+  }, [active, router, searchParams])
 
   return (
     <div className={s.root}>

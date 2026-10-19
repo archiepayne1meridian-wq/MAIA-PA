@@ -259,9 +259,10 @@ const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function 
             {loadError && <p style={{ color: 'var(--alert)', marginTop: 4 }}>{loadError}</p>}
             {(() => {
               const cta = EMPTY_STATE_CTA[agent.id]
-              if (!cta) return (
-                <button className={`${s.hBtn} ${s.hBtnG}`} style={{ marginTop: 10 }} onClick={() => inputRef.current?.focus()}>Start here</button>
-              )
+              // No CTA for this agent — the chat input below is already
+              // rendered and ready, so there's nothing to click before
+              // starting; the placeholder text is the only prompt needed.
+              if (!cta) return null
               return (
                 <button
                   className={`${s.hBtn} ${s.hBtnP}`}

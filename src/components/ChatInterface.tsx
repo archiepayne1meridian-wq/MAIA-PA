@@ -22,9 +22,9 @@ interface ChatMessage {
 }
 
 export default function ChatInterface({ tab, starterMessage, placeholder }: ChatInterfaceProps) {
-  // null = history still loading — the input stays disabled until it
-  // resolves, so Archie never types into a thread that's about to be
-  // overwritten by whatever loads a moment later.
+  // null = history still loading. The input itself is never disabled for
+  // this — only an actual in-flight send disables it — so the chat bar stays
+  // ready to type into immediately, even before the history fetch resolves.
   const [messages, setMessages] = useState<ChatMessage[] | null>(null)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -38,7 +38,10 @@ export default function ChatInterface({ tab, starterMessage, placeholder }: Chat
     fetch(`/api/dashboard/mercury/chat?tab=${tab}`)
       .then(r => r.json() as Promise<{ messages?: ChatMessage[] }>)
       .then(d => setMessages(d.messages ?? []))
-      .catch(() => setMessages([]))
+      .catch(err => {
+        console.error(`[mercury:${tab}] history load failed:`, err)
+        setMessages([])
+      })
   }, [tab])
 
   useEffect(() => {
@@ -47,7 +50,7 @@ export default function ChatInterface({ tab, starterMessage, placeholder }: Chat
 
   async function send() {
     const text = input.trim()
-    if (!text || sending || messages === null) return
+    if (!text || sending) return
     setError(null)
     setInput('')
     setMessages(m => [...(m ?? []), { role: 'user', content: text }])
@@ -114,7 +117,7 @@ export default function ChatInterface({ tab, starterMessage, placeholder }: Chat
         value={input}
         onChange={setInput}
         onSend={() => void send()}
-        sending={loading || sending}
+        sending={sending}
         placeholder={loading ? 'Loading…' : placeholder}
       />
     </div>

@@ -24,8 +24,44 @@ function formatCoachingProfile(profile: CoachingProfile): string {
   return lines.join('\n')
 }
 
+// Booked debriefs weave in three questions feeding the Map (territory
+// intelligence) — lead source, prospect nationality, and which Geneva
+// office they're in (HQ or satellite). Only asked while at least one of the
+// four target fields (company_name/prospect_nationality/lead_source/
+// rapport_notes) is still unfilled — once Archie's answered, stop asking so
+// re-opening an already-debriefed booked call doesn't repeat itself.
+const MAP_FIELDS_PROMPT = `
+Once you've covered the standard coaching feedback, weave these into the conversation naturally — not as a numbered list, one at a time as it fits:
+1. Where did he source this contact? Sales Nav, LinkedIn search, webinar, referral, or something else?
+2. What's the prospect's nationality — and was that relevant on the call?
+3. Which company do they work for — and is that their main Geneva office or a satellite of somewhere else (where's the global HQ, any other Swiss offices)?`
+
+export function needsMapFields(call: ApolloCall): boolean {
+  return !call.company_name || !call.prospect_nationality || !call.lead_source
+}
+
 function buildDebriefSystemPrompt(call: ApolloCall, profile: CoachingProfile): string {
   const objections = call.objections_raised_json ? (JSON.parse(call.objections_raised_json) as string[]) : []
+
+  if (call.outcome === 'booked') {
+    return `You are Apollo, Archie's call intelligence agent. Archie is a trainee wealth manager at DeVere Group making cold prospecting calls to English-speaking expatriates.
+
+This call resulted in a booked meeting. Your job here is a short, genuine debrief — what worked, so Archie can repeat it — not a coaching intervention.
+
+HOW TO DEBRIEF:
+- Open by congratulating him briefly, then ask what he thinks landed well
+- Reinforce what actually worked — be specific, reference moments from the transcript
+- Keep it light — this isn't a problem to fix${needsMapFields(call) ? MAP_FIELDS_PROMPT : ''}
+
+COACHING PROFILE:
+${formatCoachingProfile(profile)}
+
+CALL TRANSCRIPT:
+${call.transcript ?? '(no transcript available)'}
+
+CALL SUMMARY: ${call.call_summary ?? 'none'}`
+  }
+
   const intelligence = [
     `Stage reached: ${call.stage_reached ?? 'unknown'}`,
     `Objections raised: ${objections.length > 0 ? objections.join('; ') : 'none recorded'}`,
@@ -88,6 +124,45 @@ Rules:
 - Keep opener_notes, what_lands, what_kills_calls concise and specific — real patterns, not generic advice
 - Increment call_count by exactly 1 from the profile given
 - Set last_updated to today's date`
+
+const EXTRACT_MAP_FIELDS_SYSTEM = `You extract four pieces of information from a debrief conversation about a wealth management cold call that resulted in a booked meeting.
+
+Return ONLY JSON, in exactly this shape — no markdown fences, no prose:
+{
+  "company_name": "the company name as a plain string, or null if not mentioned",
+  "prospect_nationality": "a single nationality adjective (e.g. 'British', 'Australian'), or null if not mentioned",
+  "lead_source": "one of: Sales Navigator | LinkedIn | Webinar | Referral | Cold Call | Other — or null if not mentioned",
+  "rapport_notes": "a short free-text note on what helped on the call, or null if nothing clear was said"
+}
+
+Only extract what's actually stated in the conversation — never guess or invent a value. null is correct and expected when something hasn't come up yet.`
+
+export interface ExtractedBookingFields {
+  company_name: string | null
+  prospect_nationality: string | null
+  lead_source: string | null
+  rapport_notes: string | null
+}
+
+// Fire-and-forget after each exchange in a booked debrief, same pattern as
+// updateCoachingProfile — only called while needsMapFields(call) is true,
+// so this stops running once all three structured fields are captured.
+export async function extractBookingFields(
+  debriefTranscript: DebriefMessage[],
+): Promise<ExtractedBookingFields> {
+  const transcriptText = debriefTranscript.map(m => `${m.role === 'user' ? 'Archie' : 'Apollo'}: ${m.content}`).join('\n')
+  const empty: ExtractedBookingFields = { company_name: null, prospect_nationality: null, lead_source: null, rapport_notes: null }
+  if (!transcriptText.trim()) return empty
+
+  try {
+    const raw = await askWith(EXTRACT_MAP_FIELDS_SYSTEM, transcriptText, 300, HAIKU)
+    const parsed = JSON.parse(extractJson(raw)) as Partial<ExtractedBookingFields>
+    return { ...empty, ...parsed }
+  } catch (err) {
+    console.error('[apollo-debrief] extractBookingFields failed:', err)
+    return empty
+  }
+}
 
 export async function updateCoachingProfile(
   currentProfile: CoachingProfile,

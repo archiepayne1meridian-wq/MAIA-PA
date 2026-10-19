@@ -405,6 +405,10 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   tone_notes: text('tone_notes'),                      // not-booked calls only
   what_resonated: text('what_resonated'),              // not-booked calls only
   debrief_summary: text('debrief_summary'),            // rolling summary of the debrief chat for this call, if any
+  company_name: text('company_name'),                  // prospect's employer — booked calls only, feeds MAP; joined against map_companies.name
+  prospect_nationality: text('prospect_nationality'),   // e.g. 'British', 'Australian' — booked calls only
+  lead_source: text('lead_source'),                     // 'Sales Navigator' | 'LinkedIn' | 'Webinar' | 'Referral' | 'Cold Call' | 'Other' — booked calls only
+  rapport_notes: text('rapport_notes'),                 // what helped on the call — free text from the booked debrief
   created_at: integer('created_at').notNull(),
 })
 
@@ -662,4 +666,31 @@ export const social_posts = sqliteTable('social_posts', {
   status: text('status').notNull().default('draft'), // 'draft' | 'approved' | 'posted'
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
+})
+
+// MAP (codename atlas) — territory intelligence. One row per mapped employer
+// across Greater Geneva / Lake Léman. Joined at query time against
+// nexus_prospects (by company name) and apollo_calls (by company_name) for
+// live stats — never a stored/cached join, see tools/map-db.ts.
+export const map_companies = sqliteTable('map_companies', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  type: text('type').notNull().default('company'),    // 'company' | 'school' | 'university' | 'hospital' | 'intl_org' | 'law_firm' | 'hotel' | 'public_sector' | 'other'
+  sector: text('sector'),
+  employees_est: integer('employees_est'),             // estimated headcount at this Geneva/Swiss location, not global
+  lat: real('lat').notNull(),
+  lng: real('lng').notNull(),
+  area: text('area'),                                  // e.g. 'Vernier', 'Plan-les-Ouates', 'Nyon'
+  hq_location: text('hq_location'),                     // global HQ city, if this is a satellite/regional office
+  swiss_offices: text('swiss_offices'),                  // JSON array of other Swiss office locations
+  office_type: text('office_type').notNull().default('office'), // 'hq' | 'regional' | 'office' | 'campus' | 'site'
+  ai_summary: text('ai_summary'),
+  ai_summary_updated_at: integer('ai_summary_updated_at'),
+  prospect_priority: text('prospect_priority').notNull().default('normal'), // 'high' | 'normal' | 'low' | 'avoid'
+  avoid_reason: text('avoid_reason'),
+  cassandra_notes: text('cassandra_notes'),              // latest Cassandra news snippet mentioning this company
+  cassandra_updated_at: integer('cassandra_updated_at'),
+  notes: text('notes'),                                 // Archie's own free-text note — "+ Add Company Note" in the right panel
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })

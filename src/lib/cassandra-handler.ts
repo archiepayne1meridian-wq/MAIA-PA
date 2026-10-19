@@ -14,7 +14,7 @@ import {
   gatherAndFilterArticles, formatBriefText, toHeadlinesJsonCompat,
   fileCallAngleToMuse, answerCassandraFollowUp, CATEGORY_LABEL,
   checkForMarketAlert, formatMarketAlertText, formatWeeklySummary,
-  compoundWeeklyChange, RATE_DECISION_RE,
+  compoundWeeklyChange, RATE_DECISION_RE, tagCompaniesInArticles,
   type CassandraArticle, type ChatTurn, type WeeklyIndexMove,
   type CassandraRelevance, type CassandraCategory,
 } from './cassandra'
@@ -191,6 +191,7 @@ async function runPipeline(excludeUrls: Set<string>): Promise<{
     gatherAndFilterArticles(excludeUrls),
   ])
   const itemIds = await persistCassandraItems(articles, todayDateString())
+  void tagCompaniesInArticles(articles).catch(err => console.error('[cassandra] company tagging failed:', err))
   return { articles, skippedQueries, itemIds, indices, fx }
 }
 

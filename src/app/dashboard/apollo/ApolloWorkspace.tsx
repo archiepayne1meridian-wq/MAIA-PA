@@ -346,7 +346,11 @@ export default function ApolloWorkspace() {
                   </div>
                 </div>
               )}
-              {(call.outcome === 'follow_up' || call.outcome === 'drop') && <DebriefChat callId={call.id} />}
+              {/* Booked calls get a debrief too — shorter, reinforcement-focused
+                  (see buildDebriefSystemPrompt's outcome==='booked' branch), and
+                  it's where the three MAP questions (lead source, nationality,
+                  company/office) get woven in naturally. */}
+              {(call.outcome === 'booked' || call.outcome === 'follow_up' || call.outcome === 'drop') && <DebriefChat callId={call.id} />}
 
               {/* Follow-up outcome */}
               {call.outcome === 'follow_up' && (

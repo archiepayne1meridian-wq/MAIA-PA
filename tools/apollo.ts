@@ -38,6 +38,10 @@ export interface ApolloCall {
   tone_notes: string | null
   what_resonated: string | null
   debrief_summary: string | null
+  company_name: string | null
+  prospect_nationality: string | null
+  lead_source: string | null
+  rapport_notes: string | null
   created_at: number
 }
 

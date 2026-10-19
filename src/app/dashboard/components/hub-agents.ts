@@ -5,7 +5,7 @@
 
 export type ConversationAgent =
   | 'hub' | 'news' | 'calls' | 'linkedin' | 'social'
-  | 'practice' | 'outreach' | 'study' | 'prospects'
+  | 'practice' | 'outreach' | 'study' | 'prospects' | 'map'
 
 export interface HubAgentMeta {
   id: ConversationAgent
@@ -29,6 +29,7 @@ export const AGENT_WORKSPACE_ROUTE: Partial<Record<ConversationAgent, string>> =
   study: '/dashboard/athena',
   social: '/dashboard/social',
   outreach: '/dashboard/mercury',
+  map: '/dashboard/map',
 }
 
 export const HUB_AGENTS: HubAgentMeta[] = [
@@ -41,4 +42,5 @@ export const HUB_AGENTS: HubAgentMeta[] = [
   { id: 'outreach', name: 'Outreach', role: 'Email Sequences', contextTitle: 'OUTREACH', time: '9:15', preview: 'Sarah M. — email 3 due today', dotOn: true, icon: '✉️' },
   { id: 'study', name: 'Study', role: 'CII & Products', contextTitle: 'STUDY', time: '8:00', preview: '5 cards due — R01 Financial Crime', dotOn: true, icon: '📚' },
   { id: 'prospects', name: 'Prospects', role: 'NEXUS · List Management', contextTitle: 'PROSPECTS', time: 'yesterday', preview: '307 total · 23 unwashed', dotOn: false, icon: '📋' },
+  { id: 'map', name: 'Map', role: 'Territory Intelligence', contextTitle: 'MAP', time: 'today', preview: 'Greater Geneva · live prospect overlay', dotOn: false, icon: '🗺️' },
 ]

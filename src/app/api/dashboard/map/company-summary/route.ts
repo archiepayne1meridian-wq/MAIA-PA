@@ -1,0 +1,30 @@
+// POST /api/dashboard/map/company-summary — AI company intelligence brief.
+// Called on demand when a company is selected and has no summary yet, or
+// its summary is older than 30 days (the frontend decides when to call this
+// — this route always regenerates and saves on every call).
+
+import { NextRequest, NextResponse } from 'next/server'
+import { requireDashboardAuth } from '@/lib/dashboard-auth'
+import { generateCompanySummary } from '@/lib/map'
+import { updateCompanySummary } from '../../../../../../tools/map-db'
+
+export async function POST(req: NextRequest) {
+  if (!(await requireDashboardAuth())) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const { companyId, name, type, sector, area } = await req.json().catch(() => ({})) as {
+    companyId?: number; name?: string; type?: string; sector?: string | null; area?: string | null
+  }
+  if (!companyId || !name?.trim()) {
+    return NextResponse.json({ error: 'companyId and name are required' }, { status: 400 })
+  }
+
+  try {
+    const summary = await generateCompanySummary(name.trim(), type ?? 'company', sector ?? null, area ?? null)
+    await updateCompanySummary(companyId, summary)
+    return NextResponse.json({ summary })
+  } catch (err) {
+    console.error('[map/company-summary] failed:', err)
+    return NextResponse.json({ error: 'Failed to generate summary' }, { status: 500 })
+  }
+}

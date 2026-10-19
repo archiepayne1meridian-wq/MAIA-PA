@@ -3,8 +3,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
-import { chatWithApolloDebrief, updateCoachingProfile } from '@/lib/apollo-debrief'
-import { getCall } from '../../../../../../tools/apollo'
+import { chatWithApolloDebrief, updateCoachingProfile, extractBookingFields, needsMapFields } from '@/lib/apollo-debrief'
+import { getCall, updateCall } from '../../../../../../tools/apollo'
 import {
   getDebriefMessages, saveDebriefMessage, countDebriefMessages,
   getCoachingProfile, saveCoachingProfile,
@@ -58,6 +58,23 @@ export async function POST(req: NextRequest) {
         const updated = await updateCoachingProfile(profile, fullHistory, call.call_summary)
         await saveCoachingProfile(updated)
       })().catch(err => console.error('[apollo/chat] background profile update failed:', err))
+    }
+
+    // Booked debriefs weave in three questions feeding MAP (lead source,
+    // nationality, company/office) — extract after every exchange until
+    // all three are captured, then stop (avoids re-running the extraction
+    // call once there's nothing left to find).
+    if (call.outcome === 'booked' && needsMapFields(call)) {
+      void (async () => {
+        const fullHistory = await getDebriefMessages(callId, 50)
+        const extracted = await extractBookingFields(fullHistory)
+        await updateCall(callId, {
+          company_name: extracted.company_name ?? call.company_name,
+          prospect_nationality: extracted.prospect_nationality ?? call.prospect_nationality,
+          lead_source: extracted.lead_source ?? call.lead_source,
+          rapport_notes: extracted.rapport_notes ?? call.rapport_notes,
+        })
+      })().catch(err => console.error('[apollo/chat] background map-fields extraction failed:', err))
     }
 
     return NextResponse.json({ reply })

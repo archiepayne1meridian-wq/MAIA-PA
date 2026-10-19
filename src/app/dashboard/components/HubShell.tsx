@@ -12,8 +12,9 @@ import { AGENT_WORKSPACE_ROUTE, HUB_AGENTS, type ConversationAgent } from './hub
 // Agents that redirect straight to their dedicated full-page workspace
 // instead of opening the generic hub chat tile — unlike Calls/LinkedIn/Social,
 // these have no useful chat-only experience in the hub (Prospects is a data
-// grid, Study/Practice's dedicated pages are the whole workspace).
-const DIRECT_NAV_AGENTS = new Set<ConversationAgent>(['prospects', 'study', 'practice'])
+// grid, Study/Practice's dedicated pages are the whole workspace, Map is a
+// pure data view with no chat at all).
+const DIRECT_NAV_AGENTS = new Set<ConversationAgent>(['prospects', 'study', 'practice', 'map'])
 
 const RAIL_COLLAPSED_KEY = 'maia_rail_collapsed'
 

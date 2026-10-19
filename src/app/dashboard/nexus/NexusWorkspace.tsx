@@ -679,6 +679,14 @@ function WashUploadModal({ onClose, showToast, onDone }: {
               </span>
             ))}
           </div>
+          {unmatchedPreview.length > 0 && (
+            <div className={s.nexusWashWarning}>
+              ⚠️ {unmatchedPreview.length} name{unmatchedPreview.length === 1 ? '' : 's'} couldn't be matched to a prospect — check spelling before confirming:
+              <div className={s.nexusImportUnmatchedChips}>
+                {unmatchedPreview.map((c, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{unmatchedDisplay(c.name)}</span>)}
+              </div>
+            </div>
+          )}
           <div className={s.nexusModalActions}>
             <button className={s.nexusBtn} onClick={() => setCandidates(null)} disabled={busy}>Back</button>
             <button className={`${s.nexusBtn} ${s.nexusBtnPrimary}`} onClick={() => void confirmImport()} disabled={busy}>
@@ -695,14 +703,15 @@ function WashUploadModal({ onClose, showToast, onDone }: {
           <br />⛔ {result.dnc} DNC — never rewash
           <br />👤 {result.others_client} Others' Clients — never rewash
           <br />🔴 {result.pool_conflict + result.redlisted_company} Red — rewash later (pool conflicts + redlisted)
-          {result.unmatched.length > 0 && (
-            <>
-              <br />✗ {result.unmatched.length} unmatched — check spelling against your prospect list:
-              <div className={s.nexusImportUnmatchedChips}>
-                {result.unmatched.map((name, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{unmatchedDisplay(name)}</span>)}
-              </div>
-            </>
-          )}
+        </div>
+      )}
+
+      {result && result.unmatched.length > 0 && (
+        <div className={s.nexusWashWarning}>
+          ⚠️ {result.unmatched.length} name{result.unmatched.length === 1 ? '' : 's'} couldn't be matched — check spelling against your prospect list:
+          <div className={s.nexusImportUnmatchedChips}>
+            {result.unmatched.map((name, i) => <span key={i} className={s.nexusImportUnmatchedChip}>{unmatchedDisplay(name)}</span>)}
+          </div>
         </div>
       )}
     </ModalShell>

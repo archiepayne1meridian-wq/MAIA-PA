@@ -100,13 +100,98 @@ export async function parseSalesNav(text: string, existing: NameLookup[]): Promi
   return candidates
 }
 
+// ─── Fuzzy name matching (wash-result pastes) ────────────────────────────────
+//
+// Wash sheets and other pastes spell names inconsistently against what's
+// already in the prospect list: initials where LinkedIn only showed one
+// ("Dantes M" in the CRM vs "Dantes Mendez" on the wash sheet), accented
+// characters transliterated differently ("João" vs "Joao"), "Last, First"
+// order, and hyphenated first names ("Mary-Jane" vs "Mary Jane"). Exact
+// string equality drops all of these silently. This matches fuzzily across
+// exactly those four variations — not a general edit-distance search, which
+// would risk false-positive matches between genuinely different prospects.
+
+function stripAccents(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '')
+}
+
+// Lowercase, accent-fold, drop periods (initials sometimes carry a trailing
+// "."), treat hyphens as spaces, collapse whitespace.
+function normalisePart(s: string): string {
+  return stripAccents(s).toLowerCase().replace(/\./g, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+// Candidate (first, last) splits for a raw pasted name. "Last, First" is
+// unambiguous once a comma is present. Otherwise the convention used
+// everywhere else in this file is "last token is the surname" — but the
+// reverse order is also tried as a fallback in case a sheet pastes surname
+// first with no comma to mark it.
+function nameOrderings(raw: string): { firstLower: string; lastLower: string }[] {
+  const name = raw.trim()
+  const commaIdx = name.indexOf(',')
+  if (commaIdx !== -1) {
+    const last = name.slice(0, commaIdx).trim()
+    const first = name.slice(commaIdx + 1).trim()
+    const parts = normalisePart(`${first} ${last}`).split(' ').filter(Boolean)
+    if (parts.length < 2) return [{ firstLower: parts[0] ?? '', lastLower: '' }]
+    return [{ firstLower: parts.slice(0, -1).join(' '), lastLower: parts[parts.length - 1] }]
+  }
+
+  const parts = normalisePart(name).split(' ').filter(Boolean)
+  if (parts.length < 2) return [{ firstLower: parts[0] ?? '', lastLower: '' }]
+  const primary = { firstLower: parts.slice(0, -1).join(' '), lastLower: parts[parts.length - 1] }
+  const reversed = { firstLower: parts[parts.length - 1], lastLower: parts.slice(0, -1).join(' ') }
+  return primary.firstLower === reversed.firstLower && primary.lastLower === reversed.lastLower
+    ? [primary]
+    : [primary, reversed]
+}
+
+// True if `a` and `b` are the same surname, or one is a single-letter
+// initial of the other ("m" ~ "mendez", checked in either direction since
+// either the CRM record or the pasted name might be the one carrying only
+// an initial).
+function surnameMatches(a: string, b: string): boolean {
+  if (a === b) return true
+  if (a.length === 1) return b.startsWith(a)
+  if (b.length === 1) return a.startsWith(b)
+  return false
+}
+
+// Looks up a pasted name against the existing prospect list. Tries every
+// name ordering with exact (accent/hyphen/period-folded) equality first —
+// this covers every case that already matched before fuzzy matching existed
+// — then falls back to the initial-surname rule only if nothing matched
+// exactly.
+export function findProspectMatch(rawName: string, existing: NameLookup[]): NameLookup | null {
+  const orderings = nameOrderings(rawName)
+
+  for (const { firstLower, lastLower } of orderings) {
+    if (!firstLower) continue
+    const exact = existing.find(n =>
+      normalisePart(n.firstLower) === firstLower && normalisePart(n.lastLower) === lastLower,
+    )
+    if (exact) return exact
+  }
+
+  for (const { firstLower, lastLower } of orderings) {
+    if (!firstLower) continue
+    const fuzzy = existing.find(n =>
+      normalisePart(n.firstLower) === firstLower && surnameMatches(normalisePart(n.lastLower), lastLower),
+    )
+    if (fuzzy) return fuzzy
+  }
+
+  return null
+}
+
 // ─── Wash results paste parser ───────────────────────────────────────────────
 //
 // Archie's daily wash overview: one prospect per line, name followed by a
 // status keyword somewhere on the line (tab/colon/dash separated, exact
 // punctuation varies by how it's exported, so the status keyword — not a
 // fixed delimiter — is what anchors the split). Matches against existing
-// prospects by exact case-insensitive "first last" (or "last first").
+// prospects via findProspectMatch above (fuzzy: accents, initials, hyphens,
+// reversed order).
 
 export interface WashUpdateCandidate {
   id: string | null
@@ -136,10 +221,7 @@ export function parseWashResults(text: string, existing: NameLookup[]): WashUpda
     if (!namePart) continue
 
     const washResult = normaliseStatus(m[1]!)
-    const nameLower = namePart.toLowerCase().replace(/\s+/g, ' ')
-    const match = existing.find(n =>
-      `${n.firstLower} ${n.lastLower}` === nameLower || `${n.lastLower} ${n.firstLower}` === nameLower,
-    )
+    const match = findProspectMatch(namePart, existing)
 
     results.push({ id: match?.id ?? null, name: namePart, washResult, matched: Boolean(match) })
   }
@@ -222,13 +304,7 @@ export async function parseWashResultsRich(text: string, existing: NameLookup[])
     if (!name) continue
 
     const category = WASH_CATEGORIES.includes(r.category as WashCategory) ? (r.category as WashCategory) : 'dnc'
-
-    // Same "split on last space" convention as the Sales Nav parser above —
-    // last name is the final word, first name is everything before it.
-    const parts = name.split(/\s+/)
-    const lastLower = (parts.length > 1 ? parts[parts.length - 1] : '').toLowerCase()
-    const firstLower = (parts.length > 1 ? parts.slice(0, -1).join(' ') : (parts[0] ?? '')).toLowerCase()
-    const match = existing.find(n => n.firstLower === firstLower && n.lastLower === lastLower)
+    const match = findProspectMatch(name, existing)
 
     candidates.push({
       id: match?.id ?? null,

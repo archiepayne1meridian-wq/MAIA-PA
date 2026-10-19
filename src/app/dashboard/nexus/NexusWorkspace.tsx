@@ -580,6 +580,8 @@ interface WashResultCandidate {
   reason: string
   conflictingAdvisor: string | null
   matched: boolean
+  aiMatched: boolean
+  matchedName: string | null
 }
 
 interface WashConfirmResult {
@@ -674,11 +676,21 @@ function WashUploadModal({ onClose, showToast, onDone }: {
           <div className={s.nexusImportUnmatchedChips}>
             {candidates.map((c, i) => (
               <span key={i} className={s.nexusImportUnmatchedChip} title={c.reason}>
-                {c.matched ? '✓' : '✗'} {c.name} — {c.category === 'ok_to_contact' ? 'Green' : c.category === 'dnc' ? 'DNC' : c.category === 'others_client' ? "Others' Client" : c.category === 'redlisted_company' ? 'Redlisted' : 'Pool Conflict'}
+                {c.matched ? (c.aiMatched ? '✓🤖' : '✓') : '✗'} {c.name} — {c.category === 'ok_to_contact' ? 'Green' : c.category === 'dnc' ? 'DNC' : c.category === 'others_client' ? "Others' Client" : c.category === 'redlisted_company' ? 'Redlisted' : 'Pool Conflict'}
                 {c.conflictingAdvisor ? ` (${c.conflictingAdvisor})` : ''}
               </span>
             ))}
           </div>
+          {candidates.some(c => c.aiMatched) && (
+            <div className={s.nexusImportResult}>
+              🤖 AI-matched {candidates.filter(c => c.aiMatched).length} name{candidates.filter(c => c.aiMatched).length === 1 ? '' : 's'} the fast pass missed:
+              <div className={s.nexusImportUnmatchedChips}>
+                {candidates.filter(c => c.aiMatched).map((c, i) => (
+                  <span key={i} className={s.nexusImportUnmatchedChip}>{c.name} → {c.matchedName ?? '?'}</span>
+                ))}
+              </div>
+            </div>
+          )}
           {unmatchedPreview.length > 0 && (
             <div className={s.nexusWashWarning}>
               ⚠️ {unmatchedPreview.length} name{unmatchedPreview.length === 1 ? '' : 's'} couldn't be matched to a prospect — check spelling before confirming:

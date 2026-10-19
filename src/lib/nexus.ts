@@ -162,7 +162,7 @@ function surnameMatches(a: string, b: string): boolean {
 // this covers every case that already matched before fuzzy matching existed
 // — then falls back to the initial-surname rule only if nothing matched
 // exactly.
-export function findProspectMatch(rawName: string, existing: NameLookup[]): NameLookup | null {
+export function findProspectMatch<T extends NameLookup>(rawName: string, existing: T[]): T | null {
   const orderings = nameOrderings(rawName)
 
   for (const { firstLower, lastLower } of orderings) {
@@ -182,6 +182,71 @@ export function findProspectMatch(rawName: string, existing: NameLookup[]): Name
   }
 
   return null
+}
+
+// ─── AI-powered name matching (fallback for anything findProspectMatch misses) ──
+//
+// findProspectMatch above is the fast, free, rule-based pass — it covers the
+// well-defined cases cheaply. But rule-based matching will always have edge
+// cases a fixed rule set can't fully anticipate (swapped name parts with a
+// middle initial thrown in, unusual capitalisation, etc). Anything still
+// unmatched after the rule-based pass is batched into a single Claude call
+// with the full prospect list: every wash-sheet name originated FROM this
+// list, so there's almost always a genuine match, and Claude can reason
+// through formatting noise the way a person would. Genuinely ambiguous or
+// truly off-list names come back null and stay flagged as unmatched — that's
+// the one case that should surface to Archie.
+
+export interface ProspectForMatching extends NameLookup {
+  name: string
+  company: string | null
+}
+
+export interface AiNameMatch {
+  washName: string
+  prospectId: string | null
+  confidence: 'high' | 'medium' | 'none'
+}
+
+const AI_MATCH_SYSTEM_PROMPT = `You are matching names from a compliance wash list to prospects in a wealth management CRM.
+
+Rules:
+- The wash list names may have: middle names, middle initials, name parts swapped, commas, accents removed or added, suffixes (Jr, PhD etc)
+- Every name on the wash list was originally sourced FROM this prospect list, so there will almost always be a match
+- Match on best logical fit — same person, even if formatting differs
+- If genuinely ambiguous (two prospects could both match), or the name doesn't belong to anyone on the list, return null for prospectId and "none" for confidence
+- Return ONLY a valid JSON array, no explanation, no markdown`
+
+export async function aiMatchNames(
+  unmatchedWashNames: string[],
+  allProspects: ProspectForMatching[],
+): Promise<AiNameMatch[]> {
+  if (unmatchedWashNames.length === 0 || allProspects.length === 0) return []
+
+  const prospectList = allProspects.map(p => `${p.id}: ${p.name}${p.company ? ` (${p.company})` : ''}`).join('\n')
+  const userMessage = `Prospects in CRM:\n${prospectList}\n\nWash names to match (find the prospect ID for each):\n${unmatchedWashNames.map((n, i) => `${i + 1}. "${n}"`).join('\n')}\n\nReturn JSON array:\n[\n  { "washName": "...", "prospectId": "<id from the list above>" | null, "confidence": "high" | "medium" | "none" }\n]`
+
+  try {
+    const raw = await askWith(AI_MATCH_SYSTEM_PROMPT, userMessage, 2048, 'claude-sonnet-4-6')
+    const parsed = JSON.parse(extractJsonArray(raw)) as unknown
+    if (!Array.isArray(parsed)) return []
+
+    const validIds = new Set(allProspects.map(p => p.id))
+    return parsed
+      .filter((m): m is Record<string, unknown> => typeof m === 'object' && m !== null)
+      .map(m => {
+        const washName = typeof m.washName === 'string' ? m.washName : ''
+        const confidenceRaw = typeof m.confidence === 'string' ? m.confidence : 'none'
+        const confidence: AiNameMatch['confidence'] = confidenceRaw === 'high' || confidenceRaw === 'medium' ? confidenceRaw : 'none'
+        const prospectIdRaw = typeof m.prospectId === 'string' ? m.prospectId : null
+        const prospectId = confidence !== 'none' && prospectIdRaw && validIds.has(prospectIdRaw) ? prospectIdRaw : null
+        return { washName, prospectId, confidence: prospectId ? confidence : 'none' }
+      })
+      .filter(m => m.washName)
+  } catch (err) {
+    console.error('[nexus] AI name matching failed:', err)
+    return []
+  }
 }
 
 // ─── Wash results paste parser ───────────────────────────────────────────────
@@ -247,6 +312,11 @@ export interface WashResultCandidate {
   reason: string
   conflictingAdvisor: string | null
   matched: boolean
+  // Set when findProspectMatch missed but the AI fallback pass resolved it —
+  // the UI surfaces these distinctly ("AI-matched: wash name → prospect
+  // name") rather than silently treating them the same as a rule-based hit.
+  aiMatched: boolean
+  matchedName: string | null
 }
 
 const WASH_RESULTS_PARSER_SYSTEM_PROMPT = `You parse wash result data from a deVere Group prospect wash sheet.
@@ -286,7 +356,7 @@ interface RawWashRow {
 
 const WASH_CATEGORIES: WashCategory[] = ['ok_to_contact', 'dnc', 'others_client', 'pool_conflict', 'redlisted_company']
 
-export async function parseWashResultsRich(text: string, existing: NameLookup[]): Promise<WashResultCandidate[]> {
+export async function parseWashResultsRich(text: string, existing: ProspectForMatching[]): Promise<WashResultCandidate[]> {
   const raw = await askWith(WASH_RESULTS_PARSER_SYSTEM_PROMPT, text.trim(), 4096, 'claude-sonnet-4-6')
 
   let rows: RawWashRow[]
@@ -314,7 +384,30 @@ export async function parseWashResultsRich(text: string, existing: NameLookup[])
       reason: (r.reason ?? '').trim(),
       conflictingAdvisor: category === 'pool_conflict' ? ((r.conflicting_advisor ?? '').trim() || null) : null,
       matched: Boolean(match),
+      aiMatched: false,
+      matchedName: match?.name ?? null,
     })
+  }
+
+  // Fast rule-based matching (above) is cheap and covers the common cases.
+  // Anything it missed goes through one batched Claude call rather than
+  // being dropped silently — see aiMatchNames above.
+  const unmatched = candidates.filter(c => !c.matched)
+  if (unmatched.length > 0) {
+    const aiResults = await aiMatchNames(unmatched.map(c => c.name), existing).catch(err => {
+      console.error('[nexus] aiMatchNames batch failed:', err)
+      return [] as AiNameMatch[]
+    })
+    const byWashName = new Map(aiResults.map(r => [r.washName, r]))
+    const byId = new Map(existing.map(p => [p.id, p]))
+    for (const c of unmatched) {
+      const ai = byWashName.get(c.name)
+      if (!ai?.prospectId) continue
+      c.id = ai.prospectId
+      c.matched = true
+      c.aiMatched = true
+      c.matchedName = byId.get(ai.prospectId)?.name ?? null
+    }
   }
 
   return candidates

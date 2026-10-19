@@ -255,16 +255,23 @@ export async function applyWashCategoryUpgrade(id: string, input: WashCategoryUp
 // All (first_name, last_name) pairs, lower-cased, for duplicate detection on
 // Sales Nav paste and name-matching on wash-result paste. One query, cheap —
 // the full list tops out in the low thousands for a single-user CRM feed.
-export async function getAllNamesLower(): Promise<{ id: string; firstLower: string; lastLower: string }[]> {
+// Also carries the original-case display name + company — not needed for
+// the plain lowercase-equality consumers, but required by the AI name
+// matcher (src/lib/nexus.ts's aiMatchNames), which shows Claude the real
+// prospect list to match wash-sheet names against.
+export async function getAllNamesLower(): Promise<{ id: string; firstLower: string; lastLower: string; name: string; company: string | null }[]> {
   const rows = await getDb().select({
     id: nexus_prospects.id,
     first_name: nexus_prospects.first_name,
     last_name: nexus_prospects.last_name,
+    company: nexus_prospects.company,
   }).from(nexus_prospects)
   return rows.map(r => ({
     id: r.id,
     firstLower: (r.first_name ?? '').trim().toLowerCase(),
     lastLower: (r.last_name ?? '').trim().toLowerCase(),
+    name: `${r.first_name ?? ''} ${r.last_name ?? ''}`.trim(),
+    company: r.company,
   }))
 }
 

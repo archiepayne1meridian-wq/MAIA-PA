@@ -532,12 +532,25 @@ export const cassandra_items = sqliteTable('cassandra_items', {
   published: text('published'),
   summary: text('summary').notNull(),
   key_quote: text('key_quote'),
-  call_angle: text('call_angle').notNull(),
+  // Retired — CASSANDRA no longer generates a suggested call-angle talking
+  // point, Archie reads the factual summary and forms his own. Column kept
+  // (nullable) rather than dropped so historical rows stay readable.
+  call_angle: text('call_angle'),
   content_angle: text('content_angle'),
   relevance: text('relevance').notNull(),   // 'high' | 'medium'
   category: text('category').notNull(),     // uk_pension | swiss_news | markets | regulation | geopolitical | retirement_destinations | devere_ceo
   used_on_call: integer('used_on_call').notNull().default(0),
   used_in_post: integer('used_in_post').notNull().default(0),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
+// Cross-day "already shown to Archie" tracking for the CASSANDRA fetch
+// pipeline — cassandra_items.date scopes dedup to a single day, so an article
+// could otherwise resurface and get re-shown the next day. url is unique;
+// rows older than 30 days are pruned once per fetch cycle.
+export const cassandra_seen_articles = sqliteTable('cassandra_seen_articles', {
+  id: text('id').primaryKey(),
+  url: text('url').notNull().unique(),
   created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
 })
 

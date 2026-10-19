@@ -42,7 +42,7 @@ export async function handleMuseConfirm(
     // CASSANDRA specifically, per the "discard a CASSANDRA item" trigger. In
     // practice source_agent is currently always null here: CASSANDRA auto-files
     // straight to muse_entries via saveEntry (bypassing muse_pending/this confirm
-    // flow entirely — see src/lib/cassandra.ts's fileCallAngleToMuse), so this
+    // flow entirely — see src/lib/cassandra.ts's fileNewsSummaryToMuse), so this
     // never fires today. Left wired correctly rather than removed, so it starts
     // working the moment CASSANDRA content ever does flow through the pending queue.
     if (pending.source_agent === 'CASSANDRA') {

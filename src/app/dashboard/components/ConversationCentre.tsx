@@ -209,8 +209,8 @@ const ConversationCentre = forwardRef<ConversationCentreHandle, Props>(function 
     if (url) window.open(url, '_blank', 'noopener,noreferrer')
   }
 
-  async function useOnCall(itemId: string | undefined, callAngle: string) {
-    await copyToClipboard(callAngle)
+  async function useOnCall(itemId: string | undefined, summary: string) {
+    await copyToClipboard(summary)
     showToast('Copied — ready to use')
     if (!itemId) return
     try {
@@ -333,7 +333,7 @@ function MessageItem({ message, onNotConnected, onCopy, onReadArticle, onUseOnCa
   onNotConnected: () => void
   onCopy: (text: string) => void
   onReadArticle: (url: string | undefined) => void
-  onUseOnCall: (itemId: string | undefined, callAngle: string) => void
+  onUseOnCall: (itemId: string | undefined, summary: string) => void
   onPostIdea: (itemId: string | undefined) => void
 }) {
   if (message.type === 'news_brief') {
@@ -348,12 +348,13 @@ function MessageItem({ message, onNotConnected, onCopy, onReadArticle, onUseOnCa
   if (message.type === 'news_card') {
     const meta = message.metadata as {
       itemId?: string; title?: string; source?: string; url?: string; published?: string
-      keyQuote?: string | null; callAngle?: string; categoryLabel?: string
+      keyQuote?: string | null; categoryLabel?: string
     } | undefined
     return (
       <div className={s.newsCard}>
         <div className={s.newsTitle}>📰 {meta?.title ?? message.content}</div>
         <div className={s.newsMeta}>{meta?.source ?? ''} · {publishedTimeAgo(meta?.published, message.timestamp)}{meta?.categoryLabel ? ` · ${meta.categoryLabel}` : ''}</div>
+        <div className={s.newsBlockLabel}>📝 Summary</div>
         <div className={s.newsSummary}>{message.content}</div>
         {meta?.keyQuote && (
           <div className={s.newsQuoteBlock}>
@@ -361,15 +362,9 @@ function MessageItem({ message, onNotConnected, onCopy, onReadArticle, onUseOnCa
             <p className={s.newsQuoteText}>&ldquo;{meta.keyQuote}&rdquo;</p>
           </div>
         )}
-        {meta?.callAngle && (
-          <div className={s.newsAngleBlock}>
-            <div className={s.newsBlockLabel}>📞 Call angle</div>
-            <p className={s.newsAngleText}>{meta.callAngle}</p>
-          </div>
-        )}
         <div className={s.newsActions}>
           <button className={`${s.hBtn} ${s.hBtnG}`} onClick={() => onReadArticle(meta?.url)} disabled={!meta?.url}>Read more ↗</button>
-          <button className={`${s.hBtn} ${s.hBtnP}`} onClick={() => onUseOnCall(meta?.itemId, meta?.callAngle ?? '')}>Use on a call</button>
+          <button className={`${s.hBtn} ${s.hBtnP}`} onClick={() => onUseOnCall(meta?.itemId, message.content)}>Use on a call</button>
           <button className={`${s.hBtn} ${s.hBtnG}`} onClick={() => onPostIdea(meta?.itemId)}>Post idea</button>
         </div>
       </div>

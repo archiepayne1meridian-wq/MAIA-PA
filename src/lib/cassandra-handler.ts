@@ -9,10 +9,10 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { eq, desc, and, gte } from 'drizzle-orm'
+import { eq, desc, and, gte, lt } from 'drizzle-orm'
 import {
   gatherAndFilterArticles, formatBriefText, toHeadlinesJsonCompat,
-  fileCallAngleToMuse, answerCassandraFollowUp, CATEGORY_LABEL,
+  fileNewsSummaryToMuse, answerCassandraFollowUp, CATEGORY_LABEL,
   checkForMarketAlert, formatMarketAlertText, formatWeeklySummary,
   compoundWeeklyChange, RATE_DECISION_RE, tagCompaniesInArticles,
   type CassandraArticle, type ChatTurn, type WeeklyIndexMove,
@@ -21,7 +21,7 @@ import {
 import { getIndexQuotes, getFxQuotes, type IndexSpec, type IndexQuote } from '../../tools/market-data'
 import { checkMuseHarvest } from './muse-handler'
 import { getDb } from '@/db'
-import { activity, research_briefs, cassandra_items } from '@/db/schema'
+import { activity, research_briefs, cassandra_items, cassandra_seen_articles } from '@/db/schema'
 import { getConversation, appendMessage, appendMessages, type ConversationMessage } from '../../tools/maia-conversations'
 
 // ─── Config parsing (indices/FX only — RSS feed config is dead, Brave replaced it) ──
@@ -99,8 +99,48 @@ async function getTodaysItemUrls(date: string): Promise<Set<string>> {
   return new Set(rows.map(r => r.url))
 }
 
+// Union of today's already-persisted URLs and the cross-day "seen" set —
+// the exclude list every fetch cycle filters candidates against.
+async function buildExcludeUrls(date: string): Promise<Set<string>> {
+  const [todays, seen] = await Promise.all([getTodaysItemUrls(date), getSeenUrls()])
+  return new Set([...todays, ...seen])
+}
+
+// ─── Cross-day "already seen" tracking ────────────────────────────────────────
+// cassandra_items.date scopes dedup to a single day, so an article could
+// otherwise resurface and get re-fetched/re-shown the next day. This table
+// tracks every URL ever displayed, for 30 days, independent of which day's
+// cassandra_items row it landed in.
+
+const SEEN_RETENTION_SECS = 30 * 86400
+
+async function getSeenUrls(): Promise<Set<string>> {
+  const cutoff = Math.floor(Date.now() / 1000) - SEEN_RETENTION_SECS
+  const rows = await getDb().select({ url: cassandra_seen_articles.url }).from(cassandra_seen_articles)
+    .where(gte(cassandra_seen_articles.created_at, cutoff))
+  return new Set(rows.map(r => r.url))
+}
+
+// Upsert — a URL already marked seen within the retention window just gets
+// its created_at refreshed rather than erroring on the unique constraint.
+async function markUrlsSeen(urls: string[]): Promise<void> {
+  if (urls.length === 0) return
+  const now = Math.floor(Date.now() / 1000)
+  await getDb().insert(cassandra_seen_articles)
+    .values(urls.map(url => ({ id: crypto.randomUUID(), url, created_at: now })))
+    .onConflictDoUpdate({ target: cassandra_seen_articles.url, set: { created_at: now } })
+}
+
+// Prunes rows older than the retention window — run once per fetch cycle.
+async function cleanExpiredSeenArticles(): Promise<void> {
+  const cutoff = Math.floor(Date.now() / 1000) - SEEN_RETENTION_SECS
+  await getDb().delete(cassandra_seen_articles).where(lt(cassandra_seen_articles.created_at, cutoff))
+}
+
 // Returns generated ids aligned 1:1 with `articles`, for building news_card
-// messages (metadata.itemId) right after.
+// messages (metadata.itemId) right after. Also marks each persisted URL as
+// seen, so it won't resurface in a future fetch cycle within the retention
+// window.
 async function persistCassandraItems(articles: CassandraArticle[], date: string): Promise<string[]> {
   if (articles.length === 0) return []
   const db = getDb()
@@ -116,7 +156,6 @@ async function persistCassandraItems(articles: CassandraArticle[], date: string)
       published: a.published,
       summary: a.summary,
       key_quote: a.keyQuote,
-      call_angle: a.callAngle,
       content_angle: a.contentAngle,
       relevance: a.relevance,
       category: a.category,
@@ -125,6 +164,7 @@ async function persistCassandraItems(articles: CassandraArticle[], date: string)
       created_at: now,
     })),
   )
+  await markUrlsSeen(articles.map(a => a.url))
   return ids
 }
 
@@ -159,7 +199,6 @@ function buildNewsCardMessages(articles: CassandraArticle[], itemIds: string[]):
       url: a.url,
       published: a.published,
       keyQuote: a.keyQuote,
-      callAngle: a.callAngle,
       contentAngle: a.contentAngle,
       relevance: a.relevance,
       category: a.category,
@@ -238,7 +277,7 @@ async function buildWeeklySummary(): Promise<string | null> {
 function dbArticleToCassandraArticle(r: typeof cassandra_items.$inferSelect): CassandraArticle {
   return {
     title: r.title, source: r.source, url: r.url, published: r.published,
-    summary: r.summary, keyQuote: r.key_quote, callAngle: r.call_angle,
+    summary: r.summary, keyQuote: r.key_quote,
     contentAngle: r.content_angle,
     relevance: r.relevance as CassandraRelevance,
     category: r.category as CassandraCategory,
@@ -311,8 +350,9 @@ export async function buildScheduledBrief(): Promise<void> {
   })
 
   try {
-    const existingUrls = await getTodaysItemUrls(todayDateString())
-    const { articles, skippedQueries, itemIds, indices, fx } = await runPipeline(existingUrls)
+    await cleanExpiredSeenArticles()
+    const excludeUrls = await buildExcludeUrls(todayDateString())
+    const { articles, skippedQueries, itemIds, indices, fx } = await runPipeline(excludeUrls)
     const text = formatBriefText(indices, fx, articles, skippedQueries)
 
     // Monday only — Tue-Fri get null (fetched fresh, not carried over from a
@@ -334,7 +374,7 @@ export async function buildScheduledBrief(): Promise<void> {
     })
 
     void checkMuseHarvest('CASSANDRA', 'brief_saved', { briefText: text })
-    void fileCallAngleToMuse(articles).catch(err => console.error('[cassandra] fileCallAngleToMuse failed:', err))
+    void fileNewsSummaryToMuse(articles).catch(err => console.error('[cassandra] fileNewsSummaryToMuse failed:', err))
 
     const briefMsg = buildNewsBriefMessage(articles)
     const cardMsgs = buildNewsCardMessages(articles, itemIds)
@@ -367,8 +407,9 @@ export async function buildAfternoonRefresh(): Promise<void> {
   })
 
   try {
-    const existingUrls = await getTodaysItemUrls(todayDateString())
-    const { articles } = await gatherAndFilterArticles(existingUrls)
+    await cleanExpiredSeenArticles()
+    const excludeUrls = await buildExcludeUrls(todayDateString())
+    const { articles } = await gatherAndFilterArticles(excludeUrls)
 
     if (articles.length === 0) {
       await getDb().update(activity).set({ output: 'no new items', status: 'success', duration_ms: Date.now() - startMs }).where(eq(activity.id, rowId))
@@ -424,8 +465,9 @@ export async function ensureTodaysBriefInThread(): Promise<ConversationMessage[]
   })
 
   try {
-    const existingUrls = await getTodaysItemUrls(todayDateString())
-    const { articles, skippedQueries, itemIds, indices, fx } = await runPipeline(existingUrls)
+    await cleanExpiredSeenArticles()
+    const excludeUrls = await buildExcludeUrls(todayDateString())
+    const { articles, skippedQueries, itemIds, indices, fx } = await runPipeline(excludeUrls)
     const text = formatBriefText(indices, fx, articles, skippedQueries)
 
     await getDb().insert(research_briefs).values({
@@ -438,7 +480,7 @@ export async function ensureTodaysBriefInThread(): Promise<ConversationMessage[]
     })
 
     void checkMuseHarvest('CASSANDRA', 'brief_saved', { briefText: text })
-    void fileCallAngleToMuse(articles).catch(err => console.error('[cassandra] fileCallAngleToMuse failed:', err))
+    void fileNewsSummaryToMuse(articles).catch(err => console.error('[cassandra] fileNewsSummaryToMuse failed:', err))
 
     const briefMsg = buildNewsBriefMessage(articles)
     const cardMsgs = buildNewsCardMessages(articles, itemIds)
@@ -461,7 +503,7 @@ export async function handleCassandraChat(history: ChatTurn[]): Promise<{ text: 
   const rows = await getDb().select().from(cassandra_items).where(eq(cassandra_items.date, today))
   const items = [...rows].sort((a, b) => (a.relevance === b.relevance ? 0 : a.relevance === 'high' ? -1 : 1))
   const todaysContext = items.map(i =>
-    `"${i.title}" (${i.source}, ${i.relevance} relevance, category: ${i.category})\nSummary: ${i.summary}\nKey quote: ${i.key_quote ?? '(none)'}\nCall angle: ${i.call_angle}\nURL: ${i.url}`,
+    `"${i.title}" (${i.source}, ${i.relevance} relevance, category: ${i.category})\nSummary: ${i.summary}\nKey quote: ${i.key_quote ?? '(none)'}\nURL: ${i.url}`,
   ).join('\n\n')
   return answerCassandraFollowUp(history, todaysContext)
 }
@@ -536,7 +578,7 @@ export async function sendPostIdeaToLinkedin(itemId: string): Promise<void> {
 
   await markItemUsedInPost(itemId)
 
-  const content = `News angle from CASSANDRA:\n${item.call_angle}\n${item.title} — ${item.source}\n\nGenerate a LinkedIn post from this?`
+  const content = `News angle from CASSANDRA:\n${item.content_angle ?? item.summary}\n${item.title} — ${item.source}\n\nGenerate a LinkedIn post from this?`
   const msg: ConversationMessage = {
     id: crypto.randomUUID(),
     role: 'maia',

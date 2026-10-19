@@ -372,6 +372,13 @@
       "when": 1792433678487,
       "tag": "0052_heavy_wendell_rand",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1792444132261,
+      "tag": "0053_powerful_ghost_rider",
+      "breakpoints": true
     }
   ]
 }

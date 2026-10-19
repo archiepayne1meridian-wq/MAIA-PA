@@ -161,8 +161,6 @@
 .newsBlockLabel { font-family: var(--mono), monospace; font-size: 9px; color: var(--accent); letter-spacing: 0.5px; margin-bottom: 4px; }
 .newsQuoteBlock { background: var(--accent-dim); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; padding: 8px 10px; margin-bottom: 10px; }
 .newsQuoteText { font-size: 12px; font-style: italic; line-height: 1.5; }
-.newsAngleBlock { border-left: 3px solid var(--border); padding: 8px 10px; margin-bottom: 10px; }
-.newsAngleText { font-size: 12px; line-height: 1.5; color: var(--text-mid); }
 
 /* Transient toast — e.g. "Copied — ready to use" */
 .toast {

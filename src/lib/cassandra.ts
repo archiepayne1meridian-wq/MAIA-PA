@@ -1,13 +1,18 @@
 // CASSANDRA — news research engine for the News conversation thread.
 //
 // Pipeline: Brave Search API (20 parallel queries, last-7-days-only, deduped)
-// → Haiku relevance filter (per-article JSON: summary/key quote/call angle/
-//   content angle/relevance/category) → cassandra_items rows + conversation
-//   thread cards (see cassandra-handler.ts for persistence/thread wiring).
+// → Haiku relevance filter (per-article JSON: summary/key quote/content
+//   angle/relevance/category) → cassandra_items rows + conversation thread
+//   cards (see cassandra-handler.ts for persistence/thread wiring).
 //
 // Advice-word guard applies to CASSANDRA's own generated prose (summary/
-// call_angle/content_angle) — never to attributed third-party quotes/facts
-// (key_quote). Same invariant as the rest of this file always had.
+// content_angle) — never to attributed third-party quotes/facts (key_quote).
+// Same invariant as the rest of this file always had.
+//
+// No "call angle" / suggested talking point is generated any more — Archie
+// wants the factual summary and forms his own angle. The `summary` field
+// below is written to read like a journalist's own summary (what happened,
+// what was announced, what the data shows), not a suggested use.
 
 import { askWith, askWithTools, type ToolDef } from './claude'
 import type { IndexQuote, FxQuote } from '../../tools/market-data'
@@ -211,9 +216,8 @@ For each article that passes, return:
   "source": "BBC / Financial Times / Reuters / etc.",
   "url": "article URL",
   "published": "date",
-  "summary": "2-3 sentence summary of what this article says",
+  "summary": "2-3 factual sentences — what happened, what was announced, what the data shows. No spin, no suggested use. Write it like a journalist summarising their own piece, not a pitch to use on a call.",
   "key_quote": "most quotable line from the article if available — verbatim, attributed",
-  "call_angle": "one sentence — how Archie could use this on a cold call today",
   "content_angle": "one sentence — how this could become a LinkedIn post",
   "relevance": "high / medium",
   "category": "uk_pension | swiss_news | markets | regulation | geopolitical | retirement_destinations | devere_ceo"
@@ -235,7 +239,6 @@ export interface CassandraArticle {
   published: string | null
   summary: string
   keyQuote: string | null
-  callAngle: string
   contentAngle: string | null
   relevance: CassandraRelevance
   category: CassandraCategory
@@ -259,9 +262,9 @@ export const CATEGORY_LABEL: Record<CassandraCategory, string> = {
 function parseFilteredItem(rawItem: unknown): CassandraArticle | null {
   if (!rawItem || typeof rawItem !== 'object') return null
   const r = rawItem as Record<string, unknown>
-  const { title, source, url, summary, call_angle, relevance, category } = r
+  const { title, source, url, summary, relevance, category } = r
   if (typeof title !== 'string' || typeof source !== 'string' || typeof url !== 'string') return null
-  if (typeof summary !== 'string' || typeof call_angle !== 'string') return null
+  if (typeof summary !== 'string') return null
 
   const relevanceNorm = typeof relevance === 'string' ? relevance.trim().toLowerCase() : ''
   if (relevanceNorm !== 'high' && relevanceNorm !== 'medium') {
@@ -276,8 +279,7 @@ function parseFilteredItem(rawItem: unknown): CassandraArticle | null {
   }
 
   const guardedSummary = guardField(summary, title, 'summary')
-  const guardedCallAngle = guardedSummary ? guardField(call_angle, title, 'call_angle') : null
-  if (!guardedSummary || !guardedCallAngle) return null
+  if (!guardedSummary) return null
 
   const contentAngleRaw = typeof r.content_angle === 'string' ? r.content_angle : null
   const guardedContentAngle = contentAngleRaw ? guardField(contentAngleRaw, title, 'content_angle') : null
@@ -291,7 +293,6 @@ function parseFilteredItem(rawItem: unknown): CassandraArticle | null {
     title, source, url, published,
     summary: guardedSummary,
     keyQuote,
-    callAngle: guardedCallAngle,
     contentAngle: contentAngleRaw ? guardedContentAngle : null,
     relevance: relevanceNorm as CassandraRelevance,
     category: categoryNorm as CassandraCategory,
@@ -415,15 +416,16 @@ export async function tagCompaniesInArticles(articles: CassandraArticle[]): Prom
   }
 }
 
-// ─── MUSE filing — single best call angle, same mechanism as before ──────────
-// The old generateActionAngles Claude call is no longer needed: call_angle is
+// ─── MUSE filing — single best summary, same mechanism as before ────────────
+// The old generateActionAngles Claude call is no longer needed: summary is
 // already a per-article field from the filter pass, so the "today's single
-// best action" line is picked directly from data rather than re-derived.
+// best item" line is picked directly from data rather than re-derived. No
+// "call angle" talking-point suggestion any more — just the factual summary.
 
-function bestCallAngleLine(articles: CassandraArticle[]): string {
+function bestSummaryLine(articles: CassandraArticle[]): string {
   const best = articles.find(a => a.relevance === 'high') ?? articles[0]
   if (!best) return 'Nothing significant today.'
-  return `Call angle: ${best.callAngle}`
+  return best.summary
 }
 
 // Product-related keywords route to the "Products" sector; everything else
@@ -435,18 +437,16 @@ function sectorForAngleText(text: string): 'Products' | 'Regulations' {
   return PRODUCT_SECTOR_KEYWORDS.some(k => lower.includes(k)) ? 'Products' : 'Regulations'
 }
 
-// Files today's single call-angle line to MUSE as a Tier 1 news entry — a
+// Files today's single best summary line to MUSE as a Tier 1 news entry — a
 // no-op if nothing qualified today. Mirrors the old fileActionAnglesToMuse's
-// "Call angle:" handling; "Post idea"/"Knowledge" lines aren't produced by
-// the new pipeline (content_angle covers the LinkedIn case directly via the
-// "Post idea" button instead).
-export async function fileCallAngleToMuse(articles: CassandraArticle[]): Promise<number> {
-  const line = bestCallAngleLine(articles)
-  const match = line.match(/^call angle:\s*(.+)$/i)
-  if (!match) return 0
-  const text = match[1]!.trim()
+// handling; "Post idea"/"Knowledge" lines aren't produced by the new pipeline
+// (content_angle covers the LinkedIn case directly via the "Post idea" button
+// instead).
+export async function fileNewsSummaryToMuse(articles: CassandraArticle[]): Promise<number> {
+  const text = bestSummaryLine(articles)
+  if (!text || text === 'Nothing significant today.') return 0
 
-  const title = `Call angle — ${text.split('—')[0]?.trim().slice(0, 60) ?? text.slice(0, 60)}`
+  const title = `News — ${text.split('.')[0]?.trim().slice(0, 60) ?? text.slice(0, 60)}`
   const sector = sectorForAngleText(text)
   const now = Math.floor(Date.now() / 1000)
 
@@ -490,9 +490,9 @@ export function formatBriefText(
     if (guarded) blocks.push(guarded)
   }
 
-  const angleLine = bestCallAngleLine(articles)
-  const guardedAngle = guardProse(angleLine, "Today's Angle")
-  blocks.push(`*Today's Angle*\n${guardedAngle ?? 'Nothing significant today.'}`)
+  const topLine = bestSummaryLine(articles)
+  const guardedTopLine = guardProse(topLine, "Today's Angle")
+  blocks.push(`*Today's Angle*\n${guardedTopLine ?? 'Nothing significant today.'}`)
 
   const byCategory = new Map<CassandraCategory, CassandraArticle[]>()
   for (const a of articles) {
@@ -501,7 +501,7 @@ export function formatBriefText(
     byCategory.set(a.category, arr)
   }
   for (const [category, items] of byCategory) {
-    const lines = items.map((item, i) => `${i + 1}. ${item.summary} — ${item.callAngle} (${item.source})`)
+    const lines = items.map((item, i) => `${i + 1}. ${item.summary} (${item.source})`)
     blocks.push(`*${CATEGORY_LABEL[category]}*\n${lines.join('\n')}`)
   }
 
@@ -551,7 +551,7 @@ export function formatMarketAlertText(
     lines.push(`*Index move ≥ ${ALERT_THRESHOLD_PCT}%*\n${moveLines}`)
   }
   if (rateDecisions.length > 0) {
-    const noteLines = rateDecisions.map(a => `${a.summary} — ${a.callAngle} (${a.source})`).join('\n')
+    const noteLines = rateDecisions.map(a => `${a.summary} (${a.source})`).join('\n')
     lines.push(`*Rate decision*\n${noteLines}`)
   }
   return lines.join('\n\n')
@@ -595,7 +595,7 @@ export function compoundWeeklyChange(dailyPcts: number[]): number {
 export function toHeadlinesJsonCompat(articles: CassandraArticle[]): string {
   return JSON.stringify(articles.map(a => ({
     summary: a.summary,
-    angle: a.callAngle,
+    angle: a.summary,
     source: a.source,
     url: a.url,
     section: a.category,
@@ -727,8 +727,8 @@ async function runDeepResearchTool(query: string): Promise<string> {
 export interface ChatTurn { role: 'user' | 'assistant'; content: string }
 
 // Runs the chat follow-up loop. todaysContext is a plain-text digest of
-// today's articles (title/source/summary/key_quote/call_angle/url per item)
-// so Claude has today's brief in hand without a separate tool round-trip for
+// today's articles (title/source/summary/key_quote/url per item) so Claude
+// has today's brief in hand without a separate tool round-trip for
 // the common "tell me more about X" case.
 export async function answerCassandraFollowUp(
   history: ChatTurn[],

@@ -125,6 +125,19 @@
 /* Home hub — redesigned hub view (good morning card + goals/reminders + pinned chat) */
 .homeShell { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 
+.homeNudges { flex-shrink: 0; margin: 20px 20px 0; display: flex; flex-direction: column; gap: 8px; }
+.homeNudge {
+  display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+  background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 10px;
+}
+.homeNudgeIcon { flex-shrink: 0; font-size: 14px; }
+.homeNudgeText { flex: 1; font-size: 13px; color: var(--text); }
+.homeNudgeDismiss {
+  flex-shrink: 0; font-family: var(--mono), monospace; font-size: 10.5px; color: var(--online);
+  background: none; border: 1px solid var(--border); border-radius: 100px; padding: 4px 10px; cursor: pointer;
+}
+.homeNudgeDismiss:hover { border-color: var(--online); }
+
 .homeTop {
   flex-shrink: 0; margin: 20px 20px 0; padding: 18px 20px;
   background: var(--raised); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px;

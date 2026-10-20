@@ -42,6 +42,8 @@ export interface ApolloCall {
   prospect_nationality: string | null
   lead_source: string | null
   rapport_notes: string | null
+  meeting_date: string | null
+  meeting_type: string
   created_at: number
 }
 
@@ -56,6 +58,26 @@ export async function saveCall(
     prospect_name: data.prospect_name ?? null,
     transcript: data.transcript,
     created_at: now,
+  })
+  return id
+}
+
+// One-click "book this as a follow-up call" from the MEETINGS agent — a
+// future-dated apollo_calls row with no transcript/outcome yet, just enough
+// to show up as a scheduled call. meetingType distinguishes a diarised phone
+// call ('call', the default) from a MEETINGS-sourced row ('meeting' |
+// 'fact_find'), which feeds the MAP "meetings sat" stat.
+export async function createMeetingCallRecord(
+  data: { call_date: string; prospect_name: string | null; meeting_type: 'meeting' | 'fact_find'; company_name?: string | null },
+): Promise<string> {
+  const id = crypto.randomUUID()
+  await getDb().insert(apollo_calls).values({
+    id,
+    call_date: data.call_date,
+    prospect_name: data.prospect_name,
+    meeting_type: data.meeting_type,
+    company_name: data.company_name ?? null,
+    created_at: Math.floor(Date.now() / 1000),
   })
   return id
 }

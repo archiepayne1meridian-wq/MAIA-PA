@@ -245,7 +245,7 @@ export default function MaiaChatBar() {
   const SUPPRESSED_ROUTES = new Set([
     '/dashboard', '/dashboard/nexus', '/dashboard/athena', '/dashboard/diana',
     '/dashboard/iris', '/dashboard/mercury', '/dashboard/apollo', '/dashboard/cassandra',
-    '/dashboard/map',
+    '/dashboard/map', '/dashboard/meetings',
   ])
   if (SUPPRESSED_ROUTES.has(pathname)) return null
 

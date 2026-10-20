@@ -409,6 +409,8 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   prospect_nationality: text('prospect_nationality'),   // e.g. 'British', 'Australian' — booked calls only
   lead_source: text('lead_source'),                     // 'Sales Navigator' | 'LinkedIn' | 'Webinar' | 'Referral' | 'Cold Call' | 'Other' — booked calls only
   rapport_notes: text('rapport_notes'),                 // what helped on the call — free text from the booked debrief
+  meeting_date: text('meeting_date'),                   // ISO date — booked calls only, captured via the same booked-debrief extraction as company/nationality/lead_source; drives the day-before referral reminder
+  meeting_type: text('meeting_type').notNull().default('call'), // 'call' | 'meeting' | 'fact_find' — distinguishes a phone call row (APOLLO) from a MEETINGS agent debrief row
   created_at: integer('created_at').notNull(),
 })
 
@@ -573,6 +575,20 @@ export const maia_reminders = sqliteTable('maia_reminders', {
   text: text('text').notNull(),
   done: integer('done').notNull().default(0),
   due_date: text('due_date'),   // ISO date string, optional
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
+// One-shot, date-triggered home-screen nudges — distinct from maia_reminders
+// (a persistent to-do list filtered by created-date, never auto-dismissed).
+// A row here is meant to surface on exactly one morning (remind_date) and
+// then disappear once dismissed=1. First use: the day-before-a-booked-meeting
+// referral nudge, set from APOLLO's booked-debrief flow (see apollo-debrief.ts).
+export const reminders = sqliteTable('reminders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  remind_date: text('remind_date').notNull(), // YYYY-MM-DD, the day to show this
+  message: text('message').notNull(),
+  prospect_id: text('prospect_id'),           // nexus_prospects.id, nullable
+  dismissed: integer('dismissed').notNull().default(0),
   created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
 })
 

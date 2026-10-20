@@ -42,6 +42,7 @@ export interface MapCompanyWithStats extends MapCompany {
   others_client_count: number
   total_calls: number
   total_booked: number
+  meetings_sat: number
   nationalities: Record<string, number>
 }
 
@@ -100,11 +101,12 @@ interface CompanyStats {
   others_client_count: number
   total_calls: number
   total_booked: number
+  meetings_sat: number
   nationalities: Record<string, number>
 }
 
 function emptyStats(): CompanyStats {
-  return { total_washed: 0, green_prospects: 0, dnc_count: 0, others_client_count: 0, total_calls: 0, total_booked: 0, nationalities: {} }
+  return { total_washed: 0, green_prospects: 0, dnc_count: 0, others_client_count: 0, total_calls: 0, total_booked: 0, meetings_sat: 0, nationalities: {} }
 }
 
 export async function getCompaniesWithStats(): Promise<MapCompanyWithStats[]> {
@@ -118,6 +120,7 @@ export async function getCompaniesWithStats(): Promise<MapCompanyWithStats[]> {
     db.select({
       id: apollo_calls.id, company_name: apollo_calls.company_name,
       outcome: apollo_calls.outcome, prospect_nationality: apollo_calls.prospect_nationality,
+      meeting_type: apollo_calls.meeting_type,
     }).from(apollo_calls).where(isNotNull(apollo_calls.company_name)),
   ])
 
@@ -143,6 +146,7 @@ export async function getCompaniesWithStats(): Promise<MapCompanyWithStats[]> {
     const s = stats.get(id) ?? emptyStats()
     s.total_calls++
     if (c.outcome === 'booked') s.total_booked++
+    if (c.meeting_type === 'meeting') s.meetings_sat++
     if (c.prospect_nationality) s.nationalities[c.prospect_nationality] = (s.nationalities[c.prospect_nationality] ?? 0) + 1
     stats.set(id, s)
   }

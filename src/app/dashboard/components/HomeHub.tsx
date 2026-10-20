@@ -24,6 +24,14 @@ interface Reminder {
   due_date: string | null
 }
 
+// Date-triggered referral nudge (the `reminders` table) — distinct from the
+// Reminder/to-do interface above (maia_reminders). Shown once, the morning
+// before a booked meeting, then dismissed.
+interface DueNudge {
+  id: number
+  message: string
+}
+
 interface MorningBriefMessage {
   type: string
   metadata?: { todayAngle?: string | null }
@@ -39,6 +47,7 @@ export default function HomeHub() {
   const [todayAngle, setTodayAngle] = useState<string | null | undefined>(undefined) // undefined = still loading
   const [goals, setGoals] = useState<{ shortTerm: Goal[]; longTerm: Goal[] } | null>(null)
   const [reminders, setReminders] = useState<Reminder[] | null>(null)
+  const [dueNudges, setDueNudges] = useState<DueNudge[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [transientReply, setTransientReply] = useState<string | null>(null)
@@ -72,7 +81,23 @@ export default function HomeHub() {
       .catch(() => setReminders([]))
   }, [])
 
-  useEffect(() => { loadBrief(); loadGoals(); loadReminders() }, [loadBrief, loadGoals, loadReminders])
+  const loadDueNudges = useCallback(() => {
+    fetch('/api/dashboard/reminders/due')
+      .then(r => r.json() as Promise<{ reminders: DueNudge[] }>)
+      .then(d => setDueNudges(d.reminders ?? []))
+      .catch(() => setDueNudges([]))
+  }, [])
+
+  useEffect(() => { loadBrief(); loadGoals(); loadReminders(); loadDueNudges() }, [loadBrief, loadGoals, loadReminders, loadDueNudges])
+
+  async function dismissNudge(id: number) {
+    setDueNudges(prev => prev.filter(n => n.id !== id))
+    try {
+      await fetch(`/api/dashboard/reminders/due/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      })
+    } catch { /* already removed client-side — a retry isn't worth the complexity here */ }
+  }
 
   function showToast(text: string) {
     setToast(text)
@@ -126,6 +151,17 @@ export default function HomeHub() {
 
   return (
     <div className={s.homeShell}>
+      {dueNudges.length > 0 && (
+        <div className={s.homeNudges}>
+          {dueNudges.map(n => (
+            <div key={n.id} className={s.homeNudge}>
+              <span className={s.homeNudgeIcon}>🔔</span>
+              <span className={s.homeNudgeText}>{n.message}</span>
+              <button className={s.homeNudgeDismiss} onClick={() => void dismissNudge(n.id)}>Dismiss</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className={s.homeTop}>
         <div className={s.homeTopHead}>
           <div className={s.homeGreet}>Good morning, Archie.</div>

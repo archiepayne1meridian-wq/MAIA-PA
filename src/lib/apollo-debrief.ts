@@ -24,20 +24,22 @@ function formatCoachingProfile(profile: CoachingProfile): string {
   return lines.join('\n')
 }
 
-// Booked debriefs weave in three questions feeding the Map (territory
-// intelligence) — lead source, prospect nationality, and which Geneva
-// office they're in (HQ or satellite). Only asked while at least one of the
-// four target fields (company_name/prospect_nationality/lead_source/
-// rapport_notes) is still unfilled — once Archie's answered, stop asking so
-// re-opening an already-debriefed booked call doesn't repeat itself.
+// Booked debriefs weave in four questions feeding the Map (territory
+// intelligence) and the referral reminder — lead source, prospect
+// nationality, which Geneva office they're in (HQ or satellite), and the
+// meeting date. Only asked while at least one of the four target fields
+// (company_name/prospect_nationality/lead_source/meeting_date) is still
+// unfilled — once Archie's answered, stop asking so re-opening an
+// already-debriefed booked call doesn't repeat itself.
 const MAP_FIELDS_PROMPT = `
 Once you've covered the standard coaching feedback, weave these into the conversation naturally — not as a numbered list, one at a time as it fits:
 1. Where did he source this contact? Sales Nav, LinkedIn search, webinar, referral, or something else?
 2. What's the prospect's nationality — and was that relevant on the call?
-3. Which company do they work for — and is that their main Geneva office or a satellite of somewhere else (where's the global HQ, any other Swiss offices)?`
+3. Which company do they work for — and is that their main Geneva office or a satellite of somewhere else (where's the global HQ, any other Swiss offices)?
+4. What date is the meeting booked for?`
 
 export function needsMapFields(call: ApolloCall): boolean {
-  return !call.company_name || !call.prospect_nationality || !call.lead_source
+  return !call.company_name || !call.prospect_nationality || !call.lead_source || !call.meeting_date
 }
 
 function buildDebriefSystemPrompt(call: ApolloCall, profile: CoachingProfile): string {
@@ -125,23 +127,25 @@ Rules:
 - Increment call_count by exactly 1 from the profile given
 - Set last_updated to today's date`
 
-const EXTRACT_MAP_FIELDS_SYSTEM = `You extract four pieces of information from a debrief conversation about a wealth management cold call that resulted in a booked meeting.
+const EXTRACT_MAP_FIELDS_SYSTEM = `You extract five pieces of information from a debrief conversation about a wealth management cold call that resulted in a booked meeting.
 
 Return ONLY JSON, in exactly this shape — no markdown fences, no prose:
 {
   "company_name": "the company name as a plain string, or null if not mentioned",
   "prospect_nationality": "a single nationality adjective (e.g. 'British', 'Australian'), or null if not mentioned",
   "lead_source": "one of: Sales Navigator | LinkedIn | Webinar | Referral | Cold Call | Other — or null if not mentioned",
-  "rapport_notes": "a short free-text note on what helped on the call, or null if nothing clear was said"
+  "rapport_notes": "a short free-text note on what helped on the call, or null if nothing clear was said",
+  "meeting_date": "the booked meeting's date as YYYY-MM-DD, or null if not mentioned or not resolvable to a specific date"
 }
 
-Only extract what's actually stated in the conversation — never guess or invent a value. null is correct and expected when something hasn't come up yet.`
+Only extract what's actually stated in the conversation — never guess or invent a value. null is correct and expected when something hasn't come up yet. For meeting_date, resolve relative references ("next Tuesday", "the 14th") against today's date if given in the conversation context; if you can't confidently resolve a specific calendar date, return null rather than guessing.`
 
 export interface ExtractedBookingFields {
   company_name: string | null
   prospect_nationality: string | null
   lead_source: string | null
   rapport_notes: string | null
+  meeting_date: string | null
 }
 
 // Fire-and-forget after each exchange in a booked debrief, same pattern as
@@ -150,9 +154,10 @@ export interface ExtractedBookingFields {
 export async function extractBookingFields(
   debriefTranscript: DebriefMessage[],
 ): Promise<ExtractedBookingFields> {
-  const transcriptText = debriefTranscript.map(m => `${m.role === 'user' ? 'Archie' : 'Apollo'}: ${m.content}`).join('\n')
-  const empty: ExtractedBookingFields = { company_name: null, prospect_nationality: null, lead_source: null, rapport_notes: null }
-  if (!transcriptText.trim()) return empty
+  const today = new Date().toISOString().slice(0, 10)
+  const transcriptText = `Today's date: ${today}\n\n` + debriefTranscript.map(m => `${m.role === 'user' ? 'Archie' : 'Apollo'}: ${m.content}`).join('\n')
+  const empty: ExtractedBookingFields = { company_name: null, prospect_nationality: null, lead_source: null, rapport_notes: null, meeting_date: null }
+  if (!debriefTranscript.length) return empty
 
   try {
     const raw = await askWith(EXTRACT_MAP_FIELDS_SYSTEM, transcriptText, 300, HAIKU)

@@ -251,8 +251,6 @@ function CompanyPanel({
   onSaveNote: () => void
 }) {
   const status = statusOf(company)
-  const screens = company.total_calls
-  const rate = screens > 0 ? Math.round((company.total_booked / screens) * 100) : 0
 
   return (
     <>
@@ -274,10 +272,10 @@ function CompanyPanel({
       </div>
 
       <div className={m.statRow4}>
-        <div className={m.statTile}><div className={m.statTileVal}>{company.total_booked}</div><div className={m.statTileLabel}>Booked</div></div>
-        <div className={m.statTile}><div className={m.statTileVal}>{screens}</div><div className={m.statTileLabel}>Calls{screens > 0 ? ` · ${rate}% rate` : ''}</div></div>
         <div className={m.statTile}><div className={m.statTileVal}>{company.total_washed}</div><div className={m.statTileLabel}>Washed</div></div>
         <div className={m.statTile}><div className={m.statTileVal}>{company.green_prospects}</div><div className={m.statTileLabel}>Green</div></div>
+        <div className={m.statTile}><div className={m.statTileVal}>{company.total_booked}</div><div className={m.statTileLabel}>Meetings booked</div></div>
+        <div className={m.statTile}><div className={m.statTileVal}>{company.meetings_sat}</div><div className={m.statTileLabel}>Meetings sat</div></div>
       </div>
 
       {Object.keys(company.nationalities).length > 0 && (

@@ -1,0 +1,90 @@
+/* ── MEETINGS — post-meeting debrief voice notes ─────────────────────────── */
+
+.shell { display: flex; flex-direction: column; gap: 14px; padding: 20px; max-width: 760px; margin: 0 auto; }
+
+.header { display: flex; align-items: center; justify-content: space-between; }
+.headerTitle { font-family: var(--mono), monospace; font-size: 11px; color: var(--accent); letter-spacing: 0.5px; font-weight: 600; }
+.newBtn {
+  font-family: var(--mono), monospace; font-size: 11px; color: var(--text-mid); background: none;
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+.newBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+.uploadWrap { padding: 8px 0; }
+.errorText { color: var(--alert); font-size: 12px; padding: 8px 0 0; }
+
+.statusCard {
+  background: var(--raised); border: 1px solid var(--border); border-radius: 10px;
+  padding: 28px; text-align: center; color: var(--text-mid); font-size: 13px;
+}
+.fileLabel { font-family: var(--mono), monospace; font-size: 10.5px; color: var(--text); margin-bottom: 10px; }
+.spinner {
+  width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; margin: 0 auto 10px; animation: meetingsSpin 0.8s linear infinite;
+}
+@keyframes meetingsSpin { to { transform: rotate(360deg); } }
+.progressBar { width: 100%; max-width: 240px; height: 4px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 8px auto 0; }
+.progressFill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.15s; }
+
+.readyWrap { display: flex; flex-direction: column; gap: 16px; }
+
+.section { background: var(--raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.sectionLabel { font-family: var(--mono), monospace; font-size: 10px; color: var(--accent); letter-spacing: 0.5px; margin-bottom: 8px; }
+.sectionTextarea {
+  width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; font-size: 12.5px; line-height: 1.6; color: var(--text); resize: vertical; font-family: inherit;
+}
+
+.actionsRow { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.actionRow { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.actionCheck { flex-shrink: 0; width: 14px; height: 14px; accent-color: var(--accent); }
+.actionInput {
+  flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 5px;
+  padding: 5px 8px; font-size: 12px; color: var(--text); font-family: inherit;
+}
+.actionRemove { flex-shrink: 0; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.actionRemove:hover { color: var(--alert); }
+.addActionBtn {
+  font-family: var(--mono), monospace; font-size: 10.5px; color: var(--text-dim); background: none;
+  border: none; cursor: pointer; padding: 2px 0;
+}
+.addActionBtn:hover { color: var(--accent); }
+
+.nudge {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12.5px;
+  background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 10px; padding: 10px 14px; color: var(--text);
+}
+.nudgeBtn {
+  font-family: var(--mono), monospace; font-size: 10.5px; color: var(--online); background: none;
+  border: 1px solid var(--border); border-radius: 100px; padding: 5px 12px; cursor: pointer;
+}
+.nudgeBtn:hover { border-color: var(--online); }
+.nudgeBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.quickAddForm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.quickAddInput {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 9px; font-size: 12px; color: var(--text); width: 140px;
+}
+
+.chatSection { background: var(--raised); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.chatSection .sectionLabel { padding: 10px 14px 0; margin-bottom: 0; }
+.chatMessages { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; max-height: 240px; overflow-y: auto; }
+.chatEmpty { font-size: 12px; color: var(--text-dim); }
+.chatMsg { max-width: 85%; padding: 8px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
+.chatMsgUser { align-self: flex-end; background: var(--accent-dim); border: 1px solid var(--accent-mid); border-bottom-right-radius: 3px; }
+.chatMsgAssistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+
+.saveBar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; padding-bottom: 8px; }
+.saveSuccess { font-size: 12.5px; color: var(--online); }
+.saveBtn {
+  font-family: var(--mono), monospace; font-size: 11.5px; color: var(--base); background: var(--accent);
+  border: none; border-radius: 8px; padding: 9px 18px; cursor: pointer; font-weight: 600;
+}
+.saveBtn:hover { opacity: 0.9; }
+.saveBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.disambiguate { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.disambiguateSelect {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 9px; font-size: 12px; color: var(--text);
+}

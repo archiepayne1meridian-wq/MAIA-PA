@@ -433,6 +433,27 @@ export const apollo_coaching_profile = sqliteTable('apollo_coaching_profile', {
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })
 
+// MEETINGS — one row per uploaded voice note. notes_json holds the current
+// structured-notes state, updated in place as the chat below refines it
+// (rather than the client resending the full state every turn). Entirely
+// separate from apollo_calls/apollo_debrief_messages — no shared session,
+// id, or memory between MEETINGS and APOLLO's own chat, by design.
+export const meeting_sessions = sqliteTable('meeting_sessions', {
+  id: text('id').primaryKey(),
+  transcript: text('transcript').notNull(),
+  notes_json: text('notes_json'),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+  updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
+})
+
+export const meeting_debrief_messages = sqliteTable('meeting_debrief_messages', {
+  id: text('id').primaryKey(),
+  session_id: text('session_id').notNull(),
+  role: text('role').notNull(),        // 'user' | 'assistant'
+  content: text('content').notNull(),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
+})
+
 // One row per message, scoped by tab — MERCURY's two chat tabs (LinkedIn
 // Messages / Quick Replies) were built with history kept in React state only
 // ("each tab is an independent, in-browser-session conversation" — by
@@ -602,6 +623,13 @@ export const nexus_prospects = sqliteTable('nexus_prospects', {
   company: text('company'),
   job_role: text('job_role'),
   employment_status: text('employment_status').notNull().default('Employee'),
+  // AI-inferred seniority tier — 'Managing Director' | 'Director' | 'Employee'
+  // | 'Self-Employed', from job_role via Claude (src/lib/nexus-employment.ts).
+  // Distinct from employment_status above (which is unused everywhere —
+  // never read/written beyond its own default — so not repurposed here to
+  // avoid conflating two differently-named, differently-shaped concepts).
+  // Null until inferred; a manual override is never re-inferred.
+  employment_type: text('employment_type'),
   lead_channel: text('lead_channel').notNull().default('Cold - LinkedIn'),
   country: text('country').notNull().default('Switzerland'),
   linkedin_url: text('linkedin_url'),

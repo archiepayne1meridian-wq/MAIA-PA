@@ -245,8 +245,14 @@ export interface CompanyProspect {
   first_name: string | null
   last_name: string | null
   status: ProspectStatus
+  isSelfEmployed: boolean
 }
 
+// Self-employed prospects are never filtered out here — a consultant or
+// contractor listing this company as their employer is still a genuine
+// prospect at that company (often senior/mobile), just flagged distinctly
+// (isSelfEmployed) so the map panel can tag them "SE" rather than implying
+// they're on staff.
 export async function getProspectsForCompany(companyId: number): Promise<CompanyProspect[]> {
   const company = await getCompanyById(companyId)
   if (!company) return []
@@ -256,13 +262,18 @@ export async function getProspectsForCompany(companyId: number): Promise<Company
     .select({
       id: nexus_prospects.id, first_name: nexus_prospects.first_name, last_name: nexus_prospects.last_name,
       company: nexus_prospects.company, wash_result: nexus_prospects.wash_result, wash_category: nexus_prospects.wash_category,
+      employment_type: nexus_prospects.employment_type,
     })
     .from(nexus_prospects)
     .where(and(isNotNull(nexus_prospects.company), ne(nexus_prospects.company, '')))
 
   return rows
     .filter(r => variants.has(norm(r.company)))
-    .map(r => ({ id: r.id, first_name: r.first_name, last_name: r.last_name, status: prospectStatus(r.wash_result, r.wash_category) }))
+    .map(r => ({
+      id: r.id, first_name: r.first_name, last_name: r.last_name,
+      status: prospectStatus(r.wash_result, r.wash_category),
+      isSelfEmployed: r.employment_type === 'Self-Employed',
+    }))
 }
 
 export interface OverviewStats {

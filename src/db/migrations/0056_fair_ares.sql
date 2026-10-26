@@ -1,0 +1,1 @@
+ALTER TABLE `nexus_prospects` ADD `employment_type` text;

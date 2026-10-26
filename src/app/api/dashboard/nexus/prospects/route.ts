@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { listProspects, getStats, addProspect, type WashFilter } from '../../../../../../tools/nexus-db'
+import { getAllCompanyNameVariants } from '../../../../../../tools/map-db'
 
 const VALID_FILTERS: WashFilter[] = ['all', 'green', 'red', 'dnc', 'unwashed']
+
+const norm = (s: string | null | undefined): string => (s ?? '').toLowerCase().trim()
 
 export async function GET(req: NextRequest) {
   if (!(await requireDashboardAuth())) {
@@ -13,9 +16,18 @@ export async function GET(req: NextRequest) {
   const filter: WashFilter = VALID_FILTERS.includes(filterParam as WashFilter) ? (filterParam as WashFilter) : 'all'
 
   try {
-    const [prospects, stats] = await Promise.all([listProspects(filter), getStats()])
+    const [prospects, stats, companyVariants] = await Promise.all([listProspects(filter), getStats(), getAllCompanyNameVariants()])
+    const knownCompanyNames = new Set(companyVariants.map(v => norm(v.variant)))
+
+    // "On the map" is computed here, not stored — it only ever reflects the
+    // live map_companies table, never goes stale from an edit on either side.
+    const prospectsWithMapFlag = prospects.map(p => ({
+      ...p,
+      company_on_map: !p.company?.trim() ? null : knownCompanyNames.has(norm(p.company)),
+    }))
+
     return NextResponse.json({
-      prospects,
+      prospects: prospectsWithMapFlag,
       totals: { total: stats.total, green: stats.green, red: stats.red, dnc: stats.dnc, unwashed: stats.unwashed },
     })
   } catch (err) {

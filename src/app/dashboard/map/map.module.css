@@ -63,6 +63,10 @@
 
 .prospectRow { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12.5px; }
 .prospectDot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.seTag {
+  font-family: var(--mono), monospace; font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 100px;
+  background: rgba(139,92,246,0.14); color: #8b5cf6; flex-shrink: 0;
+}
 
 .actionRow { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
 .actionBtn {

@@ -342,6 +342,7 @@ function CompanyPanel({
           <div key={p.id} className={m.prospectRow}>
             <span className={m.prospectDot} style={{ background: PROSPECT_DOT[p.status] }} />
             <span>{p.first_name} {p.last_name}</span>
+            {p.isSelfEmployed && <span className={m.seTag} title="Self-employed — lists this company as their employer">SE</span>}
           </div>
         ))}
       </div>

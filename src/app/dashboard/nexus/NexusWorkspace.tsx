@@ -11,6 +11,7 @@ interface NexusProspect {
   company: string | null
   job_role: string | null
   employment_status: string
+  employment_type: string | null
   lead_channel: string
   country: string
   linkedin_url: string | null
@@ -27,7 +28,16 @@ interface NexusProspect {
   flagged: number
   created_at: number
   updated_at: number
+  // Computed server-side (GET /api/dashboard/nexus/prospects), never stored —
+  // null when company is blank (not applicable), else true/false against the
+  // live map_companies table.
+  company_on_map: boolean | null
 }
+
+const EMPLOYMENT_TYPES = ['Managing Director', 'Director', 'Employee', 'Self-Employed'] as const
+type EmploymentType = typeof EMPLOYMENT_TYPES[number]
+
+const LEAD_CHANNELS = ['Cold - LinkedIn', 'Cold - Call', 'Webinar', 'Referral', 'Other']
 
 type WashFilter = 'all' | 'green' | 'red' | 'dnc' | 'others_client' | 'unwashed'
 type SortKey = 'name' | 'company' | 'date_washed' | 'created_at'
@@ -42,8 +52,8 @@ interface SalesNavCandidate {
   flagged: boolean
 }
 
-// First Name, Last Name, Job Title, Company, LinkedIn URL, Wash Result, Date Washed
-const COL_COUNT = 7
+// First Name, Last Name, Job Title, Company, LinkedIn URL, Wash Result, Date Washed, Employment Type
+const COL_COUNT = 8
 
 // Derives the 5-bucket status from wash_result + wash_category. The Claude
 // wash-sheet parser (wash-results route) always sets both; the older plain
@@ -89,6 +99,14 @@ function washPillOf(p: NexusProspect): { emoji: string; label: string; cls: stri
   return { emoji: '⬜', label: '—', cls: s.nexusPillNone }
 }
 
+function employmentPillOf(p: NexusProspect): { label: string; cls: string } {
+  if (p.employment_type === 'Managing Director') return { label: 'MD', cls: s.nexusPillMd }
+  if (p.employment_type === 'Director') return { label: 'Director', cls: s.nexusPillDirector }
+  if (p.employment_type === 'Self-Employed') return { label: 'Self-Employed', cls: s.nexusPillSelfEmployed }
+  if (p.employment_type === 'Employee') return { label: 'Employee', cls: s.nexusPillEmployee }
+  return { label: '—', cls: s.nexusPillNone }
+}
+
 // Plain-text value for a given column, in TSV copy order — used for clipboard
 // output only, independent of how each cell is rendered on screen (e.g. the
 // Wash Result pill shows an emoji; the copy value is just "Green"/"Red"/"DNC").
@@ -101,6 +119,7 @@ function cellCopyValue(p: NexusProspect, col: number): string {
     case 4: return p.linkedin_url ?? ''
     case 5: { const st = statusOf(p); return st === 'unwashed' ? '' : st === 'others_client' ? "Others' Client" : washPillOf(p).label }
     case 6: return p.date_washed ?? ''
+    case 7: return p.employment_type ?? ''
     default: return ''
   }
 }
@@ -147,6 +166,10 @@ export default function NexusWorkspace() {
   const [focus, setFocus] = useState<CellPos | null>(null)
   const draggingRef = useRef(false)
 
+  const [leadChannelChoice, setLeadChannelChoice] = useState<string>(LEAD_CHANNELS[0])
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [overridingId, setOverridingId] = useState<string | null>(null)
+
   const load = useCallback(() => {
     setContextRefreshKey(k => k + 1)
     fetch('/api/dashboard/nexus/prospects?filter=all')
@@ -157,9 +180,62 @@ export default function NexusWorkspace() {
 
   useEffect(() => { load() }, [load])
 
+  // Exactly one classification batch (up to 20 unclassified prospects) per
+  // page load, per spec — fire-and-forget, reload once done so freshly-
+  // classified pills show up without a manual refresh. Deliberately NOT a
+  // catch-up loop across many rounds: with hundreds of unclassified rows,
+  // repeated page loads over time work through the backlog 20 at a time
+  // rather than one load burning through the whole backlog's worth of Claude
+  // calls at once.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/dashboard/nexus/infer-employment-types', { method: 'POST' })
+      .then(r => r.json() as Promise<{ classified?: number }>)
+      .then(d => { if (!cancelled && d.classified) load() })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   function showToast(text: string) {
     setToast(text)
     setTimeout(() => setToast(null), 2800)
+  }
+
+  async function bulkSetWhereEmpty(field: 'lead_channel' | 'country', value: string) {
+    setBulkBusy(true)
+    try {
+      const preview = await fetch('/api/dashboard/nexus/bulk-set', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value, preview: true }),
+      }).then(r => r.json() as Promise<{ count?: number }>)
+
+      const count = preview.count ?? 0
+      if (count === 0) { showToast('Nothing to update — every prospect already has a value.'); return }
+      if (!window.confirm(`This will update ${count} prospect${count === 1 ? '' : 's'}. Continue?`)) return
+
+      const result = await fetch('/api/dashboard/nexus/bulk-set', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value }),
+      }).then(r => r.json() as Promise<{ updated?: number }>)
+
+      showToast(`Updated ${result.updated ?? 0} prospect${result.updated === 1 ? '' : 's'}`)
+      load()
+    } catch {
+      showToast('Bulk update failed — try again')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  async function overrideEmploymentType(id: string, value: EmploymentType) {
+    setOverridingId(null)
+    setProspects(prev => prev?.map(p => p.id === id ? { ...p, employment_type: value } : p) ?? prev)
+    try {
+      await fetch(`/api/dashboard/nexus/prospects/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employment_type: value }),
+      })
+    } catch { load() }
   }
 
   const all = prospects ?? []
@@ -379,6 +455,20 @@ export default function NexusWorkspace() {
             </button>
           </div>
 
+          {/* Bulk "fill in the blanks" toolbar — never overwrites an existing value */}
+          <div className={s.nexusBulkBar}>
+            <select className={s.nexusBulkSelect} value={leadChannelChoice} onChange={e => setLeadChannelChoice(e.target.value)} disabled={bulkBusy}>
+              {LEAD_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <button className={s.nexusBulkBtn} onClick={() => void bulkSetWhereEmpty('lead_channel', leadChannelChoice)} disabled={bulkBusy}>
+              Apply to all empty
+            </button>
+            <span className={s.nexusBulkDivider} />
+            <button className={s.nexusBulkBtn} onClick={() => void bulkSetWhereEmpty('country', 'Switzerland')} disabled={bulkBusy}>
+              Set Switzerland for all empty
+            </button>
+          </div>
+
           <div className={s.nexusGridWrap}>
             <table className={s.nexusTable}>
               <thead>
@@ -390,13 +480,14 @@ export default function NexusWorkspace() {
                   <th>LinkedIn</th>
                   <th>Wash Result</th>
                   <th className={s.nexusThSortable} onClick={() => headerSort('date_washed')}>Date Washed{sortArrow('date_washed')}</th>
+                  <th>Employment</th>
                 </tr>
               </thead>
               <tbody>
                 {prospects === null ? (
-                  <tr><td colSpan={7} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
+                  <tr><td colSpan={8} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
                 ) : sorted.length === 0 ? (
-                  <tr><td colSpan={7} style={{ color: 'var(--text-dim)' }}>No prospects in this view.</td></tr>
+                  <tr><td colSpan={8} style={{ color: 'var(--text-dim)' }}>No prospects in this view.</td></tr>
                 ) : (
                   sorted.map((p, i) => {
                     const pill = washPillOf(p)
@@ -417,6 +508,9 @@ export default function NexusWorkspace() {
                         </td>
                         <td className={`${s.nexusMutedCell} ${selCls(i, 3)}`} onMouseDown={e => onCellMouseDown(i, 3, e)} onMouseEnter={() => onCellMouseEnter(i, 3)}>
                           {p.company ?? ''}
+                          {p.company_on_map === false && (
+                            <span className={s.nexusNotOnMapBadge} title="This company isn't on the map yet">?</span>
+                          )}
                         </td>
                         <td className={selCls(i, 4)} onMouseDown={e => onCellMouseDown(i, 4, e)} onMouseEnter={() => onCellMouseEnter(i, 4)}>
                           {p.linkedin_url ? (
@@ -430,6 +524,29 @@ export default function NexusWorkspace() {
                         </td>
                         <td className={`${p.date_washed ? '' : s.nexusMutedCell} ${selCls(i, 6)}`} onMouseDown={e => onCellMouseDown(i, 6, e)} onMouseEnter={() => onCellMouseEnter(i, 6)}>
                           {p.date_washed || '—'}
+                        </td>
+                        <td className={selCls(i, 7)} onMouseDown={e => onCellMouseDown(i, 7, e)} onMouseEnter={() => onCellMouseEnter(i, 7)}>
+                          {overridingId === p.id ? (
+                            <select
+                              className={s.nexusEmploymentSelect}
+                              autoFocus
+                              defaultValue={p.employment_type ?? ''}
+                              onChange={e => void overrideEmploymentType(p.id, e.target.value as EmploymentType)}
+                              onBlur={() => setOverridingId(null)}
+                            >
+                              <option value="" disabled>— choose —</option>
+                              {EMPLOYMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                          ) : (
+                            <span
+                              className={`${s.nexusPill} ${employmentPillOf(p).cls}`}
+                              onClick={() => setOverridingId(p.id)}
+                              style={{ cursor: 'pointer' }}
+                              title="Tap to override"
+                            >
+                              {employmentPillOf(p).label}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     )

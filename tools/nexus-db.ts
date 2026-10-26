@@ -2,7 +2,7 @@
 
 import { getDb } from '@/db'
 import { nexus_prospects, nexus_import_log } from '@/db/schema'
-import { eq, desc, sql } from 'drizzle-orm'
+import { eq, desc, sql, and, isNull, or, isNotNull, ne } from 'drizzle-orm'
 
 export interface NexusProspect {
   id: string
@@ -11,6 +11,7 @@ export interface NexusProspect {
   company: string | null
   job_role: string | null
   employment_status: string
+  employment_type: string | null
   lead_channel: string
   country: string
   linkedin_url: string | null
@@ -58,6 +59,7 @@ export interface NewProspectInput {
   company?: string | null
   job_role?: string | null
   employment_status?: string
+  employment_type?: string | null
   lead_channel?: string
   country?: string
   linkedin_url?: string | null
@@ -142,6 +144,45 @@ export async function updateProspect(id: string, fields: Partial<NewProspectInpu
   if ('last_name' in fields) patch.flagged = isSingleLetterSurname(fields.last_name) ? 1 : 0
   await getDb().update(nexus_prospects)
     .set(patch)
+    .where(eq(nexus_prospects.id, id))
+}
+
+// ── Bulk "fill in the blanks" actions ─────────────────────────────────────────
+// Lead channel / country toolbar actions — only ever touch rows where the
+// field is genuinely empty (null or ''), never overwrite an existing value.
+// Two-step (count, then apply) so the frontend can show a confirm count
+// before committing.
+
+function emptyFieldWhere(field: 'lead_channel' | 'country') {
+  const col = field === 'lead_channel' ? nexus_prospects.lead_channel : nexus_prospects.country
+  return or(isNull(col), eq(col, ''))
+}
+
+export async function countEmptyField(field: 'lead_channel' | 'country'): Promise<number> {
+  const [row] = await getDb().select({ count: sql<number>`count(*)` }).from(nexus_prospects).where(emptyFieldWhere(field))
+  return row?.count ?? 0
+}
+
+export async function bulkSetFieldWhereEmpty(field: 'lead_channel' | 'country', value: string): Promise<number> {
+  const result = await getDb().update(nexus_prospects)
+    .set({ [field]: value, updated_at: Math.floor(Date.now() / 1000) })
+    .where(emptyFieldWhere(field))
+  return result.changes ?? 0
+}
+
+// ── Employment type (AI-inferred seniority tier) ──────────────────────────────
+
+export async function getUnclassifiedProspects(limit: number): Promise<{ id: string; job_role: string }[]> {
+  const rows = await getDb().select({ id: nexus_prospects.id, job_role: nexus_prospects.job_role })
+    .from(nexus_prospects)
+    .where(and(isNull(nexus_prospects.employment_type), isNotNull(nexus_prospects.job_role), ne(nexus_prospects.job_role, '')))
+    .limit(limit)
+  return rows.filter((r): r is { id: string; job_role: string } => Boolean(r.job_role))
+}
+
+export async function setEmploymentType(id: string, employmentType: string): Promise<void> {
+  await getDb().update(nexus_prospects)
+    .set({ employment_type: employmentType, updated_at: Math.floor(Date.now() / 1000) })
     .where(eq(nexus_prospects.id, id))
 }
 

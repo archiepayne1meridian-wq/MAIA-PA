@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import s from '../hub.module.css'
 import DvLogo from './DvLogo'
 import { HUB_AGENTS, type ConversationAgent } from './hub-agents'
@@ -7,34 +8,23 @@ import { HUB_AGENTS, type ConversationAgent } from './hub-agents'
 interface Props {
   activeId: ConversationAgent
   onSelect: (id: ConversationAgent) => void
-  collapsed: boolean
-  onToggleCollapsed: () => void
 }
 
-export default function AgentRailNew({ activeId, onSelect, collapsed, onToggleCollapsed }: Props) {
-  if (collapsed) {
-    return (
-      <nav className={`${s.rail} ${s.railCollapsed}`}>
-        <button className={s.railToggleBtn} onClick={onToggleCollapsed} title="Expand rail" aria-label="Expand rail">
-          ›
-        </button>
-        <div className={s.railStrip}>
-          {HUB_AGENTS.map(a => (
-            <button
-              key={a.id}
-              className={`${s.railStripItem} ${a.id === activeId ? s.active : ''}`}
-              onClick={() => onSelect(a.id)}
-              title={a.name}
-              aria-label={a.name}
-            >
-              <span className={`${s.hDot} ${a.dotOn ? s.hDotOn : s.hDotOff} ${s.railStripDot}`} />
-              <span className={s.railStripIcon}>{a.icon}</span>
-            </button>
-          ))}
-        </div>
-      </nav>
-    )
-  }
+// Always fully expanded — no collapse/icon-only mode. Each row: name + time
+// (row 1), subtitle (row 2), live preview line (row 3, falls back to
+// hub-agents.ts's static text until the fetch resolves or for the agents
+// with no live source — see src/lib/hub-rail-preview.ts).
+export default function AgentRailNew({ activeId, onSelect }: Props) {
+  const [livePreviews, setLivePreviews] = useState<Partial<Record<ConversationAgent, string>>>({})
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/dashboard/hub-rail-previews')
+      .then(r => r.json() as Promise<{ previews?: Partial<Record<ConversationAgent, string>> }>)
+      .then(d => { if (!cancelled) setLivePreviews(d.previews ?? {}) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   return (
     <nav className={s.rail}>
@@ -44,9 +34,6 @@ export default function AgentRailNew({ activeId, onSelect, collapsed, onToggleCo
           <h1>MAIA</h1>
           <div className={s.brandSub}>Command Centre</div>
         </div>
-        <button className={s.railToggleBtn} onClick={onToggleCollapsed} title="Collapse rail" aria-label="Collapse rail">
-          ‹
-        </button>
       </div>
 
       <div className={s.agentList}>
@@ -63,7 +50,7 @@ export default function AgentRailNew({ activeId, onSelect, collapsed, onToggleCo
               <span className={s.hAgentTime}>{a.time}</span>
             </div>
             <div className={s.hAgentRole}>{a.role}</div>
-            <div className={s.hAgentPreview}>{a.preview}</div>
+            <div className={s.hAgentPreview}>{livePreviews[a.id] ?? a.preview}</div>
           </button>
         ))}
       </div>

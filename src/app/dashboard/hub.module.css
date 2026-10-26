@@ -3,19 +3,16 @@
 .shell {
   display: grid;
   grid-template-columns: 260px 1fr 290px;
-  transition: grid-template-columns 200ms ease;
   height: 100vh;
   overflow: hidden;
   font-family: var(--display), 'Space Grotesk', sans-serif;
   background: var(--base);
   color: var(--text);
 }
-.shellRailCollapsed { grid-template-columns: 56px 1fr 290px; }
 /* Home hub has no right context panel — two columns only. */
 .shellHome { grid-template-columns: 260px 1fr; }
-.shellHome.shellRailCollapsed { grid-template-columns: 56px 1fr; }
 
-/* LEFT — agent rail */
+/* LEFT — agent rail. Always fully expanded — no collapse/icon-only mode. */
 .rail {
   background: var(--surface);
   border-right: 1px solid var(--border);
@@ -32,30 +29,6 @@
   gap: 11px;
   flex-shrink: 0;
 }
-
-.railToggleBtn {
-  background: none; border: 1px solid var(--border); border-radius: 6px;
-  color: var(--text-dim); width: 22px; height: 22px; flex-shrink: 0;
-  font-size: 13px; line-height: 1; cursor: pointer; transition: all 0.15s;
-  display: flex; align-items: center; justify-content: center;
-  margin-left: auto;
-}
-.railToggleBtn:hover { border-color: var(--accent); color: var(--accent); }
-
-/* Collapsed rail — icon strip only */
-.railCollapsed { align-items: center; }
-.railCollapsed .railToggleBtn { margin: 10px auto 4px; }
-.railStrip { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px 0; width: 100%; }
-.railStripItem {
-  position: relative; width: 36px; height: 36px; border-radius: 10px;
-  background: none; border: 2px solid transparent; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px; transition: all 0.15s; flex-shrink: 0;
-}
-.railStripItem:hover { background: var(--raised); }
-.railStripItem.active { border-color: var(--accent); background: var(--accent-dim); }
-.railStripDot { position: absolute; top: 1px; right: 1px; width: 6px; height: 6px; }
-.railStripIcon { line-height: 1; }
 
 .dvLogo {
   width: 38px;

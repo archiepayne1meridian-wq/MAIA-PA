@@ -1,7 +1,11 @@
 // Static agent-rail metadata for the new three-column dashboard shell.
-// Preview text/time are placeholders matching the reference design — wiring
-// these to live per-agent signals is part of the "next phase" work described
-// in the build spec (agent-specific conversation logic).
+// `preview` below is the FALLBACK shown until the live preview fetch
+// resolves (AgentRailNew.tsx calls GET /api/dashboard/hub-rail-previews,
+// see src/lib/hub-rail-preview.ts) and the permanent value for the four
+// agents with no backing data yet (social, outreach, map, meetings) — see
+// that file's header comment for which agents have a live source and which
+// don't. `time` stays static for every agent; the live tier only replaces
+// `preview`.
 
 export type ConversationAgent =
   | 'hub' | 'news' | 'calls' | 'linkedin' | 'social'
@@ -15,7 +19,7 @@ export interface HubAgentMeta {
   time: string
   preview: string
   dotOn: boolean
-  icon: string   // single emoji — shown alone in the collapsed rail strip
+  icon: string   // single emoji, shown next to the agent name
 }
 
 // Agents with their own dedicated full-page workspace — selecting one of
@@ -44,5 +48,5 @@ export const HUB_AGENTS: HubAgentMeta[] = [
   { id: 'study', name: 'Study', role: 'CII & Products', contextTitle: 'STUDY', time: '8:00', preview: '5 cards due — R01 Financial Crime', dotOn: true, icon: '📚' },
   { id: 'prospects', name: 'Prospects', role: 'NEXUS · List Management', contextTitle: 'PROSPECTS', time: 'yesterday', preview: '307 total · 23 unwashed', dotOn: false, icon: '📋' },
   { id: 'map', name: 'Map', role: 'Territory Intelligence', contextTitle: 'MAP', time: 'today', preview: 'Greater Geneva · live prospect overlay', dotOn: false, icon: '🗺️' },
-  { id: 'meetings', name: 'Meetings', role: 'Post-Meeting Debriefs', contextTitle: 'MEETINGS', time: 'today', preview: 'Drop a voice note to debrief', dotOn: false, icon: '🗓️' },
+  { id: 'meetings', name: 'Meetings', role: 'Meeting Summaries', contextTitle: 'MEETINGS', time: 'today', preview: 'Drop a voice note to debrief', dotOn: false, icon: '🗓️' },
 ]

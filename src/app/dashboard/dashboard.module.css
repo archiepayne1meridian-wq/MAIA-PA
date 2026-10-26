@@ -2993,14 +2993,11 @@
 
 /* ── Full-page agents with a persistent sidebar ───────────────────────────── */
 
-/* Two-track version of hub.module.css's .shell/.shellRailCollapsed grid —
-   nexus/layout.tsx, athena/layout.tsx and diana/layout.tsx each use this to
-   keep the agent rail visible on their full-page workspace (Prospects,
-   Study, Practice) without touching the shared 3-track grid the hub itself
-   uses. Other full-page agents (Calls, LinkedIn, Social, Mercury) don't use
-   this — they keep their own "← Dashboard" back-link instead. */
-.nexusShell { display: grid; grid-template-columns: 260px 1fr; transition: grid-template-columns 200ms ease; height: 100vh; overflow: hidden; }
-.nexusShellRailCollapsed { grid-template-columns: 56px 1fr; }
+/* Two-track version of hub.module.css's .shell grid — every dedicated
+   full-page agent workspace (Nexus/Athena/Diana/Apollo/Iris/Mercury/Map/
+   Meetings) uses this to keep the agent rail visible (always fully
+   expanded — no collapse) without touching the hub's own 3-track grid. */
+.nexusShell { display: grid; grid-template-columns: 260px 1fr; height: 100vh; overflow: hidden; }
 
 /* Nexus/Athena/Diana's own workspace root manages its own height:100vh +
    scroll, so their layout.tsx just drops {children} straight into the grid

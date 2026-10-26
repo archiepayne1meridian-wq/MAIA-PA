@@ -28,6 +28,7 @@ export interface NexusProspect {
   notes: string | null
   batch: string | null
   flagged: number
+  booked: number   // 1 once a Calls (Apollo) booked outcome is linked to this prospect
   created_at: number
   updated_at: number
 }
@@ -74,6 +75,7 @@ export interface NewProspectInput {
   notes?: string | null
   batch?: string | null
   flagged?: boolean
+  booked?: boolean
 }
 
 export async function addProspect(input: NewProspectInput): Promise<string> {
@@ -149,6 +151,7 @@ export async function updateProspect(id: string, fields: Partial<NewProspectInpu
   // should flag now too.
   const patch: Record<string, unknown> = { ...fields, updated_at: Math.floor(Date.now() / 1000) }
   if ('last_name' in fields) patch.flagged = isSingleLetterSurname(fields.last_name) ? 1 : 0
+  if ('booked' in fields) patch.booked = fields.booked ? 1 : 0
   await getDb().update(nexus_prospects)
     .set(patch)
     .where(eq(nexus_prospects.id, id))

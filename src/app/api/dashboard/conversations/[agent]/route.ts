@@ -14,7 +14,7 @@ import { generateProspect, parseGeneratedProspect, roleplayTurn, detectGoodbye }
 const DIANA_WEB_USER = 'web'
 
 const VALID_AGENTS = new Set<ConversationAgent>([
-  'hub', 'news', 'calls', 'linkedin', 'social', 'practice', 'outreach', 'study', 'prospects',
+  'hub', 'news', 'calls', 'linkedin', 'practice', 'outreach', 'study', 'prospects',
 ])
 
 function isValidAgent(agent: string): agent is ConversationAgent {
@@ -260,12 +260,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ age
       return NextResponse.json({ messages: [userMessage, ...replyMessages] })
     }
 
-    // Social, Study and Outreach have no free-text conversational logic yet —
-    // they're structured review/approval workspaces (post queue, flashcard
-    // deck, email funnel), not open chat. Point Archie at the real thing
-    // rather than pretending a reply was generated.
+    // Study and Outreach have no free-text conversational logic yet —
+    // they're structured review/approval workspaces (flashcard deck, email
+    // funnel), not open chat. Point Archie at the real thing rather than
+    // pretending a reply was generated.
     const WORKSPACE_REDIRECT: Partial<Record<ConversationAgent, string>> = {
-      social: 'the Instagram & Facebook workspace',
       study: 'the Study workspace',
       outreach: 'the Outreach workspace',
     }

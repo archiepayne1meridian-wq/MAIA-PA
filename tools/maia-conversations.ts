@@ -5,7 +5,7 @@ import { getDb } from '@/db'
 import { maia_conversations } from '@/db/schema'
 
 export type ConversationAgent =
-  | 'hub' | 'news' | 'calls' | 'linkedin' | 'social'
+  | 'hub' | 'news' | 'calls' | 'linkedin'
   | 'practice' | 'outreach' | 'study' | 'prospects'
 
 export type MessageRole = 'maia' | 'user'

@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import s from '../dashboard.module.css'
 import ChatInput from '@/components/ChatInput'
 
@@ -61,7 +60,6 @@ function firstLine(text: string): string {
 }
 
 export default function IrisWorkspace() {
-  const router = useRouter()
   const [data, setData] = useState<ThreadData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [postType, setPostType] = useState<PostTypeChoice>('auto')
@@ -129,10 +127,6 @@ export default function IrisWorkspace() {
     }
   }
 
-  function repurposeForSocial(copy: string) {
-    router.push(`/dashboard/social?repurpose=${encodeURIComponent(copy)}`)
-  }
-
   async function markPosted(postId: string) {
     setActingOnId(postId)
     try {
@@ -188,7 +182,6 @@ export default function IrisWorkspace() {
                     onRefine={focusForRefine}
                     onRedo={() => void send('Start again on the same topic')}
                     onMarkPosted={() => void markPosted(item.draft!.id)}
-                    onRepurpose={() => repurposeForSocial(item.draft!.copy)}
                   />
                 )}
               </div>
@@ -264,7 +257,7 @@ export default function IrisWorkspace() {
 }
 
 function DraftCard({
-  post, isActive, acting, onApprove, onRefine, onRedo, onMarkPosted, onRepurpose,
+  post, isActive, acting, onApprove, onRefine, onRedo, onMarkPosted,
 }: {
   post: IrisPost
   isActive: boolean
@@ -273,7 +266,6 @@ function DraftCard({
   onRefine: () => void
   onRedo: () => void
   onMarkPosted: () => void
-  onRepurpose: () => void
 }) {
   const charCount = post.copy.length
   const typeLabel = post.post_type ? POST_TYPE_LABEL[post.post_type] ?? post.post_type : 'Auto'
@@ -315,13 +307,11 @@ function DraftCard({
           <button className={s.irisApproveBtn} onClick={onMarkPosted} disabled={acting}>
             {acting ? 'Marking…' : 'Posted ✓'}
           </button>
-          <button className={s.irisRegenBtn} onClick={onRepurpose}>Repurpose for Instagram/Facebook →</button>
         </div>
       )}
       {post.status === 'posted' && (
         <div className={s.irisChatDraftActions}>
           <span className={s.irisReadyBadge}>Posted ✓</span>
-          <button className={s.irisRegenBtn} onClick={onRepurpose}>Repurpose for Instagram/Facebook →</button>
         </div>
       )}
     </div>

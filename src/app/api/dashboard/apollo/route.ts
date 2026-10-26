@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { getAnalysedCalls } from '../../../../../tools/apollo'
+import { suggestProspectMatches } from '@/lib/apollo-prospect-match'
 
 export async function GET() {
   if (!(await requireDashboardAuth())) {
@@ -8,13 +9,30 @@ export async function GET() {
   }
 
   const calls = await getAnalysedCalls(20)
+
+  // Recomputed per load for any booked call Archie hasn't linked yet — the
+  // analyse response only shows this once, right after transcription; this
+  // keeps the confirm prompt visible if he navigates away before answering.
+  // useAi:false — a real Claude call on every single page refresh for the
+  // same still-unresolved name would be unbounded, repeated spend; the
+  // one-time analyse-time call already got the full AI-assisted attempt.
+  const matchesByCallId = new Map<string, Awaited<ReturnType<typeof suggestProspectMatches>>>()
+  await Promise.all(
+    calls
+      .filter(c => c.outcome === 'booked' && !c.linked_prospect_id)
+      .map(async c => { matchesByCallId.set(c.id, await suggestProspectMatches(c.prospect_name, false)) }),
+  )
+
   return NextResponse.json({
     calls: calls.map(c => ({
       id: c.id,
       call_date: c.call_date,
       prospect_name: c.prospect_name,
+      companyName: c.company_name,
+      meetingDate: c.meeting_date,
       created_at: c.created_at,
       outcome: c.outcome,
+      transcript: c.transcript,
       stageReached: c.stage_reached,
       coachingInsight: c.coaching_insight,
       fillerWords: c.filler_words_json ? JSON.parse(c.filler_words_json) as Record<string, number> : null,
@@ -35,6 +53,8 @@ export async function GET() {
       objectionsRaised: c.objections_raised_json ? JSON.parse(c.objections_raised_json) as string[] : [],
       toneNotes: c.tone_notes,
       whatResonated: c.what_resonated,
+      linkedProspectId: c.linked_prospect_id,
+      prospectMatches: matchesByCallId.get(c.id) ?? [],
     })),
   })
 }

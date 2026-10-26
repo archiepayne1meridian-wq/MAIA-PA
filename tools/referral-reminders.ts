@@ -34,6 +34,19 @@ export async function insertReferralReminder(
   await getDb().insert(reminders).values({ remind_date: remindDate, message, prospect_id: prospectId })
 }
 
+// Day-OF reminder — "Meeting today with X" — distinct from the day-before
+// referral nudge above. Used by the Calls agent's "Set Reminder" button
+// (src/app/api/dashboard/apollo/set-reminder/route.ts), remind_date is the
+// meeting date itself, no offset.
+export async function insertMeetingDayReminder(
+  meetingDate: string,
+  message: string,
+  prospectId: string | null,
+): Promise<void> {
+  if (Number.isNaN(new Date(`${meetingDate}T00:00:00Z`).getTime())) return
+  await getDb().insert(reminders).values({ remind_date: meetingDate, message, prospect_id: prospectId })
+}
+
 export async function getDueReminders(todayIso: string): Promise<ReferralReminder[]> {
   return getDb().select().from(reminders)
     .where(and(eq(reminders.remind_date, todayIso), eq(reminders.dismissed, 0)))

@@ -3438,6 +3438,7 @@
   margin-left: 6px; border-radius: 50%; background: var(--raised-2); color: var(--text-dim);
   font-size: 9px; font-weight: 700; vertical-align: middle;
 }
+.nexusBookedBadge { margin-left: 6px; font-size: 11px; vertical-align: middle; }
 
 .nexusEmploymentSelect {
   background: var(--surface); border: 1px solid var(--accent-deep); border-radius: 6px;

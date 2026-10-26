@@ -31,9 +31,7 @@ export async function askWith(
     messages: [{ role: 'user', content: userText }],
   })
 
-  const block = message.content[0]
-  if (block.type !== 'text') throw new Error('Unexpected response type from Claude')
-  return block.text
+  return firstTextBlock(message.content)
 }
 
 // Full-history chat turn — unlike askWith (single user turn), this takes the
@@ -53,8 +51,15 @@ export async function askChat(
     messages,
   })
 
-  const block = message.content[0]
-  if (block.type !== 'text') throw new Error('Unexpected response type from Claude')
+  return firstTextBlock(message.content)
+}
+
+// Extended-thinking models (e.g. claude-opus-5-5) put a `thinking` block
+// before the `text` block — content[0] is not reliably the answer, so find
+// the first real text block instead of assuming position.
+function firstTextBlock(content: Anthropic.ContentBlock[]): string {
+  const block = content.find((b): b is Anthropic.TextBlock => b.type === 'text')
+  if (!block) throw new Error('Unexpected response from Claude: no text content block')
   return block.text
 }
 

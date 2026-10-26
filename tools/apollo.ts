@@ -44,6 +44,7 @@ export interface ApolloCall {
   rapport_notes: string | null
   meeting_date: string | null
   meeting_type: string
+  linked_prospect_id: string | null
   created_at: number
 }
 

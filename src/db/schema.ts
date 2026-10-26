@@ -409,9 +409,22 @@ export const apollo_calls = sqliteTable('apollo_calls', {
   prospect_nationality: text('prospect_nationality'),   // e.g. 'British', 'Australian' — booked calls only
   lead_source: text('lead_source'),                     // 'Sales Navigator' | 'LinkedIn' | 'Webinar' | 'Referral' | 'Cold Call' | 'Other' — booked calls only
   rapport_notes: text('rapport_notes'),                 // what helped on the call — free text from the booked debrief
-  meeting_date: text('meeting_date'),                   // ISO date — booked calls only, captured via the same booked-debrief extraction as company/nationality/lead_source; drives the day-before referral reminder
+  meeting_date: text('meeting_date'),                   // ISO date — booked calls only. Now also auto-extracted directly in the main /analyse pass (same column the booked-debrief chat extraction already fed), drives the Set Reminder button
   meeting_type: text('meeting_type').notNull().default('call'), // 'call' | 'meeting' | 'fact_find' — distinguishes a phone call row (APOLLO) from a MEETINGS agent debrief row
+  linked_prospect_id: text('linked_prospect_id'),       // nexus_prospects.id once Archie confirms the auto-suggested match for a booked call — never set silently, always a one-click confirm (see src/app/api/dashboard/apollo/link-prospect)
   created_at: integer('created_at').notNull(),
+})
+
+// One global thread, not scoped per call — "what's worked as a not-interested
+// objection handle?", "summarise my last 5 calls" etc. Deliberately separate
+// from apollo_debrief_messages (per-call) and from maia_conversations (single
+// JSON blob, used by the hub's generic chat tile) — this is its own flat,
+// append-only table backing the pinned chat bar on the dedicated Calls page.
+export const apollo_global_chat_messages = sqliteTable('apollo_global_chat_messages', {
+  id: text('id').primaryKey(),
+  role: text('role').notNull(),        // 'user' | 'assistant'
+  content: text('content').notNull(),
+  created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
 })
 
 // One row per debrief-chat message, scoped to a single call — deliberately
@@ -538,7 +551,7 @@ export const hermes_scenarios = sqliteTable('hermes_scenarios', {
 
 export const maia_conversations = sqliteTable('maia_conversations', {
   id: text('id').primaryKey(),
-  agent: text('agent').notNull().unique(),   // 'hub' | 'news' | 'calls' | 'linkedin' | 'social' | 'practice' | 'outreach' | 'study' | 'prospects'
+  agent: text('agent').notNull().unique(),   // 'hub' | 'news' | 'calls' | 'linkedin' | 'practice' | 'outreach' | 'study' | 'prospects'
   messages: text('messages').notNull().default('[]'),   // JSON array of message objects
   last_updated: integer('last_updated').notNull().default(sql`(unixepoch())`),
 })
@@ -644,6 +657,7 @@ export const nexus_prospects = sqliteTable('nexus_prospects', {
   notes: text('notes'),
   batch: text('batch'),
   flagged: integer('flagged').notNull().default(0), // 1 = needs a human check (e.g. surname parsed as a single letter)
+  booked: integer('booked').notNull().default(0),   // 1 once a Calls (Apollo) booked outcome is linked to this prospect — see apollo_calls.linked_prospect_id
   created_at: integer('created_at').notNull().default(sql`(unixepoch())`),
   updated_at: integer('updated_at').notNull().default(sql`(unixepoch())`),
 })

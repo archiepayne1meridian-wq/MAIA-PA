@@ -7,6 +7,7 @@ import { env } from '@/lib/env'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
 import { saveCall } from '../../../../../../tools/apollo'
+import { labelTranscriptSpeakers, serialiseLabelledTurns } from '@/lib/apollo-speaker'
 
 const ALLOWED_EXTENSIONS = ['mp3', 'mp4', 'm4a', 'wav', 'ogg']
 const MAX_SIZE_BYTES = 200 * 1024 * 1024 // 200MB
@@ -101,9 +102,13 @@ export async function POST(req: NextRequest) {
     const segments = (
       (transcription as unknown as { segments?: WhisperSegment[] }).segments ?? []
     )
-    const formatted = segments.length > 0
-      ? formatTranscript(segments)
-      : (transcription.text ?? '')
+    const plainText = segments.length > 0 ? segments.map(s => s.text.trim()).join(' ') : (transcription.text ?? '')
+
+    // AI speaker labelling (context-based, not pure alternation) — falls back
+    // to the old alternate-on-question-mark heuristic if it fails or returns
+    // nothing parseable, so a Claude hiccup never loses the transcript.
+    const labelled = await labelTranscriptSpeakers(plainText)
+    const formatted = labelled ? serialiseLabelledTurns(labelled) : (segments.length > 0 ? formatTranscript(segments) : plainText)
 
     const duration = (transcription as unknown as { duration?: number }).duration ?? null
 

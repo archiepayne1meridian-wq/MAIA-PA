@@ -26,6 +26,7 @@ interface NexusProspect {
   notes: string | null
   batch: string | null
   flagged: number
+  booked: number   // 1 once a Calls (Apollo) booked outcome is linked to this prospect
   created_at: number
   updated_at: number
   // Computed server-side (GET /api/dashboard/nexus/prospects), never stored —
@@ -475,6 +476,7 @@ export default function NexusWorkspace() {
                       >
                         <td className={`${s.nexusNameCell} ${selCls(i, 0)}`} onMouseDown={e => onCellMouseDown(i, 0, e)} onMouseEnter={() => onCellMouseEnter(i, 0)}>
                           {p.first_name || '—'}
+                          {Boolean(p.booked) && <span className={s.nexusBookedBadge} title="Booked — linked from a Calls debrief">📅</span>}
                         </td>
                         <td className={`${s.nexusNameCell} ${p.flagged ? s.nexusCellFlagged : ''} ${selCls(i, 1)}`} onMouseDown={e => onCellMouseDown(i, 1, e)} onMouseEnter={() => onCellMouseEnter(i, 1)} title={p.flagged ? 'Surname incomplete — needs checking' : undefined}>
                           {p.last_name || '—'}

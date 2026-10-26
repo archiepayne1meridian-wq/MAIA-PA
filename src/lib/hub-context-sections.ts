@@ -207,10 +207,6 @@ export async function studySections(): Promise<Section[]> {
 }
 
 export const EMPTY_AGENT_SECTIONS: Record<string, Section[]> = {
-  social: [
-    { type: 'empty', title: 'PENDING APPROVAL', message: 'Not connected yet.' },
-    { type: 'empty', title: 'THIS WEEK', message: 'Not connected yet.' },
-  ],
   outreach: [
     { type: 'empty', title: 'ACTIVE SEQUENCES', message: 'Not connected yet.' },
     { type: 'empty', title: 'THIS MONTH', message: 'Not connected yet.' },

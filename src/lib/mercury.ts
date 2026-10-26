@@ -1,4 +1,6 @@
-// MERCURY draft generation — Claude Haiku call.
+// MERCURY draft generation — email/sequence copy is the kind of writing
+// where tone and naturalness matter most, so every Claude call here
+// (drafts and the two chat tabs alike) runs on Opus, not Haiku/Sonnet.
 
 import { askWith, askChat } from './claude'
 import { getVoicePreferences } from '../../tools/iris'
@@ -10,8 +12,7 @@ export interface MercuryDraftResult {
   body: string
 }
 
-const HAIKU = 'claude-haiku-4-5-20251001'
-const SONNET = 'claude-sonnet-4-6'
+const OPUS = 'claude-opus-5-5'
 
 const MEDIUM_GUIDELINES = {
   email: `Full professional structure: greeting, body, sign-off. Suggest a subject line as the very first line of your response in the format "Subject: [subject line]". Formal but warm — not stiff or corporate. No filler phrases like "I hope this email finds you well" or "As per my last email". Longer form where appropriate.`,
@@ -54,7 +55,7 @@ Voice rules:
   if (feedback) lines.push(`Previous draft feedback to apply: ${feedback}`)
   lines.push(`\nDraft a ${medium} based on this.${medium === 'email' ? ' Start your response with "Subject: [subject line]" on the first line, then the full draft body.' : ''}`)
 
-  const raw = await askWith(system, lines.join('\n'), 600, HAIKU)
+  const raw = await askWith(system, lines.join('\n'), 4096, OPUS)
 
   if (medium === 'email') {
     const firstLine = raw.split('\n')[0] ?? ''
@@ -152,8 +153,8 @@ Reply with ONLY the message text itself — no preamble ("Here's the reply..."),
 export async function runMercuryChat(tab: MercuryChatTab, messages: MercuryChatMessage[]): Promise<string> {
   if (tab === 'linkedin_messages') {
     const system = await linkedinMessagesSystemPrompt()
-    return askChat(system, messages, 400, SONNET)
+    return askChat(system, messages, 2048, OPUS)
   }
   const system = await quickRepliesSystemPrompt()
-  return askChat(system, messages, 400, SONNET)
+  return askChat(system, messages, 2048, OPUS)
 }

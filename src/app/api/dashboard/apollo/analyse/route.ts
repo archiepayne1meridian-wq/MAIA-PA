@@ -3,12 +3,16 @@ import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { askWith } from '@/lib/claude'
 import { getDb } from '@/db'
 import { activity } from '@/db/schema'
-import { getCall, updateCall, type CallOutcome, type CallStage } from '../../../../../../tools/apollo'
+import { getCall, updateCall, type CallStage } from '../../../../../../tools/apollo'
 import { getTodayCallAngle } from '../../../../../../tools/hermes-db'
 import { upsertPreference } from '@/lib/preferences'
 import { extractJson } from '@/lib/format'
+import { insertMeetingDayReminder } from '../../../../../../tools/referral-reminders'
+import { suggestProspectMatches, type ProspectMatchCandidate } from '@/lib/apollo-prospect-match'
 
-const SONNET = 'claude-sonnet-4-6'
+// This agent needs the strongest reasoning — real sales conversations,
+// coaching judgement, and now self-classifying the outcome too.
+const OPUS = 'claude-opus-5-5'
 
 const SYSTEM_PROMPT = `You are analysing a cold call made by Archie Payne, BDA at deVere and Partners Switzerland.
 
@@ -16,9 +20,22 @@ Archie's goal on every call: book a meeting with Stephen Smith (Senior Wealth Ma
 deVere USP: cross-border financial planning for internationally mobile professionals in Switzerland.
 Ideal client: British expats with financial ties back home.
 
+First, classify the call outcome from the transcript itself:
+- "booked" — the prospect agreed to a specific future meeting (a date/time was discussed and agreed, even loosely — "how about Tuesday" / "yes that works")
+- "follow_up" — not booked, but worth keeping in the CRM (genuine interest, asked to be called back, objection that could be worked)
+- "drop" — not booked and not worth keeping (no interest, wrong fit, asked not to be contacted)
+
 ANALYSE THE CALL AND RETURN JSON:
 
 {
+  "outcome": "booked | follow_up | drop",
+
+  "prospect_name": "First name + last initial only, as stated or inferred from the transcript, e.g. 'John S.' — never a full surname. Null if genuinely not mentioned.",
+
+  "company_name": "The prospect's employer, if mentioned anywhere in the call. Null if not mentioned.",
+
+  "meeting_date": "Only if outcome is booked. The agreed meeting date as YYYY-MM-DD, resolved against today's date given below (e.g. 'next Tuesday' -> an actual date). Null if no specific date was agreed, even if booked.",
+
   "coaching_insight": "One specific, actionable coaching point. What to do differently next time or what worked well. Max 2 sentences.",
 
   "stage_reached": "opener | fact_find | enlarge | disturb | close | completed",
@@ -35,9 +52,9 @@ ANALYSE THE CALL AND RETURN JSON:
     "Exact phrase that landed well — only include if genuinely effective"
   ],
 
-  "crm_notes": "Only populate if outcome is meeting_booked. Quick, concise notes Stephen can use. Include: what the meeting is about, key personal details (football fan, mentioned kids etc.), any asset values or financial situation mentioned, suggested talking points for Stephen. Max 150 words.",
+  "crm_notes": "Only populate if outcome is booked. Quick, concise notes Stephen can use. Include: what the meeting is about, key personal details (football fan, mentioned kids etc.), any asset values or financial situation mentioned, suggested talking points for Stephen. Max 150 words.",
 
-  "confirmation_email": "Only populate if outcome is meeting_booked. Draft email confirming the meeting. Reference something specific from the call — a detail they mentioned, something they said. Warm but professional. From Archie.",
+  "confirmation_email": "Only populate if outcome is booked. Draft email confirming the meeting. Reference something specific from the call — a detail they mentioned, something they said. Warm but professional. From Archie.",
 
   "follow_up_notes": "Only populate if outcome is follow_up. Why worth keeping. When to call back based on what they said. Max 50 words.",
 
@@ -71,7 +88,13 @@ interface FillerWords {
   obviously: number
 }
 
+type Outcome = 'booked' | 'follow_up' | 'drop'
+
 interface AnalysisResult {
+  outcome: Outcome
+  prospect_name: string | null
+  company_name: string | null
+  meeting_date: string | null
   coaching_insight: string
   stage_reached: CallStage
   filler_words: FillerWords
@@ -93,17 +116,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { callId, transcript: editedTranscript, prospectName, outcome } = await req.json().catch(() => ({})) as {
+  const { callId, transcript: editedTranscript } = await req.json().catch(() => ({})) as {
     callId?: string
     transcript?: string
-    prospectName?: string
-    outcome?: CallOutcome
   }
   if (!callId) {
     return NextResponse.json({ error: 'callId required' }, { status: 400 })
-  }
-  if (outcome !== 'booked' && outcome !== 'follow_up' && outcome !== 'drop') {
-    return NextResponse.json({ error: 'outcome must be booked, follow_up, or drop' }, { status: 400 })
   }
 
   const call = await getCall(callId)
@@ -116,25 +134,25 @@ export async function POST(req: Request) {
 
   try {
     const todayAngle = await getTodayCallAngle()
-    const outcomeLabel = outcome === 'booked' ? 'meeting_booked' : outcome
+    const today = new Date().toISOString().slice(0, 10)
 
     const userMessage = [
-      `Today's date: ${new Date().toISOString().slice(0, 10)}`,
-      `Call outcome: ${outcomeLabel}`,
-      prospectName ? `Prospect name: ${prospectName}` : '',
+      `Today's date: ${today}`,
       todayAngle ? `Today's call angle: ${todayAngle}` : '',
       '',
       'TRANSCRIPT:',
       transcript,
     ].filter(Boolean).join('\n')
 
-    const raw = await askWith(SYSTEM_PROMPT, userMessage, 2000, SONNET)
+    const raw = await askWith(SYSTEM_PROMPT, userMessage, 8192, OPUS)
     const result = JSON.parse(extractJson(raw)) as AnalysisResult
 
     await updateCall(callId, {
       transcript,
-      prospect_name: prospectName ?? call.prospect_name,
-      outcome,
+      prospect_name: result.prospect_name ?? call.prospect_name,
+      company_name: result.company_name ?? call.company_name,
+      meeting_date: result.meeting_date ?? call.meeting_date,
+      outcome: result.outcome,
       coaching_insight: result.coaching_insight,
       stage_reached: result.stage_reached,
       filler_words_json: JSON.stringify(result.filler_words),
@@ -158,19 +176,38 @@ export async function POST(req: Request) {
       upsertPreference({ category: 'diana', rule_type: 'behaviour', rule_key: 'weak_stage', rule_value: result.stage_reached, source: 'apollo' }),
     ]).catch(err => console.error('[apollo] DIANA preference feed failed:', err))
 
+    let prospectMatches: ProspectMatchCandidate[] = []
+    if (result.outcome === 'booked') {
+      const who = result.prospect_name ?? call.prospect_name
+      const where = result.company_name ?? call.company_name
+
+      if (result.meeting_date && result.meeting_date !== call.meeting_date) {
+        const message = `Meeting today with ${who ?? 'the prospect'}${where ? ` — ${where}` : ''}.`
+        await insertMeetingDayReminder(result.meeting_date, message, null).catch(err =>
+          console.error('[apollo] insertMeetingDayReminder failed:', err))
+      }
+
+      if (!call.linked_prospect_id) {
+        prospectMatches = await suggestProspectMatches(who).catch(err => {
+          console.error('[apollo] suggestProspectMatches failed:', err)
+          return []
+        })
+      }
+    }
+
     await getDb().insert(activity).values({
       id: crypto.randomUUID(),
       event_id: `apollo_analyse_${Date.now()}`,
       type: 'analyse',
       agent: 'APOLLO',
       input: callId,
-      output: `analysed call — outcome=${outcome}, stage=${result.stage_reached}`,
+      output: `analysed call — outcome=${result.outcome}, stage=${result.stage_reached}`,
       status: 'success',
       duration_ms: Date.now() - startMs,
       created_at: Math.floor(Date.now() / 1000),
     })
 
-    return NextResponse.json({ callId, outcome, ...result })
+    return NextResponse.json({ callId, ...result, prospectMatches })
   } catch (err) {
     console.error('[apollo] analysis failed:', err)
     await getDb().insert(activity).values({

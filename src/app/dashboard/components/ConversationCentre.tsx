@@ -16,7 +16,6 @@ const EMPTY_STATE_CTA: Partial<Record<ConversationAgent, { label: string; action
   news: { label: 'Try again', action: 'retry' },
   linkedin: { label: 'Open LinkedIn workspace', action: '/dashboard/iris' },
   calls: { label: 'Open Calls workspace', action: '/dashboard/apollo' },
-  social: { label: 'Open Social workspace', action: '/dashboard/social' },
 }
 
 // Mirrors the server-side allow-list in /api/dashboard/conversations/[agent]/upload —

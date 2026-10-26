@@ -1,8 +1,11 @@
 /* ── MEETINGS — post-meeting debrief voice notes ─────────────────────────── */
+/* Full-height shell: fixed header, flex:1 scrollable middle, chat pinned at
+   the bottom — same structural pattern as IRIS's chat workspace
+   (.irisChatLayout/.irisChatThread in dashboard.module.css). */
 
-.shell { display: flex; flex-direction: column; gap: 14px; padding: 20px; max-width: 760px; margin: 0 auto; }
+.shell { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; padding: 20px; box-sizing: border-box; }
 
-.header { display: flex; align-items: center; justify-content: space-between; }
+.header { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; }
 .headerTitle { font-family: var(--mono), monospace; font-size: 11px; color: var(--accent); letter-spacing: 0.5px; font-weight: 600; }
 .newBtn {
   font-family: var(--mono), monospace; font-size: 11px; color: var(--text-mid); background: none;
@@ -10,11 +13,19 @@
 }
 .newBtn:hover { border-color: var(--accent); color: var(--accent); }
 
-.uploadWrap { padding: 8px 0; }
+.uploadWrap { flex-shrink: 0; padding: 8px 0; }
 .errorText { color: var(--alert); font-size: 12px; padding: 8px 0 0; }
 
+/* Compact strip the full drop zone collapses into once a voice note has
+   been transcribed and structured — matches Apollo's "the upload card has
+   done its job, get out of the way" pattern. */
+.uploadCollapsed {
+  flex-shrink: 0; font-family: var(--mono), monospace; font-size: 11px; color: var(--text-dim);
+  background: var(--raised); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px;
+}
+
 .statusCard {
-  background: var(--raised); border: 1px solid var(--border); border-radius: 10px;
+  flex-shrink: 0; background: var(--raised); border: 1px solid var(--border); border-radius: 10px;
   padding: 28px; text-align: center; color: var(--text-mid); font-size: 13px;
 }
 .fileLabel { font-family: var(--mono), monospace; font-size: 10.5px; color: var(--text); margin-bottom: 10px; }
@@ -26,7 +37,9 @@
 .progressBar { width: 100%; max-width: 240px; height: 4px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 8px auto 0; }
 .progressFill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.15s; }
 
-.readyWrap { display: flex; flex-direction: column; gap: 16px; }
+/* Structured output — the only part of the page that scrolls; header,
+   collapsed-upload strip, and the chat section below all stay put. */
+.scrollMiddle { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 2px 2px 4px; }
 
 .section { background: var(--raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
 .sectionLabel { font-family: var(--mono), monospace; font-size: 10px; color: var(--accent); letter-spacing: 0.5px; margin-bottom: 8px; }
@@ -67,9 +80,11 @@
   padding: 5px 9px; font-size: 12px; color: var(--text); width: 140px;
 }
 
-.chatSection { background: var(--raised); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.chatSection .sectionLabel { padding: 10px 14px 0; margin-bottom: 0; }
-.chatMessages { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; max-height: 240px; overflow-y: auto; }
+/* Pinned at the bottom — flex-shrink: 0 keeps it fixed in place while
+   .scrollMiddle above absorbs all the available height/scrolling. Active
+   the moment notes exist (rendered only once isReady, in the component). */
+.chatSection { flex-shrink: 0; background: var(--raised); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.chatMessages { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; max-height: 180px; overflow-y: auto; }
 .chatEmpty { font-size: 12px; color: var(--text-dim); }
 .chatMsg { max-width: 85%; padding: 8px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
 .chatMsgUser { align-self: flex-end; background: var(--accent-dim); border: 1px solid var(--accent-mid); border-bottom-right-radius: 3px; }

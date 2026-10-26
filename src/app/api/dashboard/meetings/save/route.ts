@@ -7,8 +7,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { findProspectMatch, aiMatchNames } from '@/lib/nexus'
-import { formatNotesForCrm, type MeetingNotes } from '@/lib/meetings'
+import { formatNotesForCrm } from '@/lib/meetings'
 import { getAllNamesLower, getProspectById, updateProspect } from '../../../../../../tools/nexus-db'
+import { getMeetingSession } from '../../../../../../tools/meetings-db'
 
 const MAX_CANDIDATES = 8
 
@@ -16,9 +17,14 @@ export async function POST(req: NextRequest) {
   if (!(await requireDashboardAuth())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const { notes, prospectId } = await req.json().catch(() => ({})) as { notes?: MeetingNotes; prospectId?: string }
+  const { sessionId, prospectId } = await req.json().catch(() => ({})) as { sessionId?: string; prospectId?: string }
+  if (!sessionId) {
+    return NextResponse.json({ error: 'sessionId is required' }, { status: 400 })
+  }
+  const session = await getMeetingSession(sessionId)
+  const notes = session?.notes
   if (!notes) {
-    return NextResponse.json({ error: 'notes is required' }, { status: 400 })
+    return NextResponse.json({ error: 'Meeting session not found' }, { status: 404 })
   }
 
   try {

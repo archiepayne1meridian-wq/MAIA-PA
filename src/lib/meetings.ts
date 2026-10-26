@@ -95,13 +95,20 @@ Reply with ONLY valid JSON in exactly this shape — no markdown fences, no pros
 
 export interface RefineTurn { role: 'user' | 'assistant'; content: string }
 
+// `history` is this session's own prior chat turns (loaded server-side from
+// meeting_debrief_messages, scoped by session_id) — never another agent's
+// conversation. `transcript` grounds a tweak in details Claude may not have
+// carried into the structured notes the first time (e.g. "add that he
+// mentioned his wife is still in London" when that line is in the original
+// voice note but wasn't pulled into any section yet).
 export async function refineMeetingNotes(
+  transcript: string,
   currentNotes: MeetingNotes,
   history: RefineTurn[],
   instruction: string,
 ): Promise<{ reply: string; notes: MeetingNotes }> {
   const messages: RefineTurn[] = [
-    { role: 'user', content: `Current notes:\n${JSON.stringify(currentNotes)}` },
+    { role: 'user', content: `Original voice note transcript:\n${transcript}\n\nCurrent notes:\n${JSON.stringify(currentNotes)}` },
     { role: 'assistant', content: JSON.stringify(currentNotes) },
     ...history,
     { role: 'user', content: instruction },

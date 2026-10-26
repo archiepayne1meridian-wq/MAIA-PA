@@ -1,16 +1,23 @@
 'use client'
 
 // MEETINGS — post-meeting debrief voice notes. Mirrors the Calls (Apollo)
-// agent's shape (file drop -> transcribe -> structured output -> chat) but
-// simpler: no manual transcript-confirm/outcome-select gate — transcription
-// and Claude structuring both run automatically on upload — and no DB
-// persistence until Archie explicitly saves (see src/lib/meetings.ts).
+// agent's visual language (file drop -> transcribe -> structured output ->
+// chat) but simpler: no manual transcript-confirm/outcome-select gate —
+// transcription and Claude structuring both run automatically on upload.
+//
+// Full-height shell, same pattern as IRIS's chat workspace: a fixed header,
+// a flex:1 scrollable middle for the structured output, and the chat
+// section pinned at the bottom of the viewport (never scrolls away) —
+// active the moment the voice note finishes structuring. Each upload opens
+// its own isolated chat thread (meeting_sessions / meeting_debrief_messages
+// — see tools/meetings-db.ts): no history, session id, or memory shared
+// with Apollo, Nexus, or any other agent.
 
 import { useState } from 'react'
 import s from './meetings.module.css'
 import FileDropZone from '../components/FileDropZone'
 import ChatInput from '@/components/ChatInput'
-import type { MeetingNotes, RefineTurn } from '@/lib/meetings'
+import type { MeetingNotes } from '@/lib/meetings'
 
 const ALLOWED_EXTENSIONS = ['mp3', 'm4a', 'wav', 'ogg']
 const MAX_SIZE_BYTES = 200 * 1024 * 1024
@@ -43,6 +50,7 @@ export default function MeetingsWorkspace() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
 
+  const [sessionId, setSessionId] = useState<string | null>(null)
   const [notes, setNotes] = useState<MeetingNotes | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -73,6 +81,7 @@ export default function MeetingsWorkspace() {
     setUploadProgress(0)
     setSelectedFile(null)
     setSessionError(null)
+    setSessionId(null)
     setNotes(null)
     setChatMessages([])
     setChatInput('')
@@ -123,9 +132,10 @@ export default function MeetingsWorkspace() {
       const res = await fetch('/api/dashboard/meetings/structure', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcript }),
       })
-      const data = await res.json() as { notes?: MeetingNotes; error?: string }
-      if (!res.ok || !data.notes) throw new Error(data.error ?? 'Structuring failed')
+      const data = await res.json() as { sessionId?: string; notes?: MeetingNotes; error?: string }
+      if (!res.ok || !data.notes || !data.sessionId) throw new Error(data.error ?? 'Structuring failed')
 
+      setSessionId(data.sessionId)
       setNotes(data.notes)
       setStage('ready')
       if (data.notes.employerMentioned) void checkCompanyKnown(data.notes.employerMentioned)
@@ -137,43 +147,41 @@ export default function MeetingsWorkspace() {
 
   async function sendChat() {
     const text = chatInput.trim()
-    if (!text || chatSending || !notes) return
+    if (!text || chatSending || !sessionId) return
     setChatInput('')
     setChatSending(true)
-    const history: ChatMessage[] = [...chatMessages, { role: 'user', content: text }]
-    setChatMessages(history)
+    setChatMessages(prev => [...prev, { role: 'user', content: text }])
 
     try {
-      const refineHistory: RefineTurn[] = chatMessages.map(m => ({ role: m.role, content: m.content }))
       const res = await fetch('/api/dashboard/meetings/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes, history: refineHistory, message: text }),
+        body: JSON.stringify({ sessionId, message: text }),
       })
       const data = await res.json() as { reply?: string; notes?: MeetingNotes; error?: string }
       if (!res.ok || !data.notes) throw new Error(data.error ?? 'Refinement failed')
 
+      const prevEmployer = notes?.employerMentioned ?? null
       setNotes(data.notes)
-      setChatMessages([...history, { role: 'assistant', content: data.reply ?? 'Updated.' }])
-      if (data.notes.employerMentioned && data.notes.employerMentioned !== notes.employerMentioned) {
+      setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply ?? 'Updated.' }])
+      if (data.notes.employerMentioned && data.notes.employerMentioned !== prevEmployer) {
         void checkCompanyKnown(data.notes.employerMentioned)
       }
     } catch (err) {
-      setChatMessages(prev => prev.slice(0, -1))
-      setChatInput(text)
       setChatMessages(prev => [...prev, { role: 'assistant', content: err instanceof Error ? err.message : 'That tweak failed — try again.' }])
+      setChatInput(text)
     } finally {
       setChatSending(false)
     }
   }
 
   async function saveToCrm(prospectId?: string) {
-    if (!notes) return
+    if (!sessionId) return
     setSaving(true)
     setSaveOutcome(null)
     try {
       const res = await fetch('/api/dashboard/meetings/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes, prospectId }),
+        body: JSON.stringify({ sessionId, prospectId }),
       })
       const data = await res.json() as {
         saved?: boolean; prospectName?: string | null; noMatch?: boolean
@@ -251,11 +259,13 @@ export default function MeetingsWorkspace() {
     setNotes(prev => prev ? { ...prev, [list]: [...prev[list], ''] } : prev)
   }
 
+  const isReady = stage === 'ready' && notes !== null
+
   return (
     <div className={s.shell} key={sessionKey}>
       <div className={s.header}>
         <span className={s.headerTitle}>🗓 MEETINGS</span>
-        {stage === 'ready' && <button className={s.newBtn} onClick={resetSession}>+ New debrief</button>}
+        {isReady && <button className={s.newBtn} onClick={resetSession}>+ New debrief</button>}
       </div>
 
       {stage === 'upload' && (
@@ -299,80 +309,117 @@ export default function MeetingsWorkspace() {
         </div>
       )}
 
-      {stage === 'ready' && notes && (
-        <div className={s.readyWrap}>
-          <div className={s.section}>
-            <div className={s.sectionLabel}>PROSPECT SNAPSHOT</div>
-            <textarea
-              className={s.sectionTextarea}
-              value={notes.prospectSnapshot}
-              onChange={e => updateNotesField('prospectSnapshot', e.target.value)}
-              rows={4}
-            />
+      {isReady && (
+        <>
+          {/* Collapsed upload strip — the full drop zone has done its job;
+              this just confirms what's loaded and offers a fresh upload. */}
+          <div className={s.uploadCollapsed}>
+            <span>🎙 {selectedFile?.name ?? 'Voice note'} — processed</span>
           </div>
 
-          <div className={s.section}>
-            <div className={s.sectionLabel}>MEETING NOTES</div>
-            <textarea
-              className={s.sectionTextarea}
-              value={notes.meetingNotes}
-              onChange={e => updateNotesField('meetingNotes', e.target.value)}
-              rows={7}
-            />
-          </div>
-
-          <div className={s.actionsRow}>
+          <div className={s.scrollMiddle}>
             <div className={s.section}>
-              <div className={s.sectionLabel}>ACTIONS — MINE</div>
-              {notes.actionsMine.map((a, i) => (
-                <div key={i} className={s.actionRow}>
-                  <input type="checkbox" className={s.actionCheck} />
-                  <input className={s.actionInput} value={a} onChange={e => updateAction('actionsMine', i, e.target.value)} />
-                  <button className={s.actionRemove} onClick={() => removeAction('actionsMine', i)} aria-label="Remove">×</button>
-                </div>
-              ))}
-              <button className={s.addActionBtn} onClick={() => addAction('actionsMine')}>+ add</button>
+              <div className={s.sectionLabel}>PROSPECT SNAPSHOT</div>
+              <textarea
+                className={s.sectionTextarea}
+                value={notes.prospectSnapshot}
+                onChange={e => updateNotesField('prospectSnapshot', e.target.value)}
+                rows={4}
+              />
             </div>
 
             <div className={s.section}>
-              <div className={s.sectionLabel}>ACTIONS — STEVE&apos;S</div>
-              {notes.actionsSteve.map((a, i) => (
-                <div key={i} className={s.actionRow}>
-                  <input type="checkbox" className={s.actionCheck} />
-                  <input className={s.actionInput} value={a} onChange={e => updateAction('actionsSteve', i, e.target.value)} />
-                  <button className={s.actionRemove} onClick={() => removeAction('actionsSteve', i)} aria-label="Remove">×</button>
-                </div>
-              ))}
-              <button className={s.addActionBtn} onClick={() => addAction('actionsSteve')}>+ add</button>
+              <div className={s.sectionLabel}>MEETING NOTES</div>
+              <textarea
+                className={s.sectionTextarea}
+                value={notes.meetingNotes}
+                onChange={e => updateNotesField('meetingNotes', e.target.value)}
+                rows={7}
+              />
             </div>
-          </div>
 
-          {notes.followUpDate && (
-            <div className={s.nudge}>
-              📅 Follow-up extracted: <strong>{notes.followUpDate}</strong>{notes.followUpType ? ` — ${notes.followUpType}` : ''}
-              <button className={s.nudgeBtn} onClick={() => void bookFollowUp()} disabled={bookingFollowUp || followUpBooked}>
-                {followUpBooked ? '✓ Booked' : bookingFollowUp ? 'Booking…' : 'Book this as a follow-up call?'}
-              </button>
+            <div className={s.actionsRow}>
+              <div className={s.section}>
+                <div className={s.sectionLabel}>ACTIONS — MINE</div>
+                {notes.actionsMine.map((a, i) => (
+                  <div key={i} className={s.actionRow}>
+                    <input type="checkbox" className={s.actionCheck} />
+                    <input className={s.actionInput} value={a} onChange={e => updateAction('actionsMine', i, e.target.value)} />
+                    <button className={s.actionRemove} onClick={() => removeAction('actionsMine', i)} aria-label="Remove">×</button>
+                  </div>
+                ))}
+                <button className={s.addActionBtn} onClick={() => addAction('actionsMine')}>+ add</button>
+              </div>
+
+              <div className={s.section}>
+                <div className={s.sectionLabel}>ACTIONS — STEVE&apos;S</div>
+                {notes.actionsSteve.map((a, i) => (
+                  <div key={i} className={s.actionRow}>
+                    <input type="checkbox" className={s.actionCheck} />
+                    <input className={s.actionInput} value={a} onChange={e => updateAction('actionsSteve', i, e.target.value)} />
+                    <button className={s.actionRemove} onClick={() => removeAction('actionsSteve', i)} aria-label="Remove">×</button>
+                  </div>
+                ))}
+                <button className={s.addActionBtn} onClick={() => addAction('actionsSteve')}>+ add</button>
+              </div>
             </div>
-          )}
 
-          {companyUnknown && notes.employerMentioned && !qaSaved && (
-            <div className={s.nudge}>
-              🗺 <strong>{notes.employerMentioned}</strong> isn&apos;t on the map yet — add it?
-              {!showQuickAdd ? (
-                <button className={s.nudgeBtn} onClick={() => setShowQuickAdd(true)}>Add to map</button>
-              ) : (
-                <div className={s.quickAddForm}>
-                  <input className={s.quickAddInput} placeholder="Sector (optional)" value={qaSector} onChange={e => setQaSector(e.target.value)} />
-                  <input className={s.quickAddInput} placeholder="Area (optional)" value={qaArea} onChange={e => setQaArea(e.target.value)} />
-                  <button className={s.nudgeBtn} onClick={() => void quickAddCompany()} disabled={qaSaving}>{qaSaving ? 'Adding…' : 'Save'}</button>
+            {notes.followUpDate && (
+              <div className={s.nudge}>
+                📅 Follow-up extracted: <strong>{notes.followUpDate}</strong>{notes.followUpType ? ` — ${notes.followUpType}` : ''}
+                <button className={s.nudgeBtn} onClick={() => void bookFollowUp()} disabled={bookingFollowUp || followUpBooked}>
+                  {followUpBooked ? '✓ Booked' : bookingFollowUp ? 'Booking…' : 'Book this as a follow-up call?'}
+                </button>
+              </div>
+            )}
+
+            {companyUnknown && notes.employerMentioned && !qaSaved && (
+              <div className={s.nudge}>
+                🗺 <strong>{notes.employerMentioned}</strong> isn&apos;t on the map yet — add it?
+                {!showQuickAdd ? (
+                  <button className={s.nudgeBtn} onClick={() => setShowQuickAdd(true)}>Add to map</button>
+                ) : (
+                  <div className={s.quickAddForm}>
+                    <input className={s.quickAddInput} placeholder="Sector (optional)" value={qaSector} onChange={e => setQaSector(e.target.value)} />
+                    <input className={s.quickAddInput} placeholder="Area (optional)" value={qaArea} onChange={e => setQaArea(e.target.value)} />
+                    <button className={s.nudgeBtn} onClick={() => void quickAddCompany()} disabled={qaSaving}>{qaSaving ? 'Adding…' : 'Save'}</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className={s.saveBar}>
+              {saveOutcome?.kind === 'saved' && (
+                <span className={s.saveSuccess}>✓ Saved to {saveOutcome.prospectName ?? "the prospect's"} CRM record</span>
+              )}
+              {saveOutcome?.kind === 'error' && <span className={s.errorText}>{saveOutcome.message}</span>}
+              {saveOutcome?.kind === 'disambiguate' && (
+                <div className={s.disambiguate}>
+                  <span>Couldn&apos;t confidently match a prospect — pick one:</span>
+                  <select className={s.disambiguateSelect} value={disambiguateChoice} onChange={e => setDisambiguateChoice(e.target.value)}>
+                    <option value="">— select —</option>
+                    {saveOutcome.candidates.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}{c.company ? ` (${c.company})` : ''}</option>
+                    ))}
+                  </select>
+                  <button className={s.saveBtn} onClick={() => disambiguateChoice && void saveToCrm(disambiguateChoice)} disabled={!disambiguateChoice || saving}>
+                    Confirm
+                  </button>
                 </div>
               )}
+              {saveOutcome?.kind !== 'saved' && (
+                <button className={s.saveBtn} onClick={() => void saveToCrm()} disabled={saving || saveOutcome?.kind === 'disambiguate'}>
+                  {saving ? 'Saving…' : 'Save to CRM'}
+                </button>
+              )}
             </div>
-          )}
+          </div>
 
+          {/* Pinned chat — stays at the bottom of the viewport, always
+              visible and active from the moment notes exist. Its own
+              isolated thread (meeting_sessions/meeting_debrief_messages),
+              scoped to sessionId — no memory shared with any other agent. */}
           <div className={s.chatSection}>
-            <div className={s.sectionLabel}>REFINE</div>
             <div className={s.chatMessages}>
               {chatMessages.length === 0 ? (
                 <p className={s.chatEmpty}>Tell MAIA what to change — &quot;change permit type to G permit&quot;, &quot;add that he mentioned his brother works at UBS&quot;.</p>
@@ -384,33 +431,7 @@ export default function MeetingsWorkspace() {
             </div>
             <ChatInput value={chatInput} onChange={setChatInput} onSend={() => void sendChat()} sending={chatSending} placeholder="Tweak the notes…" />
           </div>
-
-          <div className={s.saveBar}>
-            {saveOutcome?.kind === 'saved' && (
-              <span className={s.saveSuccess}>✓ Saved to {saveOutcome.prospectName ?? "the prospect's"} CRM record</span>
-            )}
-            {saveOutcome?.kind === 'error' && <span className={s.errorText}>{saveOutcome.message}</span>}
-            {saveOutcome?.kind === 'disambiguate' && (
-              <div className={s.disambiguate}>
-                <span>Couldn&apos;t confidently match a prospect — pick one:</span>
-                <select className={s.disambiguateSelect} value={disambiguateChoice} onChange={e => setDisambiguateChoice(e.target.value)}>
-                  <option value="">— select —</option>
-                  {saveOutcome.candidates.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}{c.company ? ` (${c.company})` : ''}</option>
-                  ))}
-                </select>
-                <button className={s.saveBtn} onClick={() => disambiguateChoice && void saveToCrm(disambiguateChoice)} disabled={!disambiguateChoice || saving}>
-                  Confirm
-                </button>
-              </div>
-            )}
-            {saveOutcome?.kind !== 'saved' && (
-              <button className={s.saveBtn} onClick={() => void saveToCrm()} disabled={saving || saveOutcome?.kind === 'disambiguate'}>
-                {saving ? 'Saving…' : 'Save to CRM'}
-              </button>
-            )}
-          </div>
-        </div>
+        </>
       )}
     </div>
   )

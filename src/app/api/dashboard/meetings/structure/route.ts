@@ -1,9 +1,12 @@
 // POST /api/dashboard/meetings/structure — { transcript } -> structured
-// MeetingNotes JSON. Runs automatically right after transcription, client-side.
+// MeetingNotes JSON, persisted as a new meeting_sessions row (the start of
+// this upload's own isolated chat thread — see tools/meetings-db.ts). Runs
+// automatically right after transcription, client-side.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDashboardAuth } from '@/lib/dashboard-auth'
 import { structureMeetingNotes } from '@/lib/meetings'
+import { createMeetingSession } from '../../../../../../tools/meetings-db'
 
 export async function POST(req: NextRequest) {
   if (!(await requireDashboardAuth())) {
@@ -16,7 +19,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const notes = await structureMeetingNotes(transcript)
-    return NextResponse.json({ notes })
+    const sessionId = await createMeetingSession(transcript, notes)
+    return NextResponse.json({ sessionId, notes })
   } catch (err) {
     console.error('[meetings/structure] failed:', err)
     const message = err instanceof Error ? err.message : 'Structuring failed'

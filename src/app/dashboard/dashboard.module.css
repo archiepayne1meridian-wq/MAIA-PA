@@ -3034,7 +3034,11 @@
 .nexusPasteBtn:hover { background: var(--accent-dim); }
 
 .nexusGridWrap { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: var(--r); user-select: none; }
-.nexusTable { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--mono); }
+/* width: max-content (not 100%) + min-width: 100% — the table grows wider
+   than its wrapper once there are more columns than fit (swipe/scroll to
+   see Employment/Lead Source/Country) instead of squeezing every column
+   narrower to force-fit the container. */
+.nexusTable { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--mono); white-space: nowrap; }
 .nexusTable th {
   position: sticky; top: 0; z-index: 1; background: var(--raised-2); text-align: left;
   font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
@@ -3431,22 +3435,6 @@
   padding: 7px 12px; font-size: 12.5px; color: var(--text); outline: none; transition: border-color 0.12s;
 }
 .nexusSearchInput:focus { border-color: var(--accent-deep); }
-
-.nexusBulkBar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 10px; background: var(--raised); border: 1px solid var(--border); border-radius: var(--r);
-}
-.nexusBulkSelect {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-  padding: 6px 9px; font-size: 11.5px; color: var(--text); font-family: var(--mono);
-}
-.nexusBulkBtn {
-  font-family: var(--mono); font-size: 11px; color: var(--text-mid); background: none;
-  border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
-}
-.nexusBulkBtn:hover { border-color: var(--accent-deep); color: var(--accent); }
-.nexusBulkBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-.nexusBulkDivider { width: 1px; height: 18px; background: var(--border); }
 
 .nexusNotOnMapBadge {
   display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px;

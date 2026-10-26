@@ -2,7 +2,9 @@
 
 import { getDb } from '@/db'
 import { nexus_prospects, nexus_import_log } from '@/db/schema'
-import { eq, desc, sql, and, isNull, or, isNotNull, ne } from 'drizzle-orm'
+import { eq, desc, sql, isNull, or } from 'drizzle-orm'
+import { inferEmploymentType } from '@/lib/nexus-employment'
+import { ensureCompanyOnMap } from './map-db'
 
 export interface NexusProspect {
   id: string
@@ -84,6 +86,7 @@ export async function addProspect(input: NewProspectInput): Promise<string> {
     company: input.company ?? null,
     job_role: input.job_role ?? null,
     employment_status: input.employment_status ?? 'Employee',
+    employment_type: input.employment_type ?? inferEmploymentType(input.job_role ?? null, input.company ?? null),
     lead_channel: input.lead_channel ?? 'Cold - LinkedIn',
     country: input.country ?? 'Switzerland',
     linkedin_url: input.linkedin_url ?? null,
@@ -99,6 +102,7 @@ export async function addProspect(input: NewProspectInput): Promise<string> {
     created_at: now,
     updated_at: now,
   })
+  if (input.company?.trim()) void ensureCompanyOnMap(input.company).catch(err => console.error('[nexus] ensureCompanyOnMap failed:', err))
   return id
 }
 
@@ -116,6 +120,7 @@ export async function addProspectsBulk(inputs: NewProspectInput[]): Promise<numb
       company: input.company ?? null,
       job_role: input.job_role ?? null,
       employment_status: input.employment_status ?? 'Employee',
+      employment_type: input.employment_type ?? inferEmploymentType(input.job_role ?? null, input.company ?? null),
       lead_channel: input.lead_channel ?? 'Cold - LinkedIn',
       country: input.country ?? 'Switzerland',
       linkedin_url: input.linkedin_url ?? null,
@@ -132,6 +137,8 @@ export async function addProspectsBulk(inputs: NewProspectInput[]): Promise<numb
       updated_at: now,
     })),
   )
+  const companies = [...new Set(inputs.map(i => i.company?.trim()).filter((c): c is string => Boolean(c)))]
+  void Promise.all(companies.map(c => ensureCompanyOnMap(c))).catch(err => console.error('[nexus] ensureCompanyOnMap (bulk) failed:', err))
   return inputs.length
 }
 
@@ -145,6 +152,13 @@ export async function updateProspect(id: string, fields: Partial<NewProspectInpu
   await getDb().update(nexus_prospects)
     .set(patch)
     .where(eq(nexus_prospects.id, id))
+  // A company edited in is a company "added to Nexus" just as much as one
+  // typed in at creation — same auto-add-to-map treatment. Does NOT
+  // recompute employment_type here: that's set once at creation/backfill
+  // and via explicit manual override only, never silently re-inferred.
+  if ('company' in fields && fields.company?.trim()) {
+    void ensureCompanyOnMap(fields.company).catch(err => console.error('[nexus] ensureCompanyOnMap (update) failed:', err))
+  }
 }
 
 // ── Bulk "fill in the blanks" actions ─────────────────────────────────────────
@@ -158,11 +172,6 @@ function emptyFieldWhere(field: 'lead_channel' | 'country') {
   return or(isNull(col), eq(col, ''))
 }
 
-export async function countEmptyField(field: 'lead_channel' | 'country'): Promise<number> {
-  const [row] = await getDb().select({ count: sql<number>`count(*)` }).from(nexus_prospects).where(emptyFieldWhere(field))
-  return row?.count ?? 0
-}
-
 export async function bulkSetFieldWhereEmpty(field: 'lead_channel' | 'country', value: string): Promise<number> {
   const result = await getDb().update(nexus_prospects)
     .set({ [field]: value, updated_at: Math.floor(Date.now() / 1000) })
@@ -170,14 +179,28 @@ export async function bulkSetFieldWhereEmpty(field: 'lead_channel' | 'country', 
   return result.changes ?? 0
 }
 
-// ── Employment type (AI-inferred seniority tier) ──────────────────────────────
+// ── Employment type (deterministic seniority tier, src/lib/nexus-employment.ts) ──
+// Classified once at creation (addProspect/addProspectsBulk) and via the
+// one-time backfill below; a manual override is a plain setEmploymentType
+// call and is never re-inferred afterward.
 
-export async function getUnclassifiedProspects(limit: number): Promise<{ id: string; job_role: string }[]> {
-  const rows = await getDb().select({ id: nexus_prospects.id, job_role: nexus_prospects.job_role })
+// Backfill target: null (never classified) or the old invalid value from a
+// prior scheme ('Managing Director', superseded by 'Controlling Director') —
+// never an already-valid classification, so a manual override always sticks.
+function needsEmploymentBackfillWhere() {
+  return or(isNull(nexus_prospects.employment_type), eq(nexus_prospects.employment_type, 'Managing Director'))
+}
+
+export async function countNeedingEmploymentBackfill(): Promise<number> {
+  const [row] = await getDb().select({ count: sql<number>`count(*)` }).from(nexus_prospects).where(needsEmploymentBackfillWhere())
+  return row?.count ?? 0
+}
+
+export async function getProspectsNeedingEmploymentBackfill(limit: number): Promise<{ id: string; job_role: string | null; company: string | null }[]> {
+  return getDb().select({ id: nexus_prospects.id, job_role: nexus_prospects.job_role, company: nexus_prospects.company })
     .from(nexus_prospects)
-    .where(and(isNull(nexus_prospects.employment_type), isNotNull(nexus_prospects.job_role), ne(nexus_prospects.job_role, '')))
+    .where(needsEmploymentBackfillWhere())
     .limit(limit)
-  return rows.filter((r): r is { id: string; job_role: string } => Boolean(r.job_role))
 }
 
 export async function setEmploymentType(id: string, employmentType: string): Promise<void> {

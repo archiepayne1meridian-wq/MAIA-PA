@@ -6,6 +6,12 @@ import s from '../dashboard.module.css'
 import m from './map.module.css'
 import type { MapCompanyWithStats, CompanyProspect, OverviewStats } from '../../../../tools/map-db'
 
+// Mirrors tools/map-db.ts's UNPLACED_LAT/LNG (and MapCanvas's CENTER) —
+// can't import the value from map-db.ts here, it's a server-only module
+// ('@/db' pulls in better-sqlite3, which has no business in a client bundle).
+const UNPLACED_LAT = 46.2044
+const UNPLACED_LNG = 6.1432
+
 // Leaflet touches window/document at mount — never server-rendered.
 const MapCanvas = dynamic(() => import('./MapCanvas'), { ssr: false })
 
@@ -222,6 +228,20 @@ function OverviewPanel({ overview }: { overview: OverviewStats | null }) {
         ))}
       </div>
 
+      {overview.unmatchedCompanies.count > 0 && (
+        <div>
+          <div className={m.sectionTitle}>NOT YET ON THE MAP</div>
+          <p className={m.empty} style={{ textAlign: 'left', padding: '0 0 6px' }}>
+            {overview.unmatchedCompanies.count} compan{overview.unmatchedCompanies.count === 1 ? 'y' : 'ies'} in your prospect list not yet on the map
+          </p>
+          {overview.unmatchedCompanies.names.map(name => (
+            <div key={name} className={m.untouchedRow}>
+              <span className={m.untouchedName}>{name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div>
         <div className={m.sectionTitle}>LEGEND</div>
         <div className={m.legendRow}><span className={m.legendDot} style={{ background: '#e8621a' }} /> Hot (3+ booked)</div>
@@ -268,6 +288,9 @@ function CompanyPanel({
         <span className={m.statusPill} style={{ background: `${status.colour}22`, color: status.colour }}>{status.label}</span>
         {company.prospect_priority === 'avoid' && company.avoid_reason && (
           <div className={m.companyMeta} style={{ marginTop: 6 }}>⚠️ {company.avoid_reason}</div>
+        )}
+        {company.lat === UNPLACED_LAT && company.lng === UNPLACED_LNG && (
+          <div className={m.companyMeta} style={{ marginTop: 6 }}>📍 Auto-added from prospect list — coordinates not yet set.</div>
         )}
       </div>
 

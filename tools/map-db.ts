@@ -65,7 +65,19 @@ function toMapCompany(row: typeof map_companies.$inferSelect): MapCompany {
   }
 }
 
-const norm = (s: string | null | undefined): string => (s ?? '').toLowerCase().trim()
+// Lowercase, accent-folded (NFD + strip combining marks), punctuation
+// stripped, whitespace collapsed — "Nestlé S.A." and "nestle sa" both
+// normalise to "nestle sa". Plain lowercase+trim alone (the original
+// version of this function) under-matched real prospect data badly: company
+// free text varies in accents, "&"/"and", "Ltd"/"Inc"/"AG"/"SA" suffixes,
+// etc., none of which a strict normalised-equality check tolerates.
+const norm = (s: string | null | undefined): string =>
+  (s ?? '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 
 // Every known name variant (canonical name + aliases) -> company id.
 function buildNameToId(companies: MapCompany[]): Map<string, number> {
@@ -75,6 +87,45 @@ function buildNameToId(companies: MapCompany[]): Map<string, number> {
     for (const alias of c.aliases) map.set(norm(alias), c.id)
   }
   return map
+}
+
+// Minimum length before a substring-containment match is trusted — without
+// this, a short variant name (e.g. "AG", "SA") would spuriously "match"
+// almost every prospect's company string.
+const MIN_FUZZY_LEN = 4
+
+// Exact normalised match first; falls back to substring containment in
+// either direction (prospect text contains a known name/alias, or vice
+// versa) for near-miss formatting (abbreviations, legal suffixes, partial
+// names) — guarded by MIN_FUZZY_LEN so short names can't false-positive
+// against everything.
+export function findCompanyId(rawCompany: string, nameToId: Map<string, number>): number | undefined {
+  const target = norm(rawCompany)
+  if (!target) return undefined
+  const exact = nameToId.get(target)
+  if (exact !== undefined) return exact
+  if (target.length < MIN_FUZZY_LEN) return undefined
+  for (const [variant, id] of nameToId) {
+    if (variant.length < MIN_FUZZY_LEN) continue
+    if (target.includes(variant) || variant.includes(target)) return id
+  }
+  return undefined
+}
+
+// Same exact-then-fuzzy-containment logic as findCompanyId, against a plain
+// set of normalised variants rather than a name->id map — used wherever the
+// company is already known (e.g. matching prospects against one specific
+// company's own name+aliases) and only a yes/no match is needed.
+function matchesAnyVariant(rawCompany: string | null, normalisedVariants: Set<string>): boolean {
+  const target = norm(rawCompany)
+  if (!target) return false
+  if (normalisedVariants.has(target)) return true
+  if (target.length < MIN_FUZZY_LEN) return false
+  for (const variant of normalisedVariants) {
+    if (variant.length < MIN_FUZZY_LEN) continue
+    if (target.includes(variant) || variant.includes(target)) return true
+  }
+  return false
 }
 
 export type ProspectStatus = 'active' | 'pool_conflict' | 'dnc' | 'others_client' | 'unwashed'
@@ -129,7 +180,7 @@ export async function getCompaniesWithStats(): Promise<MapCompanyWithStats[]> {
   const stats = new Map<number, CompanyStats>()
 
   for (const p of prospectRows) {
-    const id = nameToId.get(norm(p.company))
+    const id = findCompanyId(p.company ?? '', nameToId)
     if (id === undefined) continue
     const s = stats.get(id) ?? emptyStats()
     s.total_washed++
@@ -141,7 +192,7 @@ export async function getCompaniesWithStats(): Promise<MapCompanyWithStats[]> {
   }
 
   for (const c of callRows) {
-    const id = nameToId.get(norm(c.company_name))
+    const id = findCompanyId(c.company_name ?? '', nameToId)
     if (id === undefined) continue
     const s = stats.get(id) ?? emptyStats()
     s.total_calls++
@@ -154,6 +205,14 @@ export async function getCompaniesWithStats(): Promise<MapCompanyWithStats[]> {
   return companies
     .map(c => ({ ...c, ...(stats.get(c.id) ?? emptyStats()) }))
     .sort((a, b) => b.total_booked - a.total_booked || b.total_washed - a.total_washed || a.name.localeCompare(b.name))
+}
+
+// Public helper for callers outside this file that need the same
+// name+alias+fuzzy lookup (e.g. the Nexus prospect list's "not on map"
+// column) without duplicating the matching logic.
+export async function getCompanyNameToIdMap(): Promise<Map<string, number>> {
+  const companies = (await getDb().select().from(map_companies)).map(toMapCompany)
+  return buildNameToId(companies)
 }
 
 export async function getCompanyById(id: number): Promise<MapCompany | null> {
@@ -192,6 +251,28 @@ export async function addCompany(input: NewCompanyInput): Promise<number> {
     prospect_priority: input.prospect_priority ?? 'normal',
   }).returning({ id: map_companies.id })
   return row!.id
+}
+
+// Same spot MapCanvas centres the whole territory view on — a deliberately
+// recognisable "not placed yet" default rather than a schema change, since
+// lat/lng are NOT NULL on this table.
+export const UNPLACED_LAT = 46.2044
+export const UNPLACED_LNG = 6.1432
+
+// Auto-adds a basic map_companies row for any company mentioned on a
+// prospect that doesn't already match one (by the same name+alias+fuzzy
+// lookup everything else here uses) — no threshold, every company a washed
+// prospect works at goes on the map. Placed at Geneva centre with no AI
+// summary until Archie (or a click) refines it; MapWorkspace shows a note
+// on these ("Auto-added from prospect list — coordinates not yet set")
+// detected by the exact UNPLACED_LAT/LNG default.
+export async function ensureCompanyOnMap(companyName: string): Promise<void> {
+  const name = companyName.trim()
+  if (!name) return
+  const companies = (await getDb().select().from(map_companies)).map(toMapCompany)
+  const nameToId = buildNameToId(companies)
+  if (findCompanyId(name, nameToId) !== undefined) return
+  await addCompany({ name, lat: UNPLACED_LAT, lng: UNPLACED_LNG, prospect_priority: 'normal' })
 }
 
 export async function setCompanyAliases(name: string, aliases: string[]): Promise<void> {
@@ -268,12 +349,40 @@ export async function getProspectsForCompany(companyId: number): Promise<Company
     .where(and(isNotNull(nexus_prospects.company), ne(nexus_prospects.company, '')))
 
   return rows
-    .filter(r => variants.has(norm(r.company)))
+    .filter(r => matchesAnyVariant(r.company, variants))
     .map(r => ({
       id: r.id, first_name: r.first_name, last_name: r.last_name,
       status: prospectStatus(r.wash_result, r.wash_category),
       isSelfEmployed: r.employment_type === 'Self-Employed',
     }))
+}
+
+// Distinct prospect company strings that don't match any mapped company
+// (by the same name+alias+fuzzy lookup as everything else here) — surfaced
+// in the map overview panel so Archie can see what's missing. In practice
+// this should shrink over time on its own: ensureCompanyOnMap auto-adds any
+// NEW company going forward, so this list is really "backlog from before
+// that existed" rather than an ongoing gap.
+export async function getUnmatchedProspectCompanies(limit = 30): Promise<{ count: number; names: string[] }> {
+  const db = getDb()
+  const [companyRows, prospectRows] = await Promise.all([
+    db.select().from(map_companies),
+    db.select({ company: nexus_prospects.company }).from(nexus_prospects)
+      .where(and(isNotNull(nexus_prospects.company), ne(nexus_prospects.company, ''))),
+  ])
+  const nameToId = buildNameToId(companyRows.map(toMapCompany))
+
+  const seen = new Set<string>()
+  const unmatched: string[] = []
+  for (const row of prospectRows) {
+    const company = row.company!.trim()
+    const key = norm(company)
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (findCompanyId(company, nameToId) === undefined) unmatched.push(company)
+  }
+  unmatched.sort((a, b) => a.localeCompare(b))
+  return { count: unmatched.length, names: unmatched.slice(0, limit) }
 }
 
 export interface OverviewStats {
@@ -285,10 +394,11 @@ export interface OverviewStats {
   topCompanies: { name: string; booked: number }[]
   sources: { source: string; count: number }[]
   untouched: { name: string; sector: string | null; employeesEst: number | null; area: string | null }[]
+  unmatchedCompanies: { count: number; names: string[] }
 }
 
 export async function getOverviewStats(): Promise<OverviewStats> {
-  const companies = await getCompaniesWithStats()
+  const [companies, unmatchedCompanies] = await Promise.all([getCompaniesWithStats(), getUnmatchedProspectCompanies()])
 
   const totalWashed = companies.reduce((sum, c) => sum + c.total_washed, 0)
   const totalBooked = companies.reduce((sum, c) => sum + c.total_booked, 0)
@@ -322,5 +432,6 @@ export async function getOverviewStats(): Promise<OverviewStats> {
     topCompanies: companies.filter(c => c.total_booked > 0).slice(0, 10).map(c => ({ name: c.name, booked: c.total_booked })),
     sources: sourceRows.filter(r => r.source).map(r => ({ source: r.source!, count: r.count })),
     untouched: untouched.map(c => ({ name: c.name, sector: c.sector, employeesEst: c.employees_est, area: c.area })),
+    unmatchedCompanies,
   }
 }

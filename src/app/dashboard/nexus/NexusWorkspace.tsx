@@ -34,7 +34,7 @@ interface NexusProspect {
   company_on_map: boolean | null
 }
 
-const EMPLOYMENT_TYPES = ['Managing Director', 'Director', 'Employee', 'Self-Employed'] as const
+const EMPLOYMENT_TYPES = ['Controlling Director', 'Director', 'Employee', 'Self-Employed'] as const
 type EmploymentType = typeof EMPLOYMENT_TYPES[number]
 
 const LEAD_CHANNELS = ['Cold - LinkedIn', 'Cold - Call', 'Webinar', 'Referral', 'Other']
@@ -52,8 +52,8 @@ interface SalesNavCandidate {
   flagged: boolean
 }
 
-// First Name, Last Name, Job Title, Company, LinkedIn URL, Wash Result, Date Washed, Employment Type
-const COL_COUNT = 8
+// First Name, Last Name, Job Title, Company, LinkedIn URL, Wash Result, Date Washed, Employment Type, Lead Source, Country
+const COL_COUNT = 10
 
 // Derives the 5-bucket status from wash_result + wash_category. The Claude
 // wash-sheet parser (wash-results route) always sets both; the older plain
@@ -100,7 +100,7 @@ function washPillOf(p: NexusProspect): { emoji: string; label: string; cls: stri
 }
 
 function employmentPillOf(p: NexusProspect): { label: string; cls: string } {
-  if (p.employment_type === 'Managing Director') return { label: 'MD', cls: s.nexusPillMd }
+  if (p.employment_type === 'Controlling Director') return { label: 'Controlling Director', cls: s.nexusPillMd }
   if (p.employment_type === 'Director') return { label: 'Director', cls: s.nexusPillDirector }
   if (p.employment_type === 'Self-Employed') return { label: 'Self-Employed', cls: s.nexusPillSelfEmployed }
   if (p.employment_type === 'Employee') return { label: 'Employee', cls: s.nexusPillEmployee }
@@ -120,6 +120,8 @@ function cellCopyValue(p: NexusProspect, col: number): string {
     case 5: { const st = statusOf(p); return st === 'unwashed' ? '' : st === 'others_client' ? "Others' Client" : washPillOf(p).label }
     case 6: return p.date_washed ?? ''
     case 7: return p.employment_type ?? ''
+    case 8: return p.lead_channel
+    case 9: return p.country
     default: return ''
   }
 }
@@ -166,9 +168,8 @@ export default function NexusWorkspace() {
   const [focus, setFocus] = useState<CellPos | null>(null)
   const draggingRef = useRef(false)
 
-  const [leadChannelChoice, setLeadChannelChoice] = useState<string>(LEAD_CHANNELS[0])
-  const [bulkBusy, setBulkBusy] = useState(false)
   const [overridingId, setOverridingId] = useState<string | null>(null)
+  const [editingCell, setEditingCell] = useState<{ id: string; field: 'lead_channel' | 'country' } | null>(null)
 
   const load = useCallback(() => {
     setContextRefreshKey(k => k + 1)
@@ -180,19 +181,22 @@ export default function NexusWorkspace() {
 
   useEffect(() => { load() }, [load])
 
-  // Exactly one classification batch (up to 20 unclassified prospects) per
-  // page load, per spec — fire-and-forget, reload once done so freshly-
-  // classified pills show up without a manual refresh. Deliberately NOT a
-  // catch-up loop across many rounds: with hundreds of unclassified rows,
-  // repeated page loads over time work through the backlog 20 at a time
-  // rather than one load burning through the whole backlog's worth of Claude
-  // calls at once.
+  // Silent auto-fill, every page load — no button, no confirm dialog. Just
+  // fills whatever's still blank with the defaults; a prospect that already
+  // has a value is never touched. Runs once per load; harmless to re-run
+  // since it's a no-op once nothing's blank.
   useEffect(() => {
     let cancelled = false
-    fetch('/api/dashboard/nexus/infer-employment-types', { method: 'POST' })
-      .then(r => r.json() as Promise<{ classified?: number }>)
-      .then(d => { if (!cancelled && d.classified) load() })
-      .catch(() => {})
+    async function autofill() {
+      for (const [field, value] of [['lead_channel', 'Cold - LinkedIn'], ['country', 'Switzerland']] as const) {
+        const result = await fetch('/api/dashboard/nexus/bulk-set', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field, value }),
+        }).then(r => r.json() as Promise<{ updated?: number }>).catch(() => null)
+        if (cancelled) return
+        if (result?.updated) load()
+      }
+    }
+    void autofill()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -202,30 +206,14 @@ export default function NexusWorkspace() {
     setTimeout(() => setToast(null), 2800)
   }
 
-  async function bulkSetWhereEmpty(field: 'lead_channel' | 'country', value: string) {
-    setBulkBusy(true)
+  async function saveInlineField(id: string, field: 'lead_channel' | 'country', value: string) {
+    setEditingCell(null)
+    setProspects(prev => prev?.map(p => p.id === id ? { ...p, [field]: value } : p) ?? prev)
     try {
-      const preview = await fetch('/api/dashboard/nexus/bulk-set', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field, value, preview: true }),
-      }).then(r => r.json() as Promise<{ count?: number }>)
-
-      const count = preview.count ?? 0
-      if (count === 0) { showToast('Nothing to update — every prospect already has a value.'); return }
-      if (!window.confirm(`This will update ${count} prospect${count === 1 ? '' : 's'}. Continue?`)) return
-
-      const result = await fetch('/api/dashboard/nexus/bulk-set', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field, value }),
-      }).then(r => r.json() as Promise<{ updated?: number }>)
-
-      showToast(`Updated ${result.updated ?? 0} prospect${result.updated === 1 ? '' : 's'}`)
-      load()
-    } catch {
-      showToast('Bulk update failed — try again')
-    } finally {
-      setBulkBusy(false)
-    }
+      await fetch(`/api/dashboard/nexus/prospects/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: value }),
+      })
+    } catch { load() }
   }
 
   async function overrideEmploymentType(id: string, value: EmploymentType) {
@@ -455,20 +443,6 @@ export default function NexusWorkspace() {
             </button>
           </div>
 
-          {/* Bulk "fill in the blanks" toolbar — never overwrites an existing value */}
-          <div className={s.nexusBulkBar}>
-            <select className={s.nexusBulkSelect} value={leadChannelChoice} onChange={e => setLeadChannelChoice(e.target.value)} disabled={bulkBusy}>
-              {LEAD_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <button className={s.nexusBulkBtn} onClick={() => void bulkSetWhereEmpty('lead_channel', leadChannelChoice)} disabled={bulkBusy}>
-              Apply to all empty
-            </button>
-            <span className={s.nexusBulkDivider} />
-            <button className={s.nexusBulkBtn} onClick={() => void bulkSetWhereEmpty('country', 'Switzerland')} disabled={bulkBusy}>
-              Set Switzerland for all empty
-            </button>
-          </div>
-
           <div className={s.nexusGridWrap}>
             <table className={s.nexusTable}>
               <thead>
@@ -481,13 +455,15 @@ export default function NexusWorkspace() {
                   <th>Wash Result</th>
                   <th className={s.nexusThSortable} onClick={() => headerSort('date_washed')}>Date Washed{sortArrow('date_washed')}</th>
                   <th>Employment</th>
+                  <th>Lead Source</th>
+                  <th>Country</th>
                 </tr>
               </thead>
               <tbody>
                 {prospects === null ? (
-                  <tr><td colSpan={8} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
+                  <tr><td colSpan={10} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
                 ) : sorted.length === 0 ? (
-                  <tr><td colSpan={8} style={{ color: 'var(--text-dim)' }}>No prospects in this view.</td></tr>
+                  <tr><td colSpan={10} style={{ color: 'var(--text-dim)' }}>No prospects in this view.</td></tr>
                 ) : (
                   sorted.map((p, i) => {
                     const pill = washPillOf(p)
@@ -545,6 +521,38 @@ export default function NexusWorkspace() {
                               title="Tap to override"
                             >
                               {employmentPillOf(p).label}
+                            </span>
+                          )}
+                        </td>
+                        <td className={selCls(i, 8)} onMouseDown={e => onCellMouseDown(i, 8, e)} onMouseEnter={() => onCellMouseEnter(i, 8)}>
+                          {editingCell?.id === p.id && editingCell.field === 'lead_channel' ? (
+                            <select
+                              className={s.nexusEmploymentSelect}
+                              autoFocus
+                              defaultValue={p.lead_channel}
+                              onChange={e => void saveInlineField(p.id, 'lead_channel', e.target.value)}
+                              onBlur={() => setEditingCell(null)}
+                            >
+                              {LEAD_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          ) : (
+                            <span onClick={() => setEditingCell({ id: p.id, field: 'lead_channel' })} style={{ cursor: 'pointer' }} title="Tap to change">
+                              {p.lead_channel}
+                            </span>
+                          )}
+                        </td>
+                        <td className={selCls(i, 9)} onMouseDown={e => onCellMouseDown(i, 9, e)} onMouseEnter={() => onCellMouseEnter(i, 9)}>
+                          {editingCell?.id === p.id && editingCell.field === 'country' ? (
+                            <input
+                              className={s.nexusEmploymentSelect}
+                              autoFocus
+                              defaultValue={p.country}
+                              onBlur={e => void saveInlineField(p.id, 'country', e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                            />
+                          ) : (
+                            <span onClick={() => setEditingCell({ id: p.id, field: 'country' })} style={{ cursor: 'pointer' }} title="Tap to change">
+                              {p.country}
                             </span>
                           )}
                         </td>

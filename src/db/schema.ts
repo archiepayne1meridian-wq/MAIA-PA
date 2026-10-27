@@ -636,8 +636,9 @@ export const nexus_prospects = sqliteTable('nexus_prospects', {
   company: text('company'),
   job_role: text('job_role'),
   employment_status: text('employment_status').notNull().default('Employee'),
-  // AI-inferred seniority tier — 'Managing Director' | 'Director' | 'Employee'
-  // | 'Self-Employed', from job_role via Claude (src/lib/nexus-employment.ts).
+  // Deterministic seniority tier — 'Controlling Director' | 'Director' |
+  // 'Employee' | 'Self Employed', inferred from job_role/company by plain
+  // string matching, no Claude call (src/lib/nexus-employment.ts).
   // Distinct from employment_status above (which is unused everywhere —
   // never read/written beyond its own default — so not repurposed here to
   // avoid conflating two differently-named, differently-shaped concepts).

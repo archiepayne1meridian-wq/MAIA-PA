@@ -4,7 +4,7 @@ import { getDb } from '@/db'
 import { nexus_prospects, nexus_import_log } from '@/db/schema'
 import { eq, desc, sql, isNull, or } from 'drizzle-orm'
 import { inferEmploymentType } from '@/lib/nexus-employment'
-import { ensureCompanyOnMap } from './map-db'
+import { ensureCompanyOnMap, ensureSelfEmployedMarker } from './map-db'
 
 export interface NexusProspect {
   id: string
@@ -81,6 +81,7 @@ export interface NewProspectInput {
 export async function addProspect(input: NewProspectInput): Promise<string> {
   const id = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
+  const employmentType = input.employment_type ?? inferEmploymentType(input.job_role ?? null, input.company ?? null)
   await getDb().insert(nexus_prospects).values({
     id,
     last_name: input.last_name ?? null,
@@ -88,7 +89,7 @@ export async function addProspect(input: NewProspectInput): Promise<string> {
     company: input.company ?? null,
     job_role: input.job_role ?? null,
     employment_status: input.employment_status ?? 'Employee',
-    employment_type: input.employment_type ?? inferEmploymentType(input.job_role ?? null, input.company ?? null),
+    employment_type: employmentType,
     lead_channel: input.lead_channel ?? 'Cold - LinkedIn',
     country: input.country ?? 'Switzerland',
     linkedin_url: input.linkedin_url ?? null,
@@ -104,7 +105,11 @@ export async function addProspect(input: NewProspectInput): Promise<string> {
     created_at: now,
     updated_at: now,
   })
-  if (input.company?.trim()) void ensureCompanyOnMap(input.company).catch(err => console.error('[nexus] ensureCompanyOnMap failed:', err))
+  if (input.company?.trim()) {
+    void ensureCompanyOnMap(input.company).catch(err => console.error('[nexus] ensureCompanyOnMap failed:', err))
+  } else if (employmentType === 'Self Employed') {
+    void ensureSelfEmployedMarker().catch(err => console.error('[nexus] ensureSelfEmployedMarker failed:', err))
+  }
   return id
 }
 
@@ -114,15 +119,16 @@ export async function addProspect(input: NewProspectInput): Promise<string> {
 export async function addProspectsBulk(inputs: NewProspectInput[]): Promise<number> {
   if (inputs.length === 0) return 0
   const now = Math.floor(Date.now() / 1000)
+  const employmentTypes = inputs.map(input => input.employment_type ?? inferEmploymentType(input.job_role ?? null, input.company ?? null))
   await getDb().insert(nexus_prospects).values(
-    inputs.map(input => ({
+    inputs.map((input, i) => ({
       id: crypto.randomUUID(),
       last_name: input.last_name ?? null,
       first_name: input.first_name ?? null,
       company: input.company ?? null,
       job_role: input.job_role ?? null,
       employment_status: input.employment_status ?? 'Employee',
-      employment_type: input.employment_type ?? inferEmploymentType(input.job_role ?? null, input.company ?? null),
+      employment_type: employmentTypes[i],
       lead_channel: input.lead_channel ?? 'Cold - LinkedIn',
       country: input.country ?? 'Switzerland',
       linkedin_url: input.linkedin_url ?? null,
@@ -141,6 +147,9 @@ export async function addProspectsBulk(inputs: NewProspectInput[]): Promise<numb
   )
   const companies = [...new Set(inputs.map(i => i.company?.trim()).filter((c): c is string => Boolean(c)))]
   void Promise.all(companies.map(c => ensureCompanyOnMap(c))).catch(err => console.error('[nexus] ensureCompanyOnMap (bulk) failed:', err))
+  if (inputs.some((input, i) => !input.company?.trim() && employmentTypes[i] === 'Self Employed')) {
+    void ensureSelfEmployedMarker().catch(err => console.error('[nexus] ensureSelfEmployedMarker (bulk) failed:', err))
+  }
   return inputs.length
 }
 
@@ -161,6 +170,15 @@ export async function updateProspect(id: string, fields: Partial<NewProspectInpu
   // and via explicit manual override only, never silently re-inferred.
   if ('company' in fields && fields.company?.trim()) {
     void ensureCompanyOnMap(fields.company).catch(err => console.error('[nexus] ensureCompanyOnMap (update) failed:', err))
+    return
+  }
+  // Covers both an edit that clears the company field on a self-employed
+  // row, and a manual employment_type override (dropdown) to "Self
+  // Employed" on a row that already has no company — the latter never
+  // touches `company`, so the effective value has to be read back.
+  if ('employment_type' in fields && fields.employment_type === 'Self Employed') {
+    const hasCompany = 'company' in fields ? Boolean(fields.company?.trim()) : Boolean((await getProspectById(id))?.company?.trim())
+    if (!hasCompany) void ensureSelfEmployedMarker().catch(err => console.error('[nexus] ensureSelfEmployedMarker (update) failed:', err))
   }
 }
 
@@ -187,11 +205,17 @@ export async function bulkSetFieldWhereEmpty(field: 'lead_channel' | 'country', 
 // one-time backfill below; a manual override is a plain setEmploymentType
 // call and is never re-inferred afterward.
 
-// Backfill target: null (never classified) or the old invalid value from a
-// prior scheme ('Managing Director', superseded by 'Controlling Director') —
-// never an already-valid classification, so a manual override always sticks.
+// Backfill target: null (never classified), the old invalid value from a
+// prior scheme ('Managing Director', superseded by 'Controlling Director'),
+// or the old hyphenated spelling ('Self-Employed', superseded by the space
+// variant 'Self Employed' so it matches the dropdown exactly) — never an
+// already-valid classification, so a manual override always sticks.
 function needsEmploymentBackfillWhere() {
-  return or(isNull(nexus_prospects.employment_type), eq(nexus_prospects.employment_type, 'Managing Director'))
+  return or(
+    isNull(nexus_prospects.employment_type),
+    eq(nexus_prospects.employment_type, 'Managing Director'),
+    eq(nexus_prospects.employment_type, 'Self-Employed'),
+  )
 }
 
 export async function countNeedingEmploymentBackfill(): Promise<number> {

@@ -80,3 +80,18 @@
   width: 100%; background: var(--raised); border: 1px solid var(--border); border-radius: 6px;
   padding: 8px 10px; font-size: 12px; color: var(--text); resize: vertical; min-height: 50px; font-family: inherit;
 }
+
+/* Permanent label under the DeVere Geneva marker — plain text, no Leaflet
+   tooltip chrome (box/arrow) so it reads as a map label, not a hover hint. */
+.devereLabel {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #f1c40f;
+  font-weight: 700;
+  font-size: 11px;
+  font-family: var(--mono), monospace;
+  white-space: nowrap;
+  padding: 0 !important;
+}
+.devereLabel::before { display: none !important; }

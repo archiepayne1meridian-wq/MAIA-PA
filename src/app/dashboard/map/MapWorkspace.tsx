@@ -88,9 +88,11 @@ export default function MapWorkspace() {
 
   // Generate an AI summary exactly once per company, ever — only when
   // nothing's cached yet. Never auto-regenerates; a stored summary is
-  // permanent until the user explicitly hits "Refresh intel".
+  // permanent until the user explicitly hits "Refresh intel". Skipped for
+  // the two special markers (Self Employed aggregate, DeVere's own office)
+  // — neither is a real company to research.
   useEffect(() => {
-    if (!selected || selected.ai_summary || generatingSummary) return
+    if (!selected || selected.type === 'self_employed' || selected.type === 'own_office' || selected.ai_summary || generatingSummary) return
     void generateSummary(selected, false)
   }, [selected]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -182,7 +184,13 @@ function OverviewPanel({ overview }: { overview: OverviewStats | null }) {
           <div className={m.statTile}><div className={m.statTileVal}>{overview.totalWashed}</div><div className={m.statTileLabel}>Prospects washed</div></div>
           <div className={m.statTile}><div className={m.statTileVal}>{overview.totalBooked}</div><div className={m.statTileLabel}>Meetings booked</div></div>
           <div className={m.statTile}><div className={m.statTileVal}>{overview.untouchedCount}</div><div className={m.statTileLabel}>Untouched companies</div></div>
+          <div className={m.statTile} style={{ gridColumn: '1 / -1' }}><div className={m.statTileVal}>{overview.selfEmployedWashed}</div><div className={m.statTileLabel}>Self Employed washed</div></div>
         </div>
+        {overview.noCompanyCount > 0 && (
+          <p className={m.empty} style={{ textAlign: 'left', padding: '6px 0 0' }}>
+            {overview.noCompanyCount} prospect{overview.noCompanyCount === 1 ? '' : 's'} have no company — shown under Self Employed / Independent marker.
+          </p>
+        )}
       </div>
 
       <div>
@@ -250,6 +258,8 @@ function OverviewPanel({ overview }: { overview: OverviewStats | null }) {
         <div className={m.legendRow}><span className={m.legendDot} style={{ background: '#666' }} /> Untouched</div>
         <div className={m.legendRow}><span className={m.legendDot} style={{ background: '#9b59b6' }} /> Priority target</div>
         <div className={m.legendRow}><span className={m.legendDot} style={{ background: '#e74c3c' }} /> Avoid</div>
+        <div className={m.legendRow}><span className={m.legendDot} style={{ background: '#16a085' }} /> Self Employed / Independent</div>
+        <div className={m.legendRow}><span className={m.legendDot} style={{ background: '#f1c40f' }} /> deVere Geneva (our office)</div>
       </div>
     </>
   )
@@ -271,6 +281,9 @@ function CompanyPanel({
   onSaveNote: () => void
 }) {
   const status = statusOf(company)
+  const isSelfEmployedMarker = company.type === 'self_employed'
+  const isOwnOffice = company.type === 'own_office'
+  const isSpecialMarker = isSelfEmployedMarker || isOwnOffice
 
   return (
     <>
@@ -278,19 +291,25 @@ function CompanyPanel({
 
       <div>
         <div className={m.tagRow}>
+          {isOwnOffice && <span className={m.tag} style={{ background: '#f1c40f22', color: '#f1c40f' }}>deVere office</span>}
+          {isSelfEmployedMarker && <span className={m.tag}>Aggregate marker</span>}
           {company.sector && <span className={m.tag}>{company.sector}</span>}
           {company.area && <span className={m.tag}>{company.area}</span>}
         </div>
         <div className={m.companyName}>{company.name}</div>
-        <div className={m.companyMeta}>
-          {company.sector ?? 'Company'} · {company.area ?? 'Geneva'}{company.employees_est ? ` · ${company.employees_est.toLocaleString()} staff` : ''}
-        </div>
-        <span className={m.statusPill} style={{ background: `${status.colour}22`, color: status.colour }}>{status.label}</span>
+        {!isSpecialMarker && (
+          <div className={m.companyMeta}>
+            {company.sector ?? 'Company'} · {company.area ?? 'Geneva'}{company.employees_est ? ` · ${company.employees_est.toLocaleString()} staff` : ''}
+          </div>
+        )}
+        {!isSpecialMarker && <span className={m.statusPill} style={{ background: `${status.colour}22`, color: status.colour }}>{status.label}</span>}
         {company.prospect_priority === 'avoid' && company.avoid_reason && (
           <div className={m.companyMeta} style={{ marginTop: 6 }}>⚠️ {company.avoid_reason}</div>
         )}
-        {company.lat === UNPLACED_LAT && company.lng === UNPLACED_LNG && (
-          <div className={m.companyMeta} style={{ marginTop: 6 }}>📍 Auto-added from prospect list — coordinates not yet set.</div>
+        {!isOwnOffice && company.lat === UNPLACED_LAT && company.lng === UNPLACED_LNG && (
+          <div className={m.companyMeta} style={{ marginTop: 6 }}>
+            📍 {isSelfEmployedMarker ? 'Placed at Geneva centre — aggregates everyone with no employer on file.' : 'Auto-added from prospect list — coordinates not yet set.'}
+          </div>
         )}
       </div>
 
@@ -303,7 +322,7 @@ function CompanyPanel({
 
       {Object.keys(company.nationalities).length > 0 && (
         <div>
-          <div className={m.sectionTitle}>NATIONALITIES BOOKED HERE</div>
+          <div className={m.sectionTitle}>{isSelfEmployedMarker ? 'NATIONALITIES' : 'NATIONALITIES BOOKED HERE'}</div>
           {Object.entries(company.nationalities).map(([nat, count]) => (
             <div key={nat} className={m.barRow}>
               <span className={m.barLabel}>{NATIONALITY_FLAGS[nat] ?? ''} {nat}</span>
@@ -314,39 +333,43 @@ function CompanyPanel({
         </div>
       )}
 
-      <div>
-        <div className={m.sectionTitle}>COMPANY INTEL</div>
-        {generatingSummary ? (
-          <p className={m.empty}>Generating…</p>
-        ) : company.ai_summary ? (
-          <>
-            {(() => {
-              const parsed = parseSummary(company.ai_summary)
-              return parsed ? (
-                <div className={m.intelFields}>
-                  <div><span className={m.intelLabel}>What they do</span><p className={m.summaryText}>{parsed.what_they_do}</p></div>
-                  <div><span className={m.intelLabel}>Who's there</span><p className={m.summaryText}>{parsed.who_is_there}</p></div>
-                  <div><span className={m.intelLabel}>Office type</span><p className={m.summaryText}>{parsed.office_type}</p></div>
-                </div>
-              ) : (
-                <p className={m.summaryText}>{company.ai_summary}</p>
-              )
-            })()}
-            <button className={m.refreshBtn} onClick={onRegenerateSummary} disabled={generatingSummary}>↻ Refresh intel</button>
-          </>
-        ) : (
-          <p className={m.empty}>No intel yet.</p>
-        )}
-      </div>
+      {!isSpecialMarker && (
+        <div>
+          <div className={m.sectionTitle}>COMPANY INTEL</div>
+          {generatingSummary ? (
+            <p className={m.empty}>Generating…</p>
+          ) : company.ai_summary ? (
+            <>
+              {(() => {
+                const parsed = parseSummary(company.ai_summary)
+                return parsed ? (
+                  <div className={m.intelFields}>
+                    <div><span className={m.intelLabel}>What they do</span><p className={m.summaryText}>{parsed.what_they_do}</p></div>
+                    <div><span className={m.intelLabel}>Who's there</span><p className={m.summaryText}>{parsed.who_is_there}</p></div>
+                    <div><span className={m.intelLabel}>Office type</span><p className={m.summaryText}>{parsed.office_type}</p></div>
+                  </div>
+                ) : (
+                  <p className={m.summaryText}>{company.ai_summary}</p>
+                )
+              })()}
+              <button className={m.refreshBtn} onClick={onRegenerateSummary} disabled={generatingSummary}>↻ Refresh intel</button>
+            </>
+          ) : (
+            <p className={m.empty}>No intel yet.</p>
+          )}
+        </div>
+      )}
 
-      <div>
-        <div className={m.sectionTitle}>OFFICE INFO</div>
-        {company.hq_location && <div className={m.officeRow}><span className={m.officeLabel}>HQ</span><span>{company.hq_location}</span></div>}
-        <div className={m.officeRow}><span className={m.officeLabel}>This office</span><span>{company.office_type === 'hq' ? 'Global HQ' : company.office_type === 'regional' ? 'Regional office' : company.office_type}</span></div>
-        {company.swiss_offices.length > 0 && (
-          <div className={m.officeRow}><span className={m.officeLabel}>Other Swiss</span><span>{company.swiss_offices.join(', ')}</span></div>
-        )}
-      </div>
+      {!isSpecialMarker && (
+        <div>
+          <div className={m.sectionTitle}>OFFICE INFO</div>
+          {company.hq_location && <div className={m.officeRow}><span className={m.officeLabel}>HQ</span><span>{company.hq_location}</span></div>}
+          <div className={m.officeRow}><span className={m.officeLabel}>This office</span><span>{company.office_type === 'hq' ? 'Global HQ' : company.office_type === 'regional' ? 'Regional office' : company.office_type}</span></div>
+          {company.swiss_offices.length > 0 && (
+            <div className={m.officeRow}><span className={m.officeLabel}>Other Swiss</span><span>{company.swiss_offices.join(', ')}</span></div>
+          )}
+        </div>
+      )}
 
       {company.cassandra_notes && (
         <div>
@@ -355,37 +378,41 @@ function CompanyPanel({
         </div>
       )}
 
-      <div>
-        <div className={m.sectionTitle}>PROSPECTS HERE</div>
-        {prospects === null ? (
-          <p className={m.empty}>Loading…</p>
-        ) : prospects.length === 0 ? (
-          <p className={m.empty}>None washed yet.</p>
-        ) : prospects.map(p => (
-          <div key={p.id} className={m.prospectRow}>
-            <span className={m.prospectDot} style={{ background: PROSPECT_DOT[p.status] }} />
-            <span>{p.first_name} {p.last_name}</span>
-            {p.isSelfEmployed && <span className={m.seTag} title="Self-employed — lists this company as their employer">SE</span>}
-          </div>
-        ))}
-      </div>
+      {!isOwnOffice && (
+        <div>
+          <div className={m.sectionTitle}>{isSelfEmployedMarker ? 'SELF EMPLOYED / INDEPENDENT PROSPECTS' : 'PROSPECTS HERE'}</div>
+          {prospects === null ? (
+            <p className={m.empty}>Loading…</p>
+          ) : prospects.length === 0 ? (
+            <p className={m.empty}>None washed yet.</p>
+          ) : prospects.map(p => (
+            <div key={p.id} className={m.prospectRow}>
+              <span className={m.prospectDot} style={{ background: PROSPECT_DOT[p.status] }} />
+              <span>{p.first_name} {p.last_name}</span>
+              {!isSelfEmployedMarker && p.isSelfEmployed && <span className={m.seTag} title="Self-employed — lists this company as their employer">SE</span>}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div>
-        <div className={m.sectionTitle}>COMPANY NOTE</div>
-        <textarea className={m.noteInput} value={noteDraft} onChange={e => onNoteChange(e.target.value)} placeholder="Add a note about this company…" />
+        <div className={m.sectionTitle}>{isOwnOffice ? 'NOTE' : 'COMPANY NOTE'}</div>
+        <textarea className={m.noteInput} value={noteDraft} onChange={e => onNoteChange(e.target.value)} placeholder="Add a note…" />
         <div className={m.actionRow}>
           <button className={m.actionBtn} onClick={onSaveNote} disabled={savingNote}>{savingNote ? 'Saving…' : 'Save note'}</button>
         </div>
       </div>
 
-      <div className={m.actionRow}>
-        <button className={`${m.actionBtn} ${company.prospect_priority === 'high' ? m.actionBtnActive : ''}`} onClick={() => onSetPriority(company.prospect_priority === 'high' ? 'normal' : 'high')}>
-          {company.prospect_priority === 'high' ? '✓ Priority target' : 'Mark as priority'}
-        </button>
-        <button className={`${m.actionBtn} ${company.prospect_priority === 'avoid' ? m.actionBtnActive : ''}`} onClick={() => onSetPriority(company.prospect_priority === 'avoid' ? 'normal' : 'avoid')}>
-          {company.prospect_priority === 'avoid' ? '✓ Avoid' : 'Mark as avoid'}
-        </button>
-      </div>
+      {!isSpecialMarker && (
+        <div className={m.actionRow}>
+          <button className={`${m.actionBtn} ${company.prospect_priority === 'high' ? m.actionBtnActive : ''}`} onClick={() => onSetPriority(company.prospect_priority === 'high' ? 'normal' : 'high')}>
+            {company.prospect_priority === 'high' ? '✓ Priority target' : 'Mark as priority'}
+          </button>
+          <button className={`${m.actionBtn} ${company.prospect_priority === 'avoid' ? m.actionBtnActive : ''}`} onClick={() => onSetPriority(company.prospect_priority === 'avoid' ? 'normal' : 'avoid')}>
+            {company.prospect_priority === 'avoid' ? '✓ Avoid' : 'Mark as avoid'}
+          </button>
+        </div>
+      )}
     </>
   )
 }

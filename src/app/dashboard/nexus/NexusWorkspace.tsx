@@ -35,7 +35,7 @@ interface NexusProspect {
   company_on_map: boolean | null
 }
 
-const EMPLOYMENT_TYPES = ['Controlling Director', 'Director', 'Employee', 'Self-Employed'] as const
+const EMPLOYMENT_TYPES = ['Controlling Director', 'Director', 'Employee', 'Self Employed'] as const
 type EmploymentType = typeof EMPLOYMENT_TYPES[number]
 
 const LEAD_CHANNELS = ['Cold - LinkedIn', 'Cold - Call', 'Webinar', 'Referral', 'Other']
@@ -103,7 +103,7 @@ function washPillOf(p: NexusProspect): { emoji: string; label: string; cls: stri
 function employmentPillOf(p: NexusProspect): { label: string; cls: string } {
   if (p.employment_type === 'Controlling Director') return { label: 'Controlling Director', cls: s.nexusPillMd }
   if (p.employment_type === 'Director') return { label: 'Director', cls: s.nexusPillDirector }
-  if (p.employment_type === 'Self-Employed') return { label: 'Self-Employed', cls: s.nexusPillSelfEmployed }
+  if (p.employment_type === 'Self Employed') return { label: 'Self Employed', cls: s.nexusPillSelfEmployed }
   if (p.employment_type === 'Employee') return { label: 'Employee', cls: s.nexusPillEmployee }
   return { label: '—', cls: s.nexusPillNone }
 }

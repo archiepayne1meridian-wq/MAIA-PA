@@ -4,9 +4,9 @@
 // zero benefit over plain string matching; this also makes backfilling
 // hundreds of prospects instant instead of a rate-limited batch job.
 
-export type EmploymentType = 'Controlling Director' | 'Director' | 'Employee' | 'Self-Employed'
+export type EmploymentType = 'Controlling Director' | 'Director' | 'Employee' | 'Self Employed'
 
-export const EMPLOYMENT_TYPES: EmploymentType[] = ['Controlling Director', 'Director', 'Employee', 'Self-Employed']
+export const EMPLOYMENT_TYPES: EmploymentType[] = ['Controlling Director', 'Director', 'Employee', 'Self Employed']
 
 // 'chief executive officer' is listed here, not just the 'ceo' abbreviation
 // — without it, a spelled-out "Chief Executive Officer" title would match
@@ -23,20 +23,20 @@ function containsAny(haystack: string, words: string[]): boolean {
 }
 
 // Priority order per spec:
-// 1. No company set -> Self-Employed (no company = likely independent)
+// 1. No company set -> Self Employed (no company = likely independent)
 // 2. Controlling Director keywords
 // 3. Director keywords
 // 4. Self-employed keywords (job title explicitly says so, despite having a company)
 // 5. Everything else, or no job title -> Employee
 export function inferEmploymentType(jobTitle: string | null, company: string | null): EmploymentType {
   const hasCompany = Boolean(company?.trim())
-  if (!hasCompany) return 'Self-Employed'
+  if (!hasCompany) return 'Self Employed'
 
   const title = (jobTitle ?? '').toLowerCase().trim()
   if (!title) return 'Employee'
 
   if (containsAny(title, CONTROLLING_DIRECTOR_WORDS)) return 'Controlling Director'
   if (containsAny(title, DIRECTOR_WORDS)) return 'Director'
-  if (containsAny(title, SELF_EMPLOYED_WORDS)) return 'Self-Employed'
+  if (containsAny(title, SELF_EMPLOYED_WORDS)) return 'Self Employed'
   return 'Employee'
 }

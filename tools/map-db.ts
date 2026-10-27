@@ -14,7 +14,7 @@ import { eq, sql, isNotNull, and, ne, desc } from 'drizzle-orm'
 export interface MapCompany {
   id: number
   name: string
-  type: string
+  type: string // 'company'|'school'|'university'|'hospital'|'intl_org'|'law_firm'|'hotel'|'public_sector'|'other'|'self_employed'|'own_office'
   sector: string | null
   employees_est: number | null
   lat: number
@@ -160,6 +160,69 @@ function emptyStats(): CompanyStats {
   return { total_washed: 0, green_prospects: 0, dnc_count: 0, others_client_count: 0, total_calls: 0, total_booked: 0, meetings_sat: 0, nationalities: {} }
 }
 
+export interface SelfEmployedProspect { id: string; first_name: string | null; last_name: string | null; status: ProspectStatus }
+
+// Self Employed / Independent prospects with a genuinely empty `company`
+// field can't be found by the name+alias+fuzzy matching every other stat
+// here relies on (an empty string matches nothing) — so they're queried
+// directly by employment_type, and their call history is joined by the
+// exact apollo_calls.linked_prospect_id link (not fuzzy company-name
+// matching, since there's no company name to match on) — only calls
+// explicitly linked via the Calls agent's "Link to prospect" flow count
+// here, so nationality/booking numbers are conservative, not exhaustive.
+async function getSelfEmployedNoCompanyStats(): Promise<{ stats: CompanyStats; prospects: SelfEmployedProspect[] }> {
+  const rows = await getDb()
+    .select({
+      id: nexus_prospects.id, first_name: nexus_prospects.first_name, last_name: nexus_prospects.last_name,
+      wash_result: nexus_prospects.wash_result, wash_category: nexus_prospects.wash_category,
+    })
+    .from(nexus_prospects)
+    .where(and(
+      eq(nexus_prospects.employment_type, 'Self Employed'),
+      sql`(${nexus_prospects.company} IS NULL OR TRIM(${nexus_prospects.company}) = '')`,
+    ))
+
+  const prospects = rows.map(r => ({ id: r.id, first_name: r.first_name, last_name: r.last_name, status: prospectStatus(r.wash_result, r.wash_category) }))
+  const ids = new Set(prospects.map(p => p.id))
+
+  const stats = emptyStats()
+  for (const p of prospects) {
+    // Matches the main company loop below: total_washed counts every tracked
+    // prospect attributed to this marker, not only ones with a wash_result
+    // set yet — same (if confusingly named) convention every company's
+    // "Washed" stat tile already uses, kept for consistency across markers.
+    stats.total_washed++
+    if (p.status === 'active') stats.green_prospects++
+    if (p.status === 'dnc') stats.dnc_count++
+    if (p.status === 'others_client') stats.others_client_count++
+  }
+
+  if (ids.size > 0) {
+    const calls = await getDb()
+      .select({
+        nationality: apollo_calls.prospect_nationality, outcome: apollo_calls.outcome,
+        meeting_type: apollo_calls.meeting_type, linkedId: apollo_calls.linked_prospect_id,
+      })
+      .from(apollo_calls)
+      .where(isNotNull(apollo_calls.linked_prospect_id))
+    for (const c of calls) {
+      if (!c.linkedId || !ids.has(c.linkedId)) continue
+      stats.total_calls++
+      if (c.outcome === 'booked') stats.total_booked++
+      if (c.meeting_type === 'meeting') stats.meetings_sat++
+      if (c.nationality) stats.nationalities[c.nationality] = (stats.nationalities[c.nationality] ?? 0) + 1
+    }
+  }
+
+  return { stats, prospects }
+}
+
+export async function countProspectsWithNoCompany(): Promise<number> {
+  const [row] = await getDb().select({ count: sql<number>`count(*)` }).from(nexus_prospects)
+    .where(sql`(${nexus_prospects.company} IS NULL OR TRIM(${nexus_prospects.company}) = '')`)
+  return row?.count ?? 0
+}
+
 export async function getCompaniesWithStats(): Promise<MapCompanyWithStats[]> {
   const db = getDb()
   const [companyRows, prospectRows, callRows] = await Promise.all([
@@ -200,6 +263,25 @@ export async function getCompaniesWithStats(): Promise<MapCompanyWithStats[]> {
     if (c.meeting_type === 'meeting') s.meetings_sat++
     if (c.prospect_nationality) s.nationalities[c.prospect_nationality] = (s.nationalities[c.prospect_nationality] ?? 0) + 1
     stats.set(id, s)
+  }
+
+  // Self Employed / Independent marker's stats are a special case: prospects
+  // with a placeholder company string (e.g. "Freelance") were already folded
+  // in above via the marker's aliases, but prospects with a genuinely empty
+  // company can only be found by a dedicated query — merge those in here.
+  const selfEmployedMarker = companies.find(c => c.type === 'self_employed')
+  if (selfEmployedMarker) {
+    const { stats: extra } = await getSelfEmployedNoCompanyStats()
+    const existing = stats.get(selfEmployedMarker.id) ?? emptyStats()
+    existing.total_washed += extra.total_washed
+    existing.green_prospects += extra.green_prospects
+    existing.dnc_count += extra.dnc_count
+    existing.others_client_count += extra.others_client_count
+    existing.total_calls += extra.total_calls
+    existing.total_booked += extra.total_booked
+    existing.meetings_sat += extra.meetings_sat
+    for (const [nat, count] of Object.entries(extra.nationalities)) existing.nationalities[nat] = (existing.nationalities[nat] ?? 0) + count
+    stats.set(selfEmployedMarker.id, existing)
   }
 
   return companies
@@ -259,20 +341,93 @@ export async function addCompany(input: NewCompanyInput): Promise<number> {
 export const UNPLACED_LAT = 46.2044
 export const UNPLACED_LNG = 6.1432
 
+export const SELF_EMPLOYED_MARKER_NAME = 'Self Employed / Independent'
+export const DEVERE_OFFICE_NAME = 'DeVere Group Geneva'
+
+// A prospect's free-text `company` field sometimes isn't a real employer at
+// all — a Sales Nav export or a manual note with "Self Employed", "N/A" etc
+// typed into the company box. isPlaceholderCompany is exact-match only (not
+// substring) so a real company like "ABC Consultants SA" is never caught by
+// it. The fuzzy-matched subset (PLACEHOLDER_PHRASES_AS_ALIASES) is also used
+// as the Self Employed marker's aliases further down — deliberately the same
+// canonical list in both places, since a word safe enough to delete a bogus
+// standalone company row for (exact match) is the same word that should
+// route a prospect's placeholder company text onto the marker (fuzzy match).
+const PLACEHOLDER_PHRASES_AS_ALIASES = ['Self Employed', 'Self-Employed', 'Freelance', 'Freelancer', 'Independent', 'N/A']
+const PLACEHOLDER_COMPANY_NAMES = [...PLACEHOLDER_PHRASES_AS_ALIASES.map(norm), 'none', 'unemployed', 'retired']
+function isPlaceholderCompany(name: string): boolean {
+  return PLACEHOLDER_COMPANY_NAMES.includes(norm(name))
+}
+
 // Auto-adds a basic map_companies row for any company mentioned on a
 // prospect that doesn't already match one (by the same name+alias+fuzzy
 // lookup everything else here uses) — no threshold, every company a washed
 // prospect works at goes on the map. Placed at Geneva centre with no AI
 // summary until Archie (or a click) refines it; MapWorkspace shows a note
 // on these ("Auto-added from prospect list — coordinates not yet set")
-// detected by the exact UNPLACED_LAT/LNG default.
+// detected by the exact UNPLACED_LAT/LNG default. Skips placeholder
+// "company" text (see isPlaceholderCompany) — those prospects are tracked
+// under the Self Employed / Independent marker instead (ensureSelfEmployedMarker).
 export async function ensureCompanyOnMap(companyName: string): Promise<void> {
   const name = companyName.trim()
-  if (!name) return
+  if (!name || isPlaceholderCompany(name)) return
   const companies = (await getDb().select().from(map_companies)).map(toMapCompany)
   const nameToId = buildNameToId(companies)
   if (findCompanyId(name, nameToId) !== undefined) return
   await addCompany({ name, lat: UNPLACED_LAT, lng: UNPLACED_LNG, prospect_priority: 'normal' })
+}
+
+// The aliases cover common placeholder phrasings so the existing
+// name+alias+fuzzy matching in getCompaniesWithStats/getProspectsForCompany
+// picks up a prospect whose `company` field literally says "Freelance" etc
+// for free, with no special-case matching code needed for that case — only
+// a genuinely empty/null company (which matches nothing by name) needs the
+// explicit no-company query added separately (see getSelfEmployedNoCompanyStats).
+export async function ensureSelfEmployedMarker(): Promise<void> {
+  const companies = (await getDb().select().from(map_companies)).map(toMapCompany)
+  const nameToId = buildNameToId(companies)
+  if (findCompanyId(SELF_EMPLOYED_MARKER_NAME, nameToId) !== undefined) return
+  await addCompany({
+    name: SELF_EMPLOYED_MARKER_NAME,
+    type: 'self_employed',
+    lat: UNPLACED_LAT,
+    lng: UNPLACED_LNG,
+    aliases: PLACEHOLDER_PHRASES_AS_ALIASES,
+    prospect_priority: 'normal',
+  })
+}
+
+// Before this guard existed, ensureCompanyOnMap had already created bogus
+// "company" rows for placeholder company text (e.g. a literal "Freelance"
+// or "Self Employed" pin, Geneva-centre, zero stats forever since no real
+// prospect company text can ever match them once the marker's aliases take
+// priority) — one-time cleanup so these don't linger as map clutter.
+export async function cleanupPlaceholderCompanies(): Promise<number> {
+  const rows = await getDb().select({ id: map_companies.id, name: map_companies.name }).from(map_companies)
+  const staleIds = rows.filter(r => isPlaceholderCompany(r.name)).map(r => r.id)
+  for (const id of staleIds) {
+    await getDb().delete(map_companies).where(eq(map_companies.id, id))
+  }
+  return staleIds.length
+}
+
+// Gold, always-on-top, never governed by the washed/booked colour logic —
+// Archie's own office, not a prospect target. See MapCanvas.tsx/MapWorkspace.tsx
+// for the type==='own_office' special-casing.
+export async function ensureDevereOfficeMarker(): Promise<void> {
+  const companies = (await getDb().select().from(map_companies)).map(toMapCompany)
+  const nameToId = buildNameToId(companies)
+  if (findCompanyId(DEVERE_OFFICE_NAME, nameToId) !== undefined) return
+  await addCompany({
+    name: DEVERE_OFFICE_NAME,
+    type: 'own_office',
+    sector: 'Financial Services',
+    lat: 46.2043,
+    lng: 6.1444,
+    area: 'Centre-Ville',
+    office_type: 'office',
+    prospect_priority: 'normal',
+  })
 }
 
 export async function setCompanyAliases(name: string, aliases: string[]): Promise<void> {
@@ -348,13 +503,23 @@ export async function getProspectsForCompany(companyId: number): Promise<Company
     .from(nexus_prospects)
     .where(and(isNotNull(nexus_prospects.company), ne(nexus_prospects.company, '')))
 
-  return rows
+  const matched: CompanyProspect[] = rows
     .filter(r => matchesAnyVariant(r.company, variants))
     .map(r => ({
       id: r.id, first_name: r.first_name, last_name: r.last_name,
       status: prospectStatus(r.wash_result, r.wash_category),
-      isSelfEmployed: r.employment_type === 'Self-Employed',
+      isSelfEmployed: r.employment_type === 'Self Employed',
     }))
+
+  // The Self Employed / Independent marker also aggregates prospects with a
+  // genuinely empty company field, which the name/alias match above can't
+  // find (an empty string matches nothing) — see getSelfEmployedNoCompanyStats.
+  if (company.type === 'self_employed') {
+    const { prospects: noCompany } = await getSelfEmployedNoCompanyStats()
+    matched.push(...noCompany.map(p => ({ id: p.id, first_name: p.first_name, last_name: p.last_name, status: p.status, isSelfEmployed: true })))
+  }
+
+  return matched
 }
 
 // Distinct prospect company strings that don't match any mapped company
@@ -390,6 +555,8 @@ export interface OverviewStats {
   totalWashed: number
   totalBooked: number
   untouchedCount: number
+  selfEmployedWashed: number
+  noCompanyCount: number
   nationalities: { nationality: string; count: number }[]
   topCompanies: { name: string; booked: number }[]
   sources: { source: string; count: number }[]
@@ -398,7 +565,10 @@ export interface OverviewStats {
 }
 
 export async function getOverviewStats(): Promise<OverviewStats> {
-  const [companies, unmatchedCompanies] = await Promise.all([getCompaniesWithStats(), getUnmatchedProspectCompanies()])
+  const [companies, unmatchedCompanies, noCompanyCount] = await Promise.all([
+    getCompaniesWithStats(), getUnmatchedProspectCompanies(), countProspectsWithNoCompany(),
+  ])
+  const selfEmployedMarker = companies.find(c => c.type === 'self_employed')
 
   const totalWashed = companies.reduce((sum, c) => sum + c.total_washed, 0)
   const totalBooked = companies.reduce((sum, c) => sum + c.total_booked, 0)
@@ -418,18 +588,27 @@ export async function getOverviewStats(): Promise<OverviewStats> {
     .groupBy(apollo_calls.lead_source)
     .orderBy(desc(sql`count(*)`))
 
-  const untouched = companies
+  // The Self Employed / Independent and DeVere office markers aren't real
+  // prospecting targets — excluded from "companies mapped", "untouched" and
+  // "top performing companies" so they don't skew those company-specific
+  // stats (their own washed/booked figures still count toward the
+  // all-prospect totals above, and self-employed gets its own stat below).
+  const realCompanies = companies.filter(c => c.type !== 'self_employed' && c.type !== 'own_office')
+
+  const untouched = realCompanies
     .filter(c => c.total_washed === 0 && c.total_calls === 0 && c.prospect_priority !== 'avoid')
     .sort((a, b) => (b.employees_est ?? 0) - (a.employees_est ?? 0))
     .slice(0, 20)
 
   return {
-    companiesMapped: companies.length,
+    companiesMapped: realCompanies.length,
     totalWashed,
     totalBooked,
     untouchedCount: untouched.length,
+    selfEmployedWashed: selfEmployedMarker?.total_washed ?? 0,
+    noCompanyCount,
     nationalities: Object.entries(nationalityTotals).map(([nationality, count]) => ({ nationality, count })).sort((a, b) => b.count - a.count),
-    topCompanies: companies.filter(c => c.total_booked > 0).slice(0, 10).map(c => ({ name: c.name, booked: c.total_booked })),
+    topCompanies: realCompanies.filter(c => c.total_booked > 0).slice(0, 10).map(c => ({ name: c.name, booked: c.total_booked })),
     sources: sourceRows.filter(r => r.source).map(r => ({ source: r.source!, count: r.count })),
     untouched: untouched.map(c => ({ name: c.name, sector: c.sector, employeesEst: c.employees_est, area: c.area })),
     unmatchedCompanies,
